@@ -1,4 +1,23 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { toast } from 'sonner';
+import {
+  getStoredSession,
+  signInWithPassword,
+  signOut,
+  storeSession,
+  type SupabaseSession,
+} from '../../lib/supabaseClient';
+import {
+  bootstrapStore,
+  createCategory,
+  createProduct,
+  fetchMyStoreMembership,
+  loadCategoriesAndProducts,
+  patchProduct,
+  removeCategory,
+  removeProduct,
+  renameCategory,
+} from '../services/posSupabase';
 
 // Tipos de datos
 export interface Product {
@@ -132,8 +151,10 @@ interface POSContextType {
   // Autenticación
   isAuthenticated: boolean;
   currentUser: { username: string; role: 'admin' | 'cashier' } | null;
-  login: (username: string, password: string) => boolean;
+  login: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
+  createStore: (store: { name: string; nit?: string; address?: string; phone?: string; email?: string }) => Promise<boolean>;
+  syncWithSupabase: () => Promise<boolean>;
   
   // Productos
   products: Product[];
@@ -316,6 +337,8 @@ const initialSuppliers: Supplier[] = supplierSeedNames.map((name, index) => {
 });
 
 export function POSProvider({ children }: { children: ReactNode }) {
+  const [session, setSession] = useState<SupabaseSession | null>(null);
+  const [currentStoreId, setCurrentStoreId] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<{ username: string; role: 'admin' | 'cashier' } | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
@@ -338,6 +361,18 @@ export function POSProvider({ children }: { children: ReactNode }) {
     currency: 'COP',
     userRole: 'admin',
   });
+
+  const syncProductsFromSupabase = async (nextSession: SupabaseSession, storeId: string): Promise<boolean> => {
+    try {
+      const remote = await loadCategoriesAndProducts(nextSession.access_token, storeId);
+      setCategories(remote.categories);
+      setProducts(remote.products);
+      return true;
+    } catch (error) {
+      console.error('No se pudieron cargar productos/categorías desde Supabase', error);
+      return false;
+    }
+  };
 
   // Cargar datos del localStorage
   useEffect(() => {
@@ -436,6 +471,27 @@ export function POSProvider({ children }: { children: ReactNode }) {
       setIsAuthenticated(auth.isAuthenticated);
       setCurrentUser(auth.currentUser);
     }
+
+    const storedSession = getStoredSession();
+    if (!storedSession) return;
+
+    setSession(storedSession);
+    setIsAuthenticated(true);
+
+    fetchMyStoreMembership(storedSession.access_token, storedSession.user.id)
+      .then((membership) => {
+        if (!membership) return;
+        setCurrentStoreId(membership.store_id);
+        setCurrentUser({
+          username: storedSession.user.email || 'usuario',
+          role: membership.role,
+        });
+        return syncProductsFromSupabase(storedSession, membership.store_id);
+      })
+      .catch((error) => {
+        console.error('No se pudo restaurar la sesión de Supabase', error);
+        toast.error('No se pudo restaurar la sesión con Supabase');
+      });
   }, []);
 
   // Guardar productos
@@ -486,29 +542,108 @@ export function POSProvider({ children }: { children: ReactNode }) {
   }, [isAuthenticated, currentUser]);
 
   // Funciones de autenticación
-  const login = (username: string, password: string): boolean => {
-    // Usuario demo: admin/admin123 o cajero/cajero123
-    if ((username === 'admin' && password === 'admin123') || 
-        (username === 'cajero' && password === 'cajero123')) {
+  const login = async (username: string, password: string): Promise<boolean> => {
+    try {
+      const nextSession = await signInWithPassword(username, password);
+      storeSession(nextSession);
+      setSession(nextSession);
+
+      const membership = await fetchMyStoreMembership(nextSession.access_token, nextSession.user.id);
+
       setIsAuthenticated(true);
       setCurrentUser({
-        username,
-        role: username === 'admin' ? 'admin' : 'cashier'
+        username: nextSession.user.email || username,
+        role: membership?.role || 'admin'
       });
+
+      if (membership) {
+        setCurrentStoreId(membership.store_id);
+        const synced = await syncProductsFromSupabase(nextSession, membership.store_id);
+        if (!synced) {
+          toast.error('Sesión iniciada, pero falló la sincronización de catálogo');
+        }
+      } else {
+        setCurrentStoreId(null);
+        toast.info('Sesión iniciada. Ahora crea tu tienda para sincronizar datos.');
+      }
+
       return true;
+    } catch (error) {
+      console.error('Error de autenticación con Supabase', error);
+      toast.error('No se pudo iniciar sesión con Supabase. Verifica email/contraseña.');
+      return false;
     }
-    return false;
   };
 
   const logout = () => {
+    if (session?.access_token) {
+      void signOut(session.access_token).catch(() => undefined);
+    }
+    storeSession(null);
+    setSession(null);
+    setCurrentStoreId(null);
     setIsAuthenticated(false);
     setCurrentUser(null);
+  };
+
+  const createStore = async (store: { name: string; nit?: string; address?: string; phone?: string; email?: string }): Promise<boolean> => {
+    if (!session?.access_token) {
+      toast.error('Debes iniciar sesión antes de crear la tienda');
+      return false;
+    }
+
+    if (currentStoreId) {
+      toast.info('Esta cuenta ya tiene una tienda asociada.');
+      return false;
+    }
+
+    try {
+      const storeId = await bootstrapStore(session.access_token, store);
+      setCurrentStoreId(storeId);
+      const synced = await syncProductsFromSupabase(session, storeId);
+      if (!synced) {
+        toast.error('Tienda creada, pero falló la sincronización inicial.');
+      }
+      return true;
+    } catch (error) {
+      console.error('No se pudo crear la tienda en Supabase', error);
+      toast.error('No se pudo crear la tienda (RLS/red). Revisa permisos y sesión.');
+      return false;
+    }
+  };
+
+  const syncWithSupabase = async (): Promise<boolean> => {
+    if (!session?.access_token || !currentStoreId) {
+      toast.info('No hay tienda conectada para sincronizar.');
+      return false;
+    }
+
+    const ok = await syncProductsFromSupabase(session, currentStoreId);
+    if (!ok) {
+      toast.error('No se pudo sincronizar con Supabase.');
+      return false;
+    }
+
+    toast.success('Catálogo sincronizado con Supabase.');
+    return true;
   };
 
   // Funciones de productos
   const addProduct = (product: Omit<Product, 'id'>) => {
     const newProduct = { ...product, id: Date.now().toString() };
     setProducts([...products, newProduct]);
+
+    if (session?.access_token && currentStoreId) {
+      void createProduct(session.access_token, currentStoreId, product)
+        .then((created) => {
+          if (!created) return;
+          setProducts(prev => prev.map(p => p.id === newProduct.id ? created : p));
+        })
+        .catch((error) => {
+          console.error('No se pudo crear producto en Supabase', error);
+          toast.error('Producto guardado localmente, pero falló el guardado en Supabase.');
+        });
+    }
 
     if (newProduct.stock > 0) {
       appendKardexMovement({
@@ -528,10 +663,26 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   const updateProduct = (id: string, updatedProduct: Partial<Product>) => {
     setProducts(products.map(p => p.id === id ? { ...p, ...updatedProduct } : p));
+
+    if (session?.access_token && currentStoreId) {
+      void patchProduct(session.access_token, currentStoreId, id, updatedProduct)
+        .catch((error) => {
+          console.error('No se pudo actualizar producto en Supabase', error);
+          toast.error('Producto actualizado localmente, pero falló la sincronización en Supabase.');
+        });
+    }
   };
 
   const deleteProduct = (id: string) => {
     setProducts(products.filter(p => p.id !== id));
+
+    if (session?.access_token && currentStoreId) {
+      void removeProduct(session.access_token, currentStoreId, id)
+        .catch((error) => {
+          console.error('No se pudo eliminar producto en Supabase', error);
+          toast.error('Producto eliminado localmente, pero falló en Supabase.');
+        });
+    }
   };
 
   const searchProducts = (query: string): Product[] => {
@@ -554,6 +705,15 @@ export function POSProvider({ children }: { children: ReactNode }) {
     if (alreadyExists) return false;
 
     setCategories([...categories, normalizedName]);
+
+    if (session?.access_token && currentStoreId) {
+      void createCategory(session.access_token, currentStoreId, normalizedName)
+        .catch((error) => {
+          console.error('No se pudo crear categoría en Supabase', error);
+          toast.error('Categoría creada localmente, pero falló en Supabase.');
+        });
+    }
+
     return true;
   };
 
@@ -577,6 +737,22 @@ export function POSProvider({ children }: { children: ReactNode }) {
         : product
     ));
 
+    if (session?.access_token && currentStoreId) {
+      void renameCategory(session.access_token, currentStoreId, oldName, normalizedNewName)
+        .then(() => {
+          const productIds = products
+            .filter(product => product.category === oldName)
+            .map(product => product.id);
+          productIds.forEach((productId) => {
+            void patchProduct(session.access_token, currentStoreId, productId, { category: normalizedNewName });
+          });
+        })
+        .catch((error) => {
+          console.error('No se pudo editar categoría en Supabase', error);
+          toast.error('Categoría actualizada localmente, pero falló en Supabase.');
+        });
+    }
+
     return true;
   };
 
@@ -599,6 +775,23 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
 
     setCategories(categories.filter(category => category !== name));
+
+    if (session?.access_token && currentStoreId) {
+      const productsToMove = products.filter(product => product.category === name);
+
+      if (productsToMove.length > 0 && replacementCategory) {
+        productsToMove.forEach((product) => {
+          void patchProduct(session.access_token, currentStoreId, product.id, { category: replacementCategory });
+        });
+      }
+
+      void removeCategory(session.access_token, currentStoreId, name)
+        .catch((error) => {
+          console.error('No se pudo eliminar categoría en Supabase', error);
+          toast.error('Categoría eliminada localmente, pero falló en Supabase.');
+        });
+    }
+
     return true;
   };
 
@@ -928,6 +1121,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
       currentUser,
       login,
       logout,
+      createStore,
+      syncWithSupabase,
       products,
       addProduct,
       updateProduct,

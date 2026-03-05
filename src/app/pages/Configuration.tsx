@@ -20,7 +20,8 @@ export function Configuration() {
     categories,
     addCategory,
     updateCategory,
-    deleteCategory
+    deleteCategory,
+    syncWithSupabase
   } = usePOS();
   const location = useLocation();
   const [config, setConfig] = useState(storeConfig);
@@ -95,6 +96,11 @@ export function Configuration() {
 
     cancelEditCategory();
     toast.success('Categoría actualizada');
+  };
+
+
+  const handleManualSync = async () => {
+    await syncWithSupabase();
   };
 
   const handleDeleteCategory = (category: string) => {
@@ -409,7 +415,7 @@ export function Configuration() {
 
             <div className="p-4 bg-blue-50 rounded-lg">
               <p className="text-sm text-gray-700">
-                <strong>Nota:</strong> Los usuarios de demostración son <strong>admin/admin123</strong> y <strong>cajero/cajero123</strong>
+                <strong>Nota:</strong> Los usuarios se administran desde Supabase Auth (Dashboard).
               </p>
             </div>
           </Card>
@@ -440,10 +446,19 @@ export function Configuration() {
               <Button
                 variant="outline"
                 className="w-full h-12"
+                onClick={handleManualSync}
+              >
+                Re-sincronizar catálogo con Supabase
+              </Button>
+
+              <Button
+                variant="outline"
+                className="w-full h-12"
                 onClick={() => toast.info('Funcionalidad de restauración disponible')}
               >
                 Restaurar desde Backup
-              </Button>            </div>
+              </Button>
+            </div>
 
             <div className="p-4 bg-blue-50 rounded-lg">
               <p className="font-semibold mb-2">Modo Offline</p>
