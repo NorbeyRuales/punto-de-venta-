@@ -42,9 +42,15 @@ export function Configuration() {
     }
   }, [location.search]);
 
-  const handleSave = () => {
-    updateStoreConfig(config);
-    toast.success('Configuración guardada');
+  const handleSave = async () => {
+    const saved = await updateStoreConfig(config);
+    if (!saved) return;
+
+    if (hasConnectedStore) {
+      toast.success('Configuración guardada en Supabase y local.');
+    } else {
+      toast.success('Configuración guardada localmente. Registra la tienda para subirla a Supabase.');
+    }
   };
 
   const handleBackup = () => {
@@ -343,6 +349,12 @@ export function Configuration() {
             <Button onClick={handleSave} className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60]">
               Guardar Cambios
             </Button>
+
+            {!hasConnectedStore && (
+              <Button onClick={handleCreateStore} variant="outline" className="w-full h-12">
+                Registrar tienda en Supabase
+              </Button>
+            )}
           </Card>
         </TabsContent>
 

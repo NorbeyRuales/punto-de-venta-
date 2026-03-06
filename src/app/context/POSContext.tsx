@@ -18,6 +18,7 @@ import {
   removeCategory,
   removeProduct,
   renameCategory,
+  updateStoreDetails,
 } from '../services/posSupabase';
 
 // Tipos de datos
@@ -213,7 +214,7 @@ interface POSContextType {
   
   // Configuración
   storeConfig: StoreConfig;
-  updateStoreConfig: (config: Partial<StoreConfig>) => void;
+  updateStoreConfig: (config: Partial<StoreConfig>) => Promise<boolean>;
 }
 
 const POSContext = createContext<POSContextType | undefined>(undefined);
@@ -1146,8 +1147,33 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   // Funciones de configuración
-  const updateStoreConfig = (config: Partial<StoreConfig>) => {
-    setStoreConfig({ ...storeConfig, ...config });
+  const updateStoreConfig = async (config: Partial<StoreConfig>): Promise<boolean> => {
+    const merged = { ...storeConfig, ...config };
+    setStoreConfig(merged);
+
+    if (!session?.access_token || !currentStoreId) {
+      return true;
+    }
+
+    try {
+      await updateStoreDetails(session.access_token, currentStoreId, {
+        name: merged.name,
+        nit: merged.nit,
+        address: merged.address,
+        phone: merged.phone,
+        email: merged.email,
+        dianResolution: merged.dianResolution,
+        printerType: merged.printerType,
+        showIVA: merged.showIVA,
+        purchasePricePolicy: merged.purchasePricePolicy,
+        currency: merged.currency,
+      });
+      return true;
+    } catch (error) {
+      console.error('No se pudo guardar configuración de tienda en Supabase', error);
+      toast.error('Guardado local OK, pero falló guardar configuración en Supabase.');
+      return false;
+    }
   };
 
   return (

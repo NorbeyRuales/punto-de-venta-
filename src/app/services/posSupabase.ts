@@ -218,3 +218,37 @@ export async function importLocalBackup(
     token,
   );
 }
+
+export async function updateStoreDetails(
+  token: string,
+  storeId: string,
+  patch: {
+    name?: string;
+    nit?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+    dianResolution?: string;
+    printerType?: 'thermal' | 'standard';
+    showIVA?: boolean;
+    purchasePricePolicy?: 'automatic' | 'manual';
+    currency?: string;
+  },
+): Promise<void> {
+  const dbPatch: Record<string, unknown> = {};
+
+  if (patch.name !== undefined) dbPatch.name = patch.name;
+  if (patch.nit !== undefined) dbPatch.nit = patch.nit || null;
+  if (patch.address !== undefined) dbPatch.address = patch.address || null;
+  if (patch.phone !== undefined) dbPatch.phone = patch.phone || null;
+  if (patch.email !== undefined) dbPatch.email = patch.email || null;
+  if (patch.dianResolution !== undefined) dbPatch.dian_resolution = patch.dianResolution || null;
+  if (patch.printerType !== undefined) dbPatch.printer_type = patch.printerType;
+  if (patch.showIVA !== undefined) dbPatch.show_iva = patch.showIVA;
+  if (patch.purchasePricePolicy !== undefined) dbPatch.purchase_price_policy = patch.purchasePricePolicy;
+  if (patch.currency !== undefined) dbPatch.currency = patch.currency;
+
+  if (Object.keys(dbPatch).length === 0) return;
+
+  await updateRows('stores', `id=eq.${storeId}`, dbPatch, token);
+}
