@@ -16,6 +16,7 @@ export function Login() {
   const [nit, setNit] = useState('');
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
+  const [showRegisterButton, setShowRegisterButton] = useState(false); // Para hacer visible el botón "Crear Tienda", cambia este valor a `true`.
   const { login, createStore } = usePOS();
   const navigate = useNavigate();
 
@@ -115,7 +116,7 @@ export function Login() {
                   setShowCreateStore(false);
                 }}
               >
-                Crear Tienda Gratis
+                Crear Tienda
               </Button>
               
               <Button
@@ -192,28 +193,21 @@ export function Login() {
               Iniciar Sesión
             </Button>
             
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full h-14 text-lg border-2 border-[#2ECC71] text-[#2ECC71] hover:bg-[#2ECC71] hover:text-white"
-              onClick={() => setShowCreateStore(true)}
-            >
-              Crear Tienda Gratis
-            </Button>
+            {showRegisterButton && (
+              // Para crear una tienda, primero inicia sesión en otra pestaña
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full h-14 text-lg border-2 border-[#2ECC71] text-[#2ECC71] hover:bg-[#2ECC71] hover:text-white"
+                onClick={() => setShowCreateStore(true)}
+              >
+                Crear Tienda
+              </Button>
+            )}
           </div>
         </form>
 
-        <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-          <p className="text-sm text-gray-600 text-center mb-2">
-            <strong>Emails de prueba:</strong>
-          </p>
-          <p className="text-sm text-gray-600 text-center">
-            Usa email y contraseña creados en Auth
-          </p>
-          <p className="text-sm text-gray-600 text-center">
-            Luego crea la tienda desde este formulario
-          </p>
-        </div>
+
       </div>
     </div>
   );
