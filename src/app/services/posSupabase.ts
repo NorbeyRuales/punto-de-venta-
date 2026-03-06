@@ -31,6 +31,12 @@ type ProductRow = {
   is_active: boolean;
 };
 
+type PaymentMethod = 'efectivo' | 'tarjeta' | 'transferencia' | 'credito' | 'otro';
+type RechargeType = 'mobile' | 'service' | 'pin';
+
+const uuidLike = (value?: string | null): boolean =>
+  !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
 export async function fetchMyStoreMembership(token: string, userId: string): Promise<StoreUserRow | null> {
   const rows = await selectRows<StoreUserRow>(
     'store_users',
@@ -251,4 +257,279 @@ export async function updateStoreDetails(
   if (Object.keys(dbPatch).length === 0) return;
 
   await updateRows('stores', `id=eq.${storeId}`, dbPatch, token);
+}
+
+export async function createCustomer(
+  token: string,
+  storeId: string,
+  payload: { name: string; phone?: string; address?: string; email?: string; nit?: string; points?: number; debt?: number },
+): Promise<string | null> {
+  const rows = await insertRows<{ id: string }>('customers', [{
+    store_id: storeId,
+    name: payload.name,
+    phone: payload.phone || null,
+    address: payload.address || null,
+    email: payload.email || null,
+    nit: payload.nit || null,
+    points: payload.points ?? 0,
+    debt: payload.debt ?? 0,
+  }], token);
+
+  return rows[0]?.id ?? null;
+}
+
+export async function updateCustomerRow(
+  token: string,
+  storeId: string,
+  customerId: string,
+  patch: { name?: string; phone?: string; address?: string; email?: string; nit?: string; points?: number; debt?: number },
+): Promise<void> {
+  if (!uuidLike(customerId)) return;
+  const dbPatch: Record<string, unknown> = {};
+  if (patch.name !== undefined) dbPatch.name = patch.name;
+  if (patch.phone !== undefined) dbPatch.phone = patch.phone || null;
+  if (patch.address !== undefined) dbPatch.address = patch.address || null;
+  if (patch.email !== undefined) dbPatch.email = patch.email || null;
+  if (patch.nit !== undefined) dbPatch.nit = patch.nit || null;
+  if (patch.points !== undefined) dbPatch.points = patch.points;
+  if (patch.debt !== undefined) dbPatch.debt = patch.debt;
+  if (Object.keys(dbPatch).length === 0) return;
+  await updateRows('customers', `store_id=eq.${storeId}&id=eq.${customerId}`, dbPatch, token);
+}
+
+export async function insertCustomerDebtTx(
+  token: string,
+  storeId: string,
+  payload: { customerId: string; type: 'debt' | 'payment'; amount: number; description?: string; balance: number; createdAt?: string },
+): Promise<void> {
+  if (!uuidLike(payload.customerId)) return;
+  await insertRows('customer_debt_transactions', [{
+    store_id: storeId,
+    customer_id: payload.customerId,
+    type: payload.type,
+    amount: payload.amount,
+    description: payload.description || null,
+    balance: payload.balance,
+    created_at: payload.createdAt || new Date().toISOString(),
+  }], token);
+}
+
+export async function createSupplierRow(
+  token: string,
+  storeId: string,
+  payload: { name: string; nit?: string; phone?: string; email?: string; address?: string; bankAccounts?: string[]; debt?: number },
+): Promise<string | null> {
+  const rows = await insertRows<{ id: string }>('suppliers', [{
+    store_id: storeId,
+    name: payload.name,
+    nit: payload.nit || null,
+    phone: payload.phone || null,
+    email: payload.email || null,
+    address: payload.address || null,
+    bank_accounts: payload.bankAccounts ?? [],
+    debt: payload.debt ?? 0,
+  }], token);
+  return rows[0]?.id ?? null;
+}
+
+export async function updateSupplierRow(
+  token: string,
+  storeId: string,
+  supplierId: string,
+  patch: { name?: string; nit?: string; phone?: string; email?: string; address?: string; bankAccounts?: string[]; debt?: number },
+): Promise<void> {
+  if (!uuidLike(supplierId)) return;
+  const dbPatch: Record<string, unknown> = {};
+  if (patch.name !== undefined) dbPatch.name = patch.name;
+  if (patch.nit !== undefined) dbPatch.nit = patch.nit || null;
+  if (patch.phone !== undefined) dbPatch.phone = patch.phone || null;
+  if (patch.email !== undefined) dbPatch.email = patch.email || null;
+  if (patch.address !== undefined) dbPatch.address = patch.address || null;
+  if (patch.bankAccounts !== undefined) dbPatch.bank_accounts = patch.bankAccounts;
+  if (patch.debt !== undefined) dbPatch.debt = patch.debt;
+  if (Object.keys(dbPatch).length === 0) return;
+  await updateRows('suppliers', `store_id=eq.${storeId}&id=eq.${supplierId}`, dbPatch, token);
+}
+
+export async function deleteSupplierRow(token: string, storeId: string, supplierId: string): Promise<void> {
+  if (!uuidLike(supplierId)) return;
+  await deleteRows('suppliers', `store_id=eq.${storeId}&id=eq.${supplierId}`, token);
+}
+
+export async function createSaleWithItems(
+  token: string,
+  storeId: string,
+  payload: {
+    customerId?: string;
+    invoiceNumber?: string;
+    subtotal: number;
+    discount: number;
+    iva: number;
+    total: number;
+    paymentMethod: PaymentMethod;
+    cashReceived: number;
+    changeValue: number;
+    createdAt?: string;
+    items: Array<{
+      productId?: string;
+      productName: string;
+      quantity: number;
+      unitCost: number;
+      unitSalePrice: number;
+      discountPercent: number;
+      lineSubtotal: number;
+      lineTotal: number;
+      iva: number;
+      createdAt?: string;
+    }>;
+  },
+): Promise<string | null> {
+  const saleRows = await insertRows<{ id: string }>('sales', [{
+    store_id: storeId,
+    customer_id: uuidLike(payload.customerId) ? payload.customerId : null,
+    invoice_number: payload.invoiceNumber || null,
+    subtotal: payload.subtotal,
+    discount: payload.discount,
+    iva: payload.iva,
+    total: payload.total,
+    payment_method: payload.paymentMethod,
+    cash_received: payload.cashReceived,
+    change_value: payload.changeValue,
+    created_at: payload.createdAt || new Date().toISOString(),
+  }], token);
+
+  const saleId = saleRows[0]?.id;
+  if (!saleId) return null;
+
+  if (payload.items.length > 0) {
+    await insertRows('sale_items', payload.items.map((item) => ({
+      sale_id: saleId,
+      store_id: storeId,
+      product_id: uuidLike(item.productId) ? item.productId : null,
+      product_name: item.productName,
+      quantity: item.quantity,
+      unit_cost: item.unitCost,
+      unit_sale_price: item.unitSalePrice,
+      discount_percent: item.discountPercent,
+      line_subtotal: item.lineSubtotal,
+      line_total: item.lineTotal,
+      iva: item.iva,
+      created_at: item.createdAt || new Date().toISOString(),
+    })), token);
+  }
+
+  return saleId;
+}
+
+export async function createPurchaseWithItems(
+  token: string,
+  storeId: string,
+  payload: {
+    supplierId?: string;
+    total: number;
+    paid: boolean;
+    pricePolicy: 'automatic' | 'manual';
+    reference?: string;
+    createdAt?: string;
+    items: Array<{
+      productId?: string;
+      productName: string;
+      quantityPackages: number;
+      unitsPerPackage: number;
+      enteredUnits: number;
+      packageCost: number;
+      unitCostWithIva: number;
+      subtotal: number;
+      createdAt?: string;
+    }>;
+  },
+): Promise<string | null> {
+  const purchaseRows = await insertRows<{ id: string }>('purchases', [{
+    store_id: storeId,
+    supplier_id: uuidLike(payload.supplierId) ? payload.supplierId : null,
+    total: payload.total,
+    paid: payload.paid,
+    price_policy: payload.pricePolicy,
+    reference: payload.reference || null,
+    created_at: payload.createdAt || new Date().toISOString(),
+  }], token);
+
+  const purchaseId = purchaseRows[0]?.id;
+  if (!purchaseId) return null;
+
+  if (payload.items.length > 0) {
+    await insertRows('purchase_items', payload.items.map((item) => ({
+      purchase_id: purchaseId,
+      store_id: storeId,
+      product_id: uuidLike(item.productId) ? item.productId : null,
+      product_name: item.productName,
+      quantity_packages: item.quantityPackages,
+      units_per_package: item.unitsPerPackage,
+      entered_units: item.enteredUnits,
+      package_cost: item.packageCost,
+      unit_cost_with_iva: item.unitCostWithIva,
+      subtotal: item.subtotal,
+      created_at: item.createdAt || new Date().toISOString(),
+    })), token);
+  }
+
+  return purchaseId;
+}
+
+export async function createKardexMovementRow(
+  token: string,
+  storeId: string,
+  movement: {
+    productId?: string;
+    productName: string;
+    type: 'entry' | 'sale' | 'adjustment';
+    reference?: string;
+    quantity: number;
+    stockBefore: number;
+    stockAfter: number;
+    unitCost: number;
+    unitSalePrice?: number;
+    totalCost: number;
+    createdAt?: string;
+  },
+): Promise<void> {
+  await insertRows('kardex_movements', [{
+    store_id: storeId,
+    product_id: uuidLike(movement.productId) ? movement.productId : null,
+    product_name: movement.productName,
+    type: movement.type,
+    reference: movement.reference || null,
+    quantity: movement.quantity,
+    stock_before: movement.stockBefore,
+    stock_after: movement.stockAfter,
+    unit_cost: movement.unitCost,
+    unit_sale_price: movement.unitSalePrice ?? null,
+    total_cost: movement.totalCost,
+    created_at: movement.createdAt || new Date().toISOString(),
+  }], token);
+}
+
+export async function createRechargeRow(
+  token: string,
+  storeId: string,
+  recharge: {
+    type: RechargeType;
+    provider: string;
+    phoneNumber?: string;
+    amount: number;
+    commission: number;
+    total: number;
+    createdAt?: string;
+  },
+): Promise<void> {
+  await insertRows('recharges', [{
+    store_id: storeId,
+    type: recharge.type,
+    provider: recharge.provider,
+    phone_number: recharge.phoneNumber || null,
+    amount: recharge.amount,
+    commission: recharge.commission,
+    total: recharge.total,
+    created_at: recharge.createdAt || new Date().toISOString(),
+  }], token);
 }

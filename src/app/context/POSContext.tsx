@@ -10,14 +10,24 @@ import {
 import {
   bootstrapStore,
   createCategory,
+  createCustomer,
+  createKardexMovementRow,
   createProduct,
+  createPurchaseWithItems,
+  createRechargeRow,
+  createSaleWithItems,
+  createSupplierRow,
+  deleteSupplierRow,
   fetchMyStoreMembership,
   importLocalBackup,
+  insertCustomerDebtTx,
   loadCategoriesAndProducts,
   patchProduct,
   removeCategory,
   removeProduct,
   renameCategory,
+  updateCustomerRow,
+  updateSupplierRow,
   updateStoreDetails,
 } from '../services/posSupabase';
 
@@ -880,6 +890,24 @@ export function POSProvider({ children }: { children: ReactNode }) {
     };
 
     setKardexMovements(prev => [...prev, nextMovement]);
+
+    if (session?.access_token && currentStoreId) {
+      void createKardexMovementRow(session.access_token, currentStoreId, {
+        productId: movement.productId,
+        productName: movement.productName,
+        type: movement.type,
+        reference: movement.reference,
+        quantity: movement.quantity,
+        stockBefore: movement.stockBefore,
+        stockAfter: movement.stockAfter,
+        unitCost: movement.unitCost,
+        unitSalePrice: movement.unitSalePrice,
+        totalCost: movement.totalCost,
+        createdAt: nextMovement.date,
+      }).catch((error) => {
+        console.error('No se pudo guardar movimiento kardex en Supabase', error);
+      });
+    }
   };
 
   const cartTotal = cart.reduce((total, item) => {
@@ -955,6 +983,45 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
 
     setSales([...sales, newSale]);
+
+    if (session?.access_token && currentStoreId) {
+      const paymentMethodValue = ['efectivo', 'tarjeta', 'transferencia', 'credito'].includes(paymentMethod)
+        ? paymentMethod as 'efectivo' | 'tarjeta' | 'transferencia' | 'credito'
+        : 'otro';
+
+      void createSaleWithItems(session.access_token, currentStoreId, {
+        customerId,
+        invoiceNumber: newSale.invoiceNumber,
+        subtotal: newSale.subtotal,
+        discount: newSale.discount,
+        iva: newSale.iva,
+        total: newSale.total,
+        paymentMethod: paymentMethodValue,
+        cashReceived: newSale.cashReceived,
+        changeValue: newSale.change,
+        createdAt: newSale.date,
+        items: newSale.items.map((item) => {
+          const itemSubtotal = item.product.salePrice * item.quantity;
+          const itemTotal = itemSubtotal - ((itemSubtotal * item.discount) / 100);
+          return {
+            productId: item.product.id,
+            productName: item.product.name,
+            quantity: item.quantity,
+            unitCost: buildUnitCostWithIva(item.product),
+            unitSalePrice: item.product.salePrice,
+            discountPercent: item.discount,
+            lineSubtotal: itemSubtotal,
+            lineTotal: itemTotal,
+            iva: item.product.iva,
+            createdAt: newSale.date,
+          };
+        }),
+      }).catch((error) => {
+        console.error('No se pudo guardar la venta en Supabase', error);
+        toast.error('Venta guardada localmente, pero falló en Supabase.');
+      });
+    }
+
     clearCart();
     return newSale;
   };
@@ -988,10 +1055,43 @@ export function POSProvider({ children }: { children: ReactNode }) {
       debtHistory: []
     };
     setCustomers([...customers, newCustomer]);
+
+    if (session?.access_token && currentStoreId) {
+      void createCustomer(session.access_token, currentStoreId, {
+        name: newCustomer.name,
+        phone: newCustomer.phone,
+        address: newCustomer.address,
+        email: newCustomer.email,
+        nit: newCustomer.nit,
+        points: newCustomer.points,
+        debt: newCustomer.debt,
+      }).then((remoteId) => {
+        if (!remoteId) return;
+        setCustomers(prev => prev.map(c => c.id === newCustomer.id ? { ...c, id: remoteId } : c));
+      }).catch((error) => {
+        console.error('No se pudo guardar cliente en Supabase', error);
+        toast.error('Cliente guardado localmente, pero falló en Supabase.');
+      });
+    }
   };
 
   const updateCustomer = (id: string, updatedCustomer: Partial<Customer>) => {
     setCustomers(customers.map(c => c.id === id ? { ...c, ...updatedCustomer } : c));
+
+    if (session?.access_token && currentStoreId) {
+      void updateCustomerRow(session.access_token, currentStoreId, id, {
+        name: updatedCustomer.name,
+        phone: updatedCustomer.phone,
+        address: updatedCustomer.address,
+        email: updatedCustomer.email,
+        nit: updatedCustomer.nit,
+        points: updatedCustomer.points,
+        debt: updatedCustomer.debt,
+      }).catch((error) => {
+        console.error('No se pudo actualizar cliente en Supabase', error);
+        toast.error('Cliente actualizado localmente, pero falló en Supabase.');
+      });
+    }
   };
 
   const addDebtToCustomer = (customerId: string, amount: number, description: string) => {
@@ -1010,6 +1110,20 @@ export function POSProvider({ children }: { children: ReactNode }) {
         debt: newDebt,
         debtHistory: [...customer.debtHistory, transaction]
       });
+
+      if (session?.access_token && currentStoreId) {
+        void insertCustomerDebtTx(session.access_token, currentStoreId, {
+          customerId,
+          type: 'debt',
+          amount,
+          description,
+          balance: newDebt,
+          createdAt: transaction.date,
+        }).catch((error) => {
+          console.error('No se pudo guardar movimiento de deuda en Supabase', error);
+          toast.error('Movimiento de deuda guardado localmente, pero falló en Supabase.');
+        });
+      }
     }
   };
 
@@ -1029,6 +1143,20 @@ export function POSProvider({ children }: { children: ReactNode }) {
         debt: newDebt,
         debtHistory: [...customer.debtHistory, transaction]
       });
+
+      if (session?.access_token && currentStoreId) {
+        void insertCustomerDebtTx(session.access_token, currentStoreId, {
+          customerId,
+          type: 'payment',
+          amount,
+          description,
+          balance: newDebt,
+          createdAt: transaction.date,
+        }).catch((error) => {
+          console.error('No se pudo guardar pago de deuda en Supabase', error);
+          toast.error('Pago guardado localmente, pero falló en Supabase.');
+        });
+      }
     }
   };
 
@@ -1046,14 +1174,55 @@ export function POSProvider({ children }: { children: ReactNode }) {
       purchases: []
     };
     setSuppliers([...suppliers, newSupplier]);
+
+    if (session?.access_token && currentStoreId) {
+      void createSupplierRow(session.access_token, currentStoreId, {
+        name: newSupplier.name,
+        nit: newSupplier.nit,
+        phone: newSupplier.phone,
+        email: newSupplier.email,
+        address: newSupplier.address,
+        bankAccounts: newSupplier.bankAccounts,
+        debt: newSupplier.debt,
+      }).then((remoteId) => {
+        if (!remoteId) return;
+        setSuppliers(prev => prev.map(s => s.id === newSupplier.id ? { ...s, id: remoteId } : s));
+      }).catch((error) => {
+        console.error('No se pudo guardar proveedor en Supabase', error);
+        toast.error('Proveedor guardado localmente, pero falló en Supabase.');
+      });
+    }
   };
 
   const updateSupplier = (id: string, updatedSupplier: Partial<Supplier>) => {
     setSuppliers(suppliers.map(s => s.id === id ? { ...s, ...updatedSupplier } : s));
+
+    if (session?.access_token && currentStoreId) {
+      void updateSupplierRow(session.access_token, currentStoreId, id, {
+        name: updatedSupplier.name,
+        nit: updatedSupplier.nit,
+        phone: updatedSupplier.phone,
+        email: updatedSupplier.email,
+        address: updatedSupplier.address,
+        bankAccounts: updatedSupplier.bankAccounts,
+        debt: updatedSupplier.debt,
+      }).catch((error) => {
+        console.error('No se pudo actualizar proveedor en Supabase', error);
+        toast.error('Proveedor actualizado localmente, pero falló en Supabase.');
+      });
+    }
   };
 
   const deleteSupplier = (id: string) => {
     setSuppliers(suppliers.filter(s => s.id !== id));
+
+    if (session?.access_token && currentStoreId) {
+      void deleteSupplierRow(session.access_token, currentStoreId, id)
+        .catch((error) => {
+          console.error('No se pudo eliminar proveedor en Supabase', error);
+          toast.error('Proveedor eliminado localmente, pero falló en Supabase.');
+        });
+    }
   };
 
   const registerPurchase = (
@@ -1134,6 +1303,39 @@ export function POSProvider({ children }: { children: ReactNode }) {
         debt: supplier.debt + total
       });
     }
+
+    if (session?.access_token && currentStoreId) {
+      const purchaseItems = items.map((item) => {
+        const product = products.find(p => p.id === item.productId);
+        const unitsPerPurchase = Number(product?.unitsPerPurchase ?? 1) || 1;
+        const enteredUnits = item.quantity * unitsPerPurchase;
+        const ivaFactor = 1 + (Number(product?.iva || 0) / 100);
+        return {
+          productId: item.productId,
+          productName: product?.name || 'Producto',
+          quantityPackages: item.quantity,
+          unitsPerPackage: unitsPerPurchase,
+          enteredUnits,
+          packageCost: item.cost,
+          unitCostWithIva: (item.cost * ivaFactor) / unitsPerPurchase,
+          subtotal: item.cost * item.quantity,
+          createdAt: newPurchase.date,
+        };
+      });
+
+      void createPurchaseWithItems(session.access_token, currentStoreId, {
+        supplierId,
+        total,
+        paid: false,
+        pricePolicy,
+        reference: purchaseReference,
+        createdAt: newPurchase.date,
+        items: purchaseItems,
+      }).catch((error) => {
+        console.error('No se pudo guardar compra en Supabase', error);
+        toast.error('Compra guardada localmente, pero falló en Supabase.');
+      });
+    }
   };
 
   // Funciones de recargas
@@ -1144,6 +1346,21 @@ export function POSProvider({ children }: { children: ReactNode }) {
       date: new Date().toISOString()
     };
     setRecharges([...recharges, newRecharge]);
+
+    if (session?.access_token && currentStoreId) {
+      void createRechargeRow(session.access_token, currentStoreId, {
+        type: recharge.type,
+        provider: recharge.provider,
+        phoneNumber: recharge.phoneNumber,
+        amount: recharge.amount,
+        commission: recharge.commission,
+        total: recharge.total,
+        createdAt: newRecharge.date,
+      }).catch((error) => {
+        console.error('No se pudo guardar recarga en Supabase', error);
+        toast.error('Recarga guardada localmente, pero falló en Supabase.');
+      });
+    }
   };
 
   // Funciones de configuración
