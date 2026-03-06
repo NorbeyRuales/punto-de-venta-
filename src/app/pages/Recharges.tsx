@@ -70,9 +70,9 @@ export function Recharges() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600 mb-1">Comisiones</p>
-              <p className="text-2xl font-bold text-[#FF6B00]">${totalCommission.toLocaleString('es-CO')}</p>
+              <p className="text-2xl font-bold text-[var(--primary)]">${totalCommission.toLocaleString('es-CO')}</p>
             </div>
-            <Zap className="w-10 h-10 text-[#FF6B00]" />
+            <Zap className="w-10 h-10 text-[var(--primary)]" />
           </div>
         </Card>
 
@@ -253,7 +253,7 @@ export function Recharges() {
                   <td className="p-3">{recharge.provider}</td>
                   <td className="p-3">{recharge.phoneNumber || '-'}</td>
                   <td className="p-3 text-right">${recharge.amount.toLocaleString('es-CO')}</td>
-                  <td className="p-3 text-right text-[#FF6B00]">${recharge.commission.toLocaleString('es-CO')}</td>
+                  <td className="p-3 text-right text-[var(--primary)]">${recharge.commission.toLocaleString('es-CO')}</td>
                   <td className="p-3 text-right font-bold">${recharge.total.toLocaleString('es-CO')}</td>
                 </tr>
               ))}

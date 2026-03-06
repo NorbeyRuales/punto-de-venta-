@@ -64,10 +64,10 @@ export function Dashboard() {
   });
 
   const quickActions = [
-    { icon: ShoppingCart, label: 'Nueva Venta', path: '/pos', color: 'bg-[#2ECC71]' },
-    { icon: Package, label: 'Inventario', path: '/inventory', color: 'bg-[#FF6B00]' },
-    { icon: FileText, label: 'Reportes', path: '/reports', color: 'bg-blue-500' },
-    { icon: Users, label: 'Clientes', path: '/customers', color: 'bg-purple-500' },
+    { icon: ShoppingCart, label: 'Nueva Venta', path: '/pos', color: 'bg-[linear-gradient(135deg,#80a8ff,#6a8dff)] text-white' },
+    { icon: Package, label: 'Inventario', path: '/inventory', color: 'bg-[linear-gradient(135deg,#7b63ff,#5136ff)] text-white' },
+    { icon: FileText, label: 'Reportes', path: '/reports', color: 'bg-[linear-gradient(135deg,#8ec1de,#5fa7cf)] text-[#0a1020]' },
+    { icon: Users, label: 'Clientes', path: '/customers', color: 'bg-[linear-gradient(135deg,#d3d3ff,#bcbcff)] text-[#0f172a]' },
   ];
 
   return (
@@ -99,12 +99,12 @@ export function Dashboard() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600 mb-1">Transacciones</p>
-              <p className="text-3xl font-bold text-[#FF6B00]">
+              <p className="text-3xl font-bold text-[var(--primary)]">
                 {transactionsToday}
               </p>
             </div>
-            <div className="w-14 h-14 bg-[#FF6B00]/10 rounded-full flex items-center justify-center">
-              <ShoppingBag className="w-8 h-8 text-[#FF6B00]" />
+            <div className="w-14 h-14 bg-[rgba(128,168,255,0.18)] rounded-full flex items-center justify-center">
+              <ShoppingBag className="w-8 h-8 text-[var(--primary)]" />
             </div>
           </div>
         </Card>
@@ -148,7 +148,7 @@ export function Dashboard() {
               <Button
                 key={action.path}
                 onClick={() => navigate(action.path)}
-                className={`h-24 ${action.color} hover:opacity-90 text-white flex flex-col items-center justify-center gap-2`}
+                className={`h-24 ${action.color} shadow-[0_14px_32px_rgba(68,85,150,0.25)] border border-white/40 hover:translate-y-[-2px] hover:shadow-[0_18px_40px_rgba(68,85,150,0.28)] transition-all flex flex-col items-center justify-center gap-2 text-base font-semibold rounded-xl`}
               >
                 <Icon className="w-8 h-8" />
                 <span className="font-semibold">{action.label}</span>
@@ -162,7 +162,7 @@ export function Dashboard() {
         {/* Gráfica de ventas */}
         <Card className="p-6">
           <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-            <TrendingUp className="w-5 h-5 text-[#FF6B00]" />
+            <TrendingUp className="w-5 h-5 text-[var(--primary)]" />
             Ventas de la Semana
           </h3>
           <div className="h-64">
@@ -177,9 +177,9 @@ export function Dashboard() {
                 <Line 
                   type="monotone" 
                   dataKey="ventas" 
-                  stroke="#FF6B00" 
+                  stroke="var(--primary)" 
                   strokeWidth={3}
-                  dot={{ fill: '#FF6B00', r: 4 }}
+                  dot={{ fill: 'var(--primary)', r: 4 }}
                 />
               </LineChart>
             </ResponsiveContainer>

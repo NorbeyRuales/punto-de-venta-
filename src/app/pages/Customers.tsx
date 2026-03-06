@@ -171,7 +171,7 @@ export function Customers() {
         </div>
         <Button
           onClick={() => setShowAddDialog(true)}
-          className="bg-[#FF6B00] hover:bg-[#E85F00]"
+          className="bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
         >
           <Plus className="w-5 h-5 mr-2" />
           Agregar Cliente
@@ -236,11 +236,11 @@ export function Customers() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filteredCustomers.map(customer => (
           <Card key={customer.id} className="p-6 hover:shadow-lg transition-shadow">
-            <div className="flex items-start justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 bg-[#FF6B00] rounded-full flex items-center justify-center text-white font-bold text-lg">
-                  {customer.name.charAt(0)}
-                </div>
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 bg-[var(--primary)] rounded-full flex items-center justify-center text-white font-bold text-lg">
+                    {customer.name.charAt(0)}
+                  </div>
                 <div>
                   <h3 className="font-bold">{customer.name}</h3>
                   <p className="text-sm text-gray-600 flex items-center gap-1">

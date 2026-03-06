@@ -30,6 +30,7 @@ import {
   updateSupplierRow,
   updateStoreDetails,
 } from '../services/posSupabase';
+import { DEFAULT_LOGO_PATH } from '../constants/branding';
 
 // Tipos de datos
 export interface Product {
@@ -369,12 +370,45 @@ export function POSProvider({ children }: { children: ReactNode }) {
     address: 'Calle 123 #45-67, Bogotá',
     phone: '3001234567',
     email: 'contacto@mitienda.com',
+    logo: DEFAULT_LOGO_PATH,
     printerType: 'thermal',
     showIVA: true,
     purchasePricePolicy: 'automatic',
     currency: 'COP',
     userRole: 'admin',
   });
+
+  // Mantener título y favicon sincronizados con la tienda
+  useEffect(() => {
+    const title = storeConfig.name ? `${storeConfig.name} | Punto de Venta` : 'Punto de Venta';
+    if (document.title !== title) {
+      document.title = title;
+    }
+
+    const faviconUrl = storeConfig.logo || DEFAULT_LOGO_PATH;
+    const existing = document.querySelector<HTMLLinkElement>("link[rel*='icon']");
+    const resolveHref = (href: string) => {
+      if (href.startsWith('data:')) return href;
+      try {
+        return new URL(href, window.location.href).href;
+      } catch {
+        return href;
+      }
+    };
+    const nextHref = resolveHref(faviconUrl);
+    const type = faviconUrl.startsWith('data:') ? '' : 'image/jpeg';
+
+    if (existing) {
+      if (existing.href !== nextHref) existing.href = nextHref;
+      if (existing.type !== type) existing.type = type;
+    } else {
+      const link = document.createElement('link');
+      link.rel = 'icon';
+      link.type = type;
+      link.href = nextHref;
+      document.head.appendChild(link);
+    }
+  }, [storeConfig.name, storeConfig.logo]);
 
   const syncProductsFromSupabase = async (nextSession: SupabaseSession, storeId: string): Promise<boolean> => {
     try {

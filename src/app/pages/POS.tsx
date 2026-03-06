@@ -277,7 +277,7 @@ export function POS() {
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="w-full mt-2 text-[#FF6B00]"
+                    className="w-full mt-2 text-[var(--primary)]"
                     onClick={() => setSelectedProduct(item.product.id)}
                   >
                     <Percent className="w-4 h-4 mr-1" />

@@ -158,7 +158,7 @@ export function Suppliers() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Proveedores</h1>
-        <Button onClick={() => setShowAddDialog(true)} className="bg-[#FF6B00] hover:bg-[#E85F00]">
+        <Button onClick={() => setShowAddDialog(true)} className="bg-[var(--primary)] hover:bg-[var(--primary-hover)]">
           <Plus className="w-5 h-5 mr-2" />
           Agregar Proveedor
         </Button>
@@ -175,7 +175,7 @@ export function Suppliers() {
         {filteredSuppliers.map(supplier => (
           <Card key={supplier.id} className="p-6">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-12 h-12 bg-[#FF6B00] rounded-full flex items-center justify-center">
+              <div className="w-12 h-12 bg-[var(--primary)] rounded-full flex items-center justify-center">
                 <TrendingUp className="w-6 h-6 text-white" />
               </div>
               <div>

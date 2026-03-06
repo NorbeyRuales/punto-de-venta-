@@ -2,9 +2,11 @@ import { Card } from '../components/ui/card';
 import { usePOS } from '../context/POSContext';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
 
 export function Invoice() {
   const { storeConfig } = usePOS();
+  const logoSrc = storeConfig.logo || DEFAULT_LOGO_PATH;
 
   // Ejemplo de factura - en producción vendría de parámetros o estado
   const invoice = {
@@ -26,12 +28,26 @@ export function Invoice() {
       <Card className="p-8">
         <div className="border-b pb-6 mb-6">
           <div className="flex items-start justify-between">
-            <div>
-              <h2 className="text-2xl font-bold text-[#FF6B00]">{storeConfig.name}</h2>
-              <p className="text-sm mt-2">NIT: {storeConfig.nit}</p>
-              <p className="text-sm">{storeConfig.address}</p>
-              <p className="text-sm">{storeConfig.phone}</p>
-              <p className="text-sm">{storeConfig.email}</p>
+            <div className="flex gap-4 items-start">
+              <div className="w-16 h-16 rounded-lg border border-border bg-white overflow-hidden flex items-center justify-center">
+                <img
+                  src={logoSrc}
+                  alt="Logo de la tienda"
+                  className="w-full h-full object-contain"
+                  onError={(event) => {
+                    if (event.currentTarget.src !== FALLBACK_LOGO_DATA_URL) {
+                      event.currentTarget.src = FALLBACK_LOGO_DATA_URL;
+                    }
+                  }}
+                />
+              </div>
+              <div>
+                <h2 className="text-2xl font-bold text-[var(--primary)]">{storeConfig.name}</h2>
+                <p className="text-sm mt-2">NIT: {storeConfig.nit}</p>
+                <p className="text-sm">{storeConfig.address}</p>
+                <p className="text-sm">{storeConfig.phone}</p>
+                <p className="text-sm">{storeConfig.email}</p>
+              </div>
             </div>
             <div className="text-right">
               <h3 className="text-2xl font-bold">FACTURA</h3>

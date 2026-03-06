@@ -19,3 +19,9 @@ Crea un archivo `.env.local` (puedes copiar `.env.example`) con:
 - `VITE_SUPABASE_ANON_KEY`
 
 Sin estas variables, la app mostrará error al iniciar la integración con Supabase.
+
+## Logo personalizado
+
+- Coloca tu archivo JPEG en `public/branding/logo.jpeg`.
+- En la app puedes ajustar la ruta en Configuración → Tienda → “Ruta pública del logo”.
+- Si no subes ningún archivo, se mostrará un placeholder y no se romperá la interfaz.

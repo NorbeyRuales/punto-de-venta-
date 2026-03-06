@@ -404,7 +404,7 @@ return (
           </Button>
           <Button
             onClick={() => setShowAddDialog(true)}
-            className="bg-[#FF6B00] hover:bg-[#E85F00]"
+            className="bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
           >
             <Plus className="w-5 h-5 mr-2" />
             Agregar Producto

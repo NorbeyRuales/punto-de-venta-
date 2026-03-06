@@ -330,7 +330,7 @@ export function Purchases() {
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <p className="text-sm text-gray-600">Total compra</p>
-            <p className="text-3xl font-bold text-[#FF6B00]">${purchaseTotal.toLocaleString('es-CO')}</p>
+            <p className="text-3xl font-bold text-[var(--primary)]">${purchaseTotal.toLocaleString('es-CO')}</p>
             <p className="text-xs text-gray-500 mt-1">
               {pricePolicy === 'automatic'
                 ? 'Al registrar: se actualiza stock, Kardex, costo promedio y precio de venta.'

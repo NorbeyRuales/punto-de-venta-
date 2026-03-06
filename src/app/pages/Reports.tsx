@@ -62,7 +62,7 @@ export function Reports() {
   });
 
   const categoryData = Array.from(categorySales.entries()).map(([name, value]) => ({ name, value }));
-  const COLORS = ['#FF6B00', '#2ECC71', '#3498DB', '#9B59B6', '#F39C12', '#E74C3C'];
+  const COLORS = ['#15D9E6', '#E6C915', '#E61595', '#8BE9FD', '#FFD27F', '#2ECC71'];
 
   const exportToExcel = () => {
     toast.success('Exportando reporte...');
@@ -106,9 +106,9 @@ export function Reports() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-600 mb-1">Ganancia Neta</p>
-              <p className="text-2xl font-bold text-[#FF6B00]">${profit.toLocaleString('es-CO')}</p>
+              <p className="text-2xl font-bold text-[var(--primary)]">${profit.toLocaleString('es-CO')}</p>
             </div>
-            <TrendingUp className="w-10 h-10 text-[#FF6B00]" />
+            <TrendingUp className="w-10 h-10 text-[var(--primary)]" />
           </div>
         </Card>
 
@@ -144,7 +144,7 @@ export function Reports() {
                 <XAxis type="number" />
                 <YAxis dataKey="name" type="category" width={120} />
                 <Tooltip formatter={(value) => `$${Number(value).toLocaleString('es-CO')}`} />
-                <Bar dataKey="revenue" fill="#FF6B00" />
+                <Bar dataKey="revenue" fill="var(--primary)" />
               </BarChart>
             </ResponsiveContainer>
           </div>

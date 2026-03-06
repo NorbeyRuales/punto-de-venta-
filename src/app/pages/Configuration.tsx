@@ -9,9 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Switch } from '../components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { toast } from 'sonner';
-import { Store, Printer, Shield, Database, Tag, Edit, Trash2, Check, X } from 'lucide-react';
+import { Printer, Shield, Database, Tag, Edit, Trash2, Check, X } from 'lucide-react';
+import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
 
 export function Configuration() {
+  const inputClass = "h-12 bg-[var(--input-background)] border border-[var(--border)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]";
   const {
     storeConfig,
     updateStoreConfig,
@@ -104,6 +106,38 @@ export function Configuration() {
     setEditingValue(category);
   };
 
+  const handleLogoFile = async (file: File | null) => {
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Solo se permiten imágenes.');
+      return;
+    }
+
+    const maxSizeMb = 2.5;
+    if (file.size > maxSizeMb * 1024 * 1024) {
+      toast.error(`La imagen debe pesar menos de ${maxSizeMb} MB.`);
+      return;
+    }
+
+    const toDataUrl = (f: File) =>
+      new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(f);
+      });
+
+    try {
+      const dataUrl = await toDataUrl(file);
+      setConfig(prev => ({ ...prev, logo: dataUrl }));
+      toast.success('Logo cargado en la configuración. Guarda para aplicarlo en toda la app.');
+    } catch (error) {
+      console.error('No se pudo leer el archivo de logo', error);
+      toast.error('No se pudo cargar la imagen.');
+    }
+  };
+
   const cancelEditCategory = () => {
     setEditingCategory(null);
     setEditingValue('');
@@ -182,11 +216,11 @@ export function Configuration() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6 px-2 md:px-4">
       <h1 className="text-3xl font-bold">Configuración</h1>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-5 rounded-2xl shadow-[0_10px_30px_rgba(67,91,154,0.12)]">
           <TabsTrigger value="store">Tienda</TabsTrigger>
           <TabsTrigger value="categories">Categorías</TabsTrigger>
           <TabsTrigger value="printer">Impresora</TabsTrigger>
@@ -197,7 +231,7 @@ export function Configuration() {
         <TabsContent value="categories">
           <Card className="p-6 space-y-4">
             <div className="flex items-center gap-3 mb-2">
-              <Tag className="w-8 h-8 text-[#FF6B00]" />
+              <Tag className="w-8 h-8 text-[var(--primary)]" />
               <h2 className="text-xl font-bold">Categorías de Inventario</h2>
             </div>
 
@@ -270,68 +304,139 @@ export function Configuration() {
         </TabsContent>
 
         <TabsContent value="store">
-          <Card className="p-6 space-y-4">
+          <Card className="p-8 space-y-6">
             <div className="flex items-center gap-3 mb-4">
-              <Store className="w-8 h-8 text-[#FF6B00]" />
+              <div className="w-10 h-10 rounded-lg border border-border bg-white overflow-hidden flex items-center justify-center">
+                <img
+                  src={config.logo || DEFAULT_LOGO_PATH}
+                  alt="Logo de la tienda"
+                  className="w-full h-full object-contain"
+                  onError={(event) => {
+                    if (event.currentTarget.src !== FALLBACK_LOGO_DATA_URL) {
+                      event.currentTarget.src = FALLBACK_LOGO_DATA_URL;
+                    }
+                  }}
+                />
+              </div>
               <h2 className="text-xl font-bold">Datos de la Tienda</h2>
             </div>
 
-            <div>
-              <Label>Nombre del Negocio</Label>
-              <Input
-                value={config.name}
-                onChange={(e) => setConfig({ ...config, name: e.target.value })}
-                className="h-12"
-              />
+            <div className="grid gap-8 md:grid-cols-[280px,1fr] items-start md:items-center">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-44 h-44 rounded-xl border border-dashed border-border bg-white overflow-hidden flex items-center justify-center shadow-[0_12px_30px_rgba(67,91,154,0.12)]">
+                  <img
+                    src={config.logo || DEFAULT_LOGO_PATH}
+                    alt="Vista previa del logo"
+                    className="w-full h-full object-contain"
+                    onError={(event) => {
+                      if (event.currentTarget.src !== FALLBACK_LOGO_DATA_URL) {
+                        event.currentTarget.src = FALLBACK_LOGO_DATA_URL;
+                      }
+                    }}
+                  />
+                </div>
+                <div className="w-full flex flex-col gap-3">
+                  <Label className="text-sm font-semibold text-foreground">Logo de la tienda</Label>
+                  <label className="inline-flex items-center gap-3 w-full">
+                    <span className="inline-flex items-center justify-center px-4 py-2 h-12 rounded-lg border-2 border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--foreground)] font-semibold hover:bg-[var(--primary)] hover:text-[var(--primary-foreground)] transition-all shadow-[0_6px_18px_rgba(128,168,255,0.25)]">
+                      Seleccionar logo
+                    </span>
+                    <span className="text-sm text-[var(--muted-foreground)] truncate" aria-live="polite">
+                      {config.logo && config.logo !== DEFAULT_LOGO_PATH ? config.logo : 'Ningún archivo seleccionado'}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/jpg,image/png"
+                      onChange={(e) => handleLogoFile(e.target.files?.[0] ?? null)}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="space-y-5">
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col md:flex-row gap-3">
+                    <Input
+                      value={config.logo || ''}
+                      onChange={(e) => setConfig({ ...config, logo: e.target.value })}
+                      placeholder="/branding/logo.jpeg"
+                      className="h-12 bg-[var(--input-background)] border border-[var(--border)]"
+                    />
+                    <Button
+                      variant="outline"
+                      className="h-12 shrink-0 border-[var(--border)]"
+                      onClick={() => setConfig({ ...config, logo: DEFAULT_LOGO_PATH })}
+                    >
+                      Usar ruta sugerida
+                    </Button>
+                  </div>
+                  <p className="text-xs text-gray-600 leading-5">
+                    La imagen debe estar en formato JPEG. Ruta sugerida: <code>/branding/logo.jpeg</code> (colócala dentro de <code>public/branding/</code>).
+                  </p>
+                </div>
+              </div>
             </div>
 
-            <div>
-              <Label>NIT</Label>
-              <Input
-                value={config.nit}
-                onChange={(e) => setConfig({ ...config, nit: e.target.value })}
-                className="h-12"
-              />
-            </div>
+            <div className="space-y-5">
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Nombre del Negocio</Label>
+                  <Input
+                    value={config.name}
+                    onChange={(e) => setConfig({ ...config, name: e.target.value })}
+                    className={inputClass}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>NIT</Label>
+                  <Input
+                    value={config.nit}
+                    onChange={(e) => setConfig({ ...config, nit: e.target.value })}
+                    className={inputClass}
+                  />
+                </div>
+              </div>
 
-            <div>
-              <Label>Dirección</Label>
-              <Input
-                value={config.address}
-                onChange={(e) => setConfig({ ...config, address: e.target.value })}
-                className="h-12"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Teléfono</Label>
+              <div className="space-y-2">
+                <Label>Dirección</Label>
                 <Input
-                  value={config.phone}
-                  onChange={(e) => setConfig({ ...config, phone: e.target.value })}
-                  className="h-12"
+                  value={config.address}
+                  onChange={(e) => setConfig({ ...config, address: e.target.value })}
+                  className={inputClass}
                 />
               </div>
 
-              <div>
-                <Label>Email</Label>
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Teléfono</Label>
+                  <Input
+                    value={config.phone}
+                    onChange={(e) => setConfig({ ...config, phone: e.target.value })}
+                    className={inputClass}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Email</Label>
+                  <Input
+                    type="email"
+                    value={config.email}
+                    onChange={(e) => setConfig({ ...config, email: e.target.value })}
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Resolución DIAN (Facturación Electrónica)</Label>
                 <Input
-                  type="email"
-                  value={config.email}
-                  onChange={(e) => setConfig({ ...config, email: e.target.value })}
-                  className="h-12"
+                  value={config.dianResolution || ''}
+                  onChange={(e) => setConfig({ ...config, dianResolution: e.target.value })}
+                  placeholder="Ej: 18760000001"
+                  className={inputClass}
                 />
               </div>
-            </div>
-
-            <div>
-              <Label>Resolución DIAN (Facturación Electrónica)</Label>
-              <Input
-                value={config.dianResolution || ''}
-                onChange={(e) => setConfig({ ...config, dianResolution: e.target.value })}
-                placeholder="Ej: 18760000001"
-                className="h-12"
-              />
             </div>
 
             <div className="flex items-center justify-between p-4 bg-secondary rounded-lg">
@@ -376,7 +481,7 @@ export function Configuration() {
         <TabsContent value="printer">
           <Card className="p-6 space-y-4">
             <div className="flex items-center gap-3 mb-4">
-              <Printer className="w-8 h-8 text-[#FF6B00]" />
+              <Printer className="w-8 h-8 text-[var(--primary)]" />
               <h2 className="text-xl font-bold">Configuración de Impresora</h2>
             </div>
 
@@ -423,7 +528,7 @@ export function Configuration() {
         <TabsContent value="roles">
           <Card className="p-6 space-y-4">
             <div className="flex items-center gap-3 mb-4">
-              <Shield className="w-8 h-8 text-[#FF6B00]" />
+              <Shield className="w-8 h-8 text-[var(--primary)]" />
               <h2 className="text-xl font-bold">Roles y Permisos</h2>
             </div>
 
@@ -472,7 +577,7 @@ export function Configuration() {
         <TabsContent value="backup">
           <Card className="p-6 space-y-4">
             <div className="flex items-center gap-3 mb-4">
-              <Database className="w-8 h-8 text-[#FF6B00]" />
+              <Database className="w-8 h-8 text-[var(--primary)]" />
               <h2 className="text-xl font-bold">Backup y Sincronización</h2>
             </div>
 
@@ -495,7 +600,7 @@ export function Configuration() {
 
               <Button
                 onClick={handleBackup}
-                className="w-full h-12 bg-[#FF6B00] hover:bg-[#E85F00]"
+                className="w-full h-12 bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
               >
                 Descargar Backup Completo
               </Button>
