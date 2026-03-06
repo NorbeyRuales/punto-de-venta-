@@ -13,8 +13,7 @@ import {
   Settings, 
   LogOut, 
   Menu,
-  X,
-  Store
+  X
 } from 'lucide-react';
 import { Button } from './ui/button';
 
@@ -47,9 +46,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <aside className="hidden lg:flex lg:flex-col w-64 bg-white border-r border-border">
         <div className="p-6 border-b border-border">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-[#FF6B00] rounded-lg flex items-center justify-center">
-              <Store className="w-6 h-6 text-white" />
-            </div>
+            <img src="/logo-variedades-jacke.svg" alt="Logo de la tienda" className="w-10 h-10 rounded-lg object-cover border" />
             <div>
               <h2 className="font-bold text-lg">{storeConfig.name}</h2>
               <p className="text-sm text-muted-foreground">{currentUser?.username}</p>
@@ -100,9 +97,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <aside className="absolute left-0 top-0 bottom-0 w-64 bg-white flex flex-col">
             <div className="p-6 border-b border-border flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-[#FF6B00] rounded-lg flex items-center justify-center">
-                  <Store className="w-6 h-6 text-white" />
-                </div>
+                <img src="/logo-variedades-jacke.svg" alt="Logo de la tienda" className="w-10 h-10 rounded-lg object-cover border" />
                 <div>
                   <h2 className="font-bold text-lg">{storeConfig.name}</h2>
                   <p className="text-sm text-muted-foreground">{currentUser?.username}</p>
@@ -159,9 +154,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <Menu className="w-6 h-6" />
           </button>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-[#FF6B00] rounded-lg flex items-center justify-center">
-              <Store className="w-5 h-5 text-white" />
-            </div>
+            <img src="/logo-variedades-jacke.svg" alt="Logo de la tienda" className="w-8 h-8 rounded-lg object-cover border" />
             <h2 className="font-bold">{storeConfig.name}</h2>
           </div>
           <div className="w-6" />

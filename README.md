@@ -9,3 +9,13 @@
 
   Run `npm run dev` to start the development server.
   # punto-de-venta-
+
+
+## Variables de entorno
+
+Crea un archivo `.env.local` (puedes copiar `.env.example`) con:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+Sin estas variables, la app mostrará error al iniciar la integración con Supabase.

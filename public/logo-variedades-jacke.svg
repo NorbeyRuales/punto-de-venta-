@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Logo Variedades Jacke</title>
+  <desc id="desc">Logo circular con anillos de colores y texto Variedades Jacke</desc>
+  <defs>
+    <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00B6FF"/>
+      <stop offset="100%" stop-color="#006BFF"/>
+    </linearGradient>
+    <linearGradient id="g2" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FF3D54"/>
+      <stop offset="100%" stop-color="#FF8A00"/>
+    </linearGradient>
+    <linearGradient id="g3" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#00D084"/>
+      <stop offset="100%" stop-color="#9BE15D"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="256" cy="256" r="246" fill="#111"/>
+  <circle cx="256" cy="256" r="190" fill="#fff"/>
+
+  <path d="M256 92a164 164 0 0 1 150 98l-46 20a114 114 0 0 0-104-68z" fill="url(#g1)"/>
+  <path d="M406 190a164 164 0 0 1-55 198l-28-41a114 114 0 0 0 37-137z" fill="url(#g2)"/>
+  <path d="M351 388a164 164 0 0 1-245-130h50a114 114 0 0 0 170 89z" fill="url(#g3)"/>
+
+  <circle cx="256" cy="256" r="100" fill="#111"/>
+  <text x="256" y="275" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="36" font-weight="700" fill="#fff">VJ</text>
+
+  <text x="256" y="455" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="800" letter-spacing="2" fill="#fff">VARIEDADES</text>
+  <text x="256" y="492" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="40" font-weight="800" letter-spacing="2" fill="#fff">JACKE</text>
+</svg>
