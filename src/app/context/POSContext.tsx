@@ -1151,12 +1151,31 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const merged = { ...storeConfig, ...config };
     setStoreConfig(merged);
 
-    if (!session?.access_token || !currentStoreId) {
+    if (!session?.access_token) {
       return true;
     }
 
+    let targetStoreId = currentStoreId;
+
+    if (!targetStoreId) {
+      try {
+        const membership = await fetchMyStoreMembership(session.access_token, session.user.id);
+        if (membership?.store_id) {
+          targetStoreId = membership.store_id;
+          setCurrentStoreId(membership.store_id);
+        }
+      } catch (error) {
+        console.error('No se pudo verificar membresía de tienda', error);
+      }
+    }
+
+    if (!targetStoreId) {
+      toast.error('No hay tienda conectada para guardar en Supabase.');
+      return false;
+    }
+
     try {
-      await updateStoreDetails(session.access_token, currentStoreId, {
+      await updateStoreDetails(session.access_token, targetStoreId, {
         name: merged.name,
         nit: merged.nit,
         address: merged.address,

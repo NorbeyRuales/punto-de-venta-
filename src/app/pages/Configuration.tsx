@@ -42,15 +42,30 @@ export function Configuration() {
     }
   }, [location.search]);
 
+  useEffect(() => {
+    setConfig(storeConfig);
+  }, [storeConfig]);
+
   const handleSave = async () => {
+    if (!hasConnectedStore) {
+      const created = await createStore({
+        name: config.name,
+        nit: config.nit,
+        address: config.address,
+        phone: config.phone,
+        email: config.email,
+      });
+
+      if (!created) {
+        toast.error('No se pudo registrar la tienda en Supabase.');
+        return;
+      }
+    }
+
     const saved = await updateStoreConfig(config);
     if (!saved) return;
 
-    if (hasConnectedStore) {
-      toast.success('Configuración guardada en Supabase y local.');
-    } else {
-      toast.success('Configuración guardada localmente. Registra la tienda para subirla a Supabase.');
-    }
+    toast.success('Configuración guardada en Supabase y local.');
   };
 
   const handleBackup = () => {
