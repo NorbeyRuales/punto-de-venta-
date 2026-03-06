@@ -21,7 +21,10 @@ export function Configuration() {
     addCategory,
     updateCategory,
     deleteCategory,
-    syncWithSupabase
+    syncWithSupabase,
+    createStore,
+    hasConnectedStore,
+    uploadLocalBackupToSupabase
   } = usePOS();
   const location = useLocation();
   const [config, setConfig] = useState(storeConfig);
@@ -101,6 +104,24 @@ export function Configuration() {
 
   const handleManualSync = async () => {
     await syncWithSupabase();
+  };
+
+  const handleCreateStore = async () => {
+    const created = await createStore({
+      name: config.name,
+      nit: config.nit,
+      address: config.address,
+      phone: config.phone,
+      email: config.email,
+    });
+
+    if (created) {
+      toast.success('Tienda registrada y conectada a tu usuario.');
+    }
+  };
+
+  const handleUploadLocalData = async () => {
+    await uploadLocalBackupToSupabase(false);
   };
 
   const handleDeleteCategory = (category: string) => {
@@ -436,6 +457,15 @@ export function Configuration() {
             </div>
 
             <div className="space-y-3">
+              {!hasConnectedStore && (
+                <Button
+                  onClick={handleCreateStore}
+                  className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60]"
+                >
+                  Registrar tienda con datos actuales
+                </Button>
+              )}
+
               <Button
                 onClick={handleBackup}
                 className="w-full h-12 bg-[#FF6B00] hover:bg-[#E85F00]"
@@ -449,6 +479,14 @@ export function Configuration() {
                 onClick={handleManualSync}
               >
                 Re-sincronizar catálogo con Supabase
+              </Button>
+
+              <Button
+                variant="outline"
+                className="w-full h-12"
+                onClick={handleUploadLocalData}
+              >
+                Subir datos actuales (localStorage) a Supabase
               </Button>
 
               <Button

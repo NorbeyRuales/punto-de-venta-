@@ -12,6 +12,7 @@ import {
   createCategory,
   createProduct,
   fetchMyStoreMembership,
+  importLocalBackup,
   loadCategoriesAndProducts,
   patchProduct,
   removeCategory,
@@ -155,6 +156,8 @@ interface POSContextType {
   logout: () => void;
   createStore: (store: { name: string; nit?: string; address?: string; phone?: string; email?: string }) => Promise<boolean>;
   syncWithSupabase: () => Promise<boolean>;
+  uploadLocalBackupToSupabase: (clearExisting?: boolean) => Promise<boolean>;
+  hasConnectedStore: boolean;
   
   // Productos
   products: Product[];
@@ -626,6 +629,38 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     toast.success('Catálogo sincronizado con Supabase.');
     return true;
+  };
+
+  const uploadLocalBackupToSupabase = async (clearExisting = false): Promise<boolean> => {
+    if (!session?.access_token || !currentStoreId) {
+      toast.info('No hay tienda conectada para sincronizar.');
+      return false;
+    }
+
+    const backupPayload = {
+      products: localStorage.getItem('pos_products'),
+      sales: localStorage.getItem('pos_sales'),
+      customers: localStorage.getItem('pos_customers'),
+      suppliers: localStorage.getItem('pos_suppliers'),
+      kardex: localStorage.getItem('pos_kardex'),
+      recharges: localStorage.getItem('pos_recharges'),
+      config: localStorage.getItem('pos_config'),
+    };
+
+    try {
+      await importLocalBackup(session.access_token, currentStoreId, backupPayload, clearExisting);
+      const synced = await syncProductsFromSupabase(session, currentStoreId);
+      if (!synced) {
+        toast.error('Importación finalizada, pero falló la actualización del catálogo en pantalla.');
+      } else {
+        toast.success('Datos locales importados a Supabase correctamente.');
+      }
+      return true;
+    } catch (error) {
+      console.error('No se pudo importar el backup local en Supabase', error);
+      toast.error('Falló la importación a Supabase. Verifica permisos/RLS y sesión.');
+      return false;
+    }
   };
 
   // Funciones de productos
@@ -1123,6 +1158,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
       logout,
       createStore,
       syncWithSupabase,
+      uploadLocalBackupToSupabase,
+      hasConnectedStore: Boolean(currentStoreId),
       products,
       addProduct,
       updateProduct,

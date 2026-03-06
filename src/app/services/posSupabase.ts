@@ -201,3 +201,20 @@ export async function patchProduct(token: string, storeId: string, productId: st
 export async function removeProduct(token: string, storeId: string, productId: string): Promise<void> {
   await deleteRows('products', `store_id=eq.${storeId}&id=eq.${productId}`, token);
 }
+
+export async function importLocalBackup(
+  token: string,
+  storeId: string,
+  backup: Record<string, unknown>,
+  clearExisting = false,
+): Promise<Record<string, unknown>> {
+  return rpc<Record<string, unknown>>(
+    'import_local_pos_backup',
+    {
+      p_store_id: storeId,
+      p_backup: backup,
+      p_clear_existing: clearExisting,
+    },
+    token,
+  );
+}
