@@ -1,0 +1,535 @@
+import { deleteRows, insertRows, rpc, selectRows, updateRows } from '../../lib/supabaseClient';
+import type { Product } from '../context/POSContext';
+
+type StoreUserRow = {
+  role: 'admin' | 'cashier';
+  store_id: string;
+};
+
+type CategoryRow = {
+  id: string;
+  name: string;
+};
+
+type ProductRow = {
+  id: string;
+  name: string;
+  sku: string | null;
+  barcode: string | null;
+  cost_price: number;
+  sale_price: number;
+  stock: number;
+  min_stock: number;
+  unit: string;
+  is_bulk: boolean;
+  iva: number;
+  units_per_purchase: number | null;
+  profit_margin: number | null;
+  unit_price: number | null;
+  category_id: string | null;
+  supplier_id: string | null;
+  is_active: boolean;
+};
+
+type PaymentMethod = 'efectivo' | 'tarjeta' | 'transferencia' | 'credito' | 'otro';
+type RechargeType = 'mobile' | 'service' | 'pin';
+
+const uuidLike = (value?: string | null): boolean =>
+  !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+export async function fetchMyStoreMembership(token: string, userId: string): Promise<StoreUserRow | null> {
+  const rows = await selectRows<StoreUserRow>(
+    'store_users',
+    `select=role,store_id&user_id=eq.${encodeURIComponent(userId)}&order=created_at.asc&limit=1`,
+    token,
+  );
+
+  return rows[0] ?? null;
+}
+
+export async function bootstrapStore(token: string, payload: {
+  name: string;
+  nit?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+}): Promise<string> {
+  const storeId = await rpc<string>('bootstrap_my_store', {
+    p_name: payload.name,
+    p_nit: payload.nit || null,
+    p_address: payload.address || null,
+    p_phone: payload.phone || null,
+    p_email: payload.email || null,
+  }, token);
+
+  return storeId;
+}
+
+export async function loadCategoriesAndProducts(token: string, storeId: string): Promise<{ categories: string[]; products: Product[] }> {
+  const categories = await selectRows<CategoryRow>(
+    'categories',
+    `select=id,name&store_id=eq.${storeId}&order=name.asc`,
+    token,
+  );
+
+  const categoryById = new Map(categories.map(category => [category.id, category.name]));
+
+  const products = await selectRows<ProductRow>(
+    'products',
+    `select=id,name,sku,barcode,cost_price,sale_price,stock,min_stock,unit,is_bulk,iva,units_per_purchase,profit_margin,unit_price,category_id,supplier_id,is_active&store_id=eq.${storeId}&order=created_at.asc`,
+    token,
+  );
+
+  return {
+    categories: categories.map(category => category.name),
+    products: products.map((row) => ({
+      id: row.id,
+      name: row.name,
+      sku: row.sku ?? '',
+      barcode: row.barcode ?? '',
+      category: row.category_id ? (categoryById.get(row.category_id) ?? 'Sin categoría') : 'Sin categoría',
+      supplierName: undefined,
+      costPrice: Number(row.cost_price ?? 0),
+      salePrice: Number(row.sale_price ?? 0),
+      stock: Number(row.stock ?? 0),
+      minStock: Number(row.min_stock ?? 0),
+      unit: row.unit ?? 'unidad',
+      isBulk: Boolean(row.is_bulk),
+      iva: Number(row.iva ?? 0),
+      unitsPerPurchase: row.units_per_purchase ?? undefined,
+      profitMargin: row.profit_margin ?? undefined,
+      unitPrice: row.unit_price ?? undefined,
+    })),
+  };
+}
+
+export async function createCategory(token: string, storeId: string, name: string): Promise<void> {
+  await insertRows('categories', [{ store_id: storeId, name }], token);
+}
+
+export async function renameCategory(token: string, storeId: string, oldName: string, newName: string): Promise<void> {
+  await updateRows(
+    'categories',
+    `store_id=eq.${storeId}&name=eq.${encodeURIComponent(oldName)}`,
+    { name: newName },
+    token,
+  );
+}
+
+export async function removeCategory(token: string, storeId: string, name: string): Promise<void> {
+  await deleteRows(
+    'categories',
+    `store_id=eq.${storeId}&name=eq.${encodeURIComponent(name)}`,
+    token,
+  );
+}
+
+async function findCategoryId(token: string, storeId: string, categoryName: string): Promise<string | null> {
+  const rows = await selectRows<{ id: string }>(
+    'categories',
+    `select=id&store_id=eq.${storeId}&name=eq.${encodeURIComponent(categoryName)}&limit=1`,
+    token,
+  );
+  return rows[0]?.id ?? null;
+}
+
+export async function createProduct(token: string, storeId: string, product: Omit<Product, 'id'>): Promise<Product | null> {
+  const categoryId = await findCategoryId(token, storeId, product.category);
+
+  const rows = await insertRows<ProductRow>('products', [{
+    store_id: storeId,
+    category_id: categoryId,
+    name: product.name,
+    sku: product.sku || null,
+    barcode: product.barcode || null,
+    cost_price: product.costPrice,
+    sale_price: product.salePrice,
+    stock: product.stock,
+    min_stock: product.minStock,
+    unit: product.unit,
+    is_bulk: product.isBulk,
+    iva: product.iva,
+    units_per_purchase: product.unitsPerPurchase ?? null,
+    profit_margin: product.profitMargin ?? null,
+    unit_price: product.unitPrice ?? null,
+    is_active: true,
+  }], token);
+
+  const created = rows[0];
+  if (!created) return null;
+
+  return {
+    id: created.id,
+    name: created.name,
+    sku: created.sku ?? '',
+    barcode: created.barcode ?? '',
+    category: product.category,
+    supplierName: product.supplierName,
+    costPrice: Number(created.cost_price ?? 0),
+    salePrice: Number(created.sale_price ?? 0),
+    stock: Number(created.stock ?? 0),
+    minStock: Number(created.min_stock ?? 0),
+    unit: created.unit,
+    isBulk: created.is_bulk,
+    iva: Number(created.iva ?? 0),
+    unitsPerPurchase: created.units_per_purchase ?? undefined,
+    profitMargin: created.profit_margin ?? undefined,
+    unitPrice: created.unit_price ?? undefined,
+  };
+}
+
+export async function patchProduct(token: string, storeId: string, productId: string, patch: Partial<Product>): Promise<void> {
+  const dbPatch: Record<string, unknown> = {};
+
+  if (patch.name !== undefined) dbPatch.name = patch.name;
+  if (patch.sku !== undefined) dbPatch.sku = patch.sku || null;
+  if (patch.barcode !== undefined) dbPatch.barcode = patch.barcode || null;
+  if (patch.costPrice !== undefined) dbPatch.cost_price = patch.costPrice;
+  if (patch.salePrice !== undefined) dbPatch.sale_price = patch.salePrice;
+  if (patch.stock !== undefined) dbPatch.stock = patch.stock;
+  if (patch.minStock !== undefined) dbPatch.min_stock = patch.minStock;
+  if (patch.unit !== undefined) dbPatch.unit = patch.unit;
+  if (patch.isBulk !== undefined) dbPatch.is_bulk = patch.isBulk;
+  if (patch.iva !== undefined) dbPatch.iva = patch.iva;
+  if (patch.unitsPerPurchase !== undefined) dbPatch.units_per_purchase = patch.unitsPerPurchase ?? null;
+  if (patch.profitMargin !== undefined) dbPatch.profit_margin = patch.profitMargin ?? null;
+  if (patch.unitPrice !== undefined) dbPatch.unit_price = patch.unitPrice ?? null;
+
+  if (patch.category !== undefined) {
+    dbPatch.category_id = await findCategoryId(token, storeId, patch.category);
+  }
+
+  if (Object.keys(dbPatch).length === 0) return;
+
+  await updateRows('products', `store_id=eq.${storeId}&id=eq.${productId}`, dbPatch, token);
+}
+
+export async function removeProduct(token: string, storeId: string, productId: string): Promise<void> {
+  await deleteRows('products', `store_id=eq.${storeId}&id=eq.${productId}`, token);
+}
+
+export async function importLocalBackup(
+  token: string,
+  storeId: string,
+  backup: Record<string, unknown>,
+  clearExisting = false,
+): Promise<Record<string, unknown>> {
+  return rpc<Record<string, unknown>>(
+    'import_local_pos_backup',
+    {
+      p_store_id: storeId,
+      p_backup: backup,
+      p_clear_existing: clearExisting,
+    },
+    token,
+  );
+}
+
+export async function updateStoreDetails(
+  token: string,
+  storeId: string,
+  patch: {
+    name?: string;
+    nit?: string;
+    address?: string;
+    phone?: string;
+    email?: string;
+    dianResolution?: string;
+    printerType?: 'thermal' | 'standard';
+    showIVA?: boolean;
+    purchasePricePolicy?: 'automatic' | 'manual';
+    currency?: string;
+  },
+): Promise<void> {
+  const dbPatch: Record<string, unknown> = {};
+
+  if (patch.name !== undefined) dbPatch.name = patch.name;
+  if (patch.nit !== undefined) dbPatch.nit = patch.nit || null;
+  if (patch.address !== undefined) dbPatch.address = patch.address || null;
+  if (patch.phone !== undefined) dbPatch.phone = patch.phone || null;
+  if (patch.email !== undefined) dbPatch.email = patch.email || null;
+  if (patch.dianResolution !== undefined) dbPatch.dian_resolution = patch.dianResolution || null;
+  if (patch.printerType !== undefined) dbPatch.printer_type = patch.printerType;
+  if (patch.showIVA !== undefined) dbPatch.show_iva = patch.showIVA;
+  if (patch.purchasePricePolicy !== undefined) dbPatch.purchase_price_policy = patch.purchasePricePolicy;
+  if (patch.currency !== undefined) dbPatch.currency = patch.currency;
+
+  if (Object.keys(dbPatch).length === 0) return;
+
+  await updateRows('stores', `id=eq.${storeId}`, dbPatch, token);
+}
+
+export async function createCustomer(
+  token: string,
+  storeId: string,
+  payload: { name: string; phone?: string; address?: string; email?: string; nit?: string; points?: number; debt?: number },
+): Promise<string | null> {
+  const rows = await insertRows<{ id: string }>('customers', [{
+    store_id: storeId,
+    name: payload.name,
+    phone: payload.phone || null,
+    address: payload.address || null,
+    email: payload.email || null,
+    nit: payload.nit || null,
+    points: payload.points ?? 0,
+    debt: payload.debt ?? 0,
+  }], token);
+
+  return rows[0]?.id ?? null;
+}
+
+export async function updateCustomerRow(
+  token: string,
+  storeId: string,
+  customerId: string,
+  patch: { name?: string; phone?: string; address?: string; email?: string; nit?: string; points?: number; debt?: number },
+): Promise<void> {
+  if (!uuidLike(customerId)) return;
+  const dbPatch: Record<string, unknown> = {};
+  if (patch.name !== undefined) dbPatch.name = patch.name;
+  if (patch.phone !== undefined) dbPatch.phone = patch.phone || null;
+  if (patch.address !== undefined) dbPatch.address = patch.address || null;
+  if (patch.email !== undefined) dbPatch.email = patch.email || null;
+  if (patch.nit !== undefined) dbPatch.nit = patch.nit || null;
+  if (patch.points !== undefined) dbPatch.points = patch.points;
+  if (patch.debt !== undefined) dbPatch.debt = patch.debt;
+  if (Object.keys(dbPatch).length === 0) return;
+  await updateRows('customers', `store_id=eq.${storeId}&id=eq.${customerId}`, dbPatch, token);
+}
+
+export async function insertCustomerDebtTx(
+  token: string,
+  storeId: string,
+  payload: { customerId: string; type: 'debt' | 'payment'; amount: number; description?: string; balance: number; createdAt?: string },
+): Promise<void> {
+  if (!uuidLike(payload.customerId)) return;
+  await insertRows('customer_debt_transactions', [{
+    store_id: storeId,
+    customer_id: payload.customerId,
+    type: payload.type,
+    amount: payload.amount,
+    description: payload.description || null,
+    balance: payload.balance,
+    created_at: payload.createdAt || new Date().toISOString(),
+  }], token);
+}
+
+export async function createSupplierRow(
+  token: string,
+  storeId: string,
+  payload: { name: string; nit?: string; phone?: string; email?: string; address?: string; bankAccounts?: string[]; debt?: number },
+): Promise<string | null> {
+  const rows = await insertRows<{ id: string }>('suppliers', [{
+    store_id: storeId,
+    name: payload.name,
+    nit: payload.nit || null,
+    phone: payload.phone || null,
+    email: payload.email || null,
+    address: payload.address || null,
+    bank_accounts: payload.bankAccounts ?? [],
+    debt: payload.debt ?? 0,
+  }], token);
+  return rows[0]?.id ?? null;
+}
+
+export async function updateSupplierRow(
+  token: string,
+  storeId: string,
+  supplierId: string,
+  patch: { name?: string; nit?: string; phone?: string; email?: string; address?: string; bankAccounts?: string[]; debt?: number },
+): Promise<void> {
+  if (!uuidLike(supplierId)) return;
+  const dbPatch: Record<string, unknown> = {};
+  if (patch.name !== undefined) dbPatch.name = patch.name;
+  if (patch.nit !== undefined) dbPatch.nit = patch.nit || null;
+  if (patch.phone !== undefined) dbPatch.phone = patch.phone || null;
+  if (patch.email !== undefined) dbPatch.email = patch.email || null;
+  if (patch.address !== undefined) dbPatch.address = patch.address || null;
+  if (patch.bankAccounts !== undefined) dbPatch.bank_accounts = patch.bankAccounts;
+  if (patch.debt !== undefined) dbPatch.debt = patch.debt;
+  if (Object.keys(dbPatch).length === 0) return;
+  await updateRows('suppliers', `store_id=eq.${storeId}&id=eq.${supplierId}`, dbPatch, token);
+}
+
+export async function deleteSupplierRow(token: string, storeId: string, supplierId: string): Promise<void> {
+  if (!uuidLike(supplierId)) return;
+  await deleteRows('suppliers', `store_id=eq.${storeId}&id=eq.${supplierId}`, token);
+}
+
+export async function createSaleWithItems(
+  token: string,
+  storeId: string,
+  payload: {
+    customerId?: string;
+    invoiceNumber?: string;
+    subtotal: number;
+    discount: number;
+    iva: number;
+    total: number;
+    paymentMethod: PaymentMethod;
+    cashReceived: number;
+    changeValue: number;
+    createdAt?: string;
+    items: Array<{
+      productId?: string;
+      productName: string;
+      quantity: number;
+      unitCost: number;
+      unitSalePrice: number;
+      discountPercent: number;
+      lineSubtotal: number;
+      lineTotal: number;
+      iva: number;
+      createdAt?: string;
+    }>;
+  },
+): Promise<string | null> {
+  const saleRows = await insertRows<{ id: string }>('sales', [{
+    store_id: storeId,
+    customer_id: uuidLike(payload.customerId) ? payload.customerId : null,
+    invoice_number: payload.invoiceNumber || null,
+    subtotal: payload.subtotal,
+    discount: payload.discount,
+    iva: payload.iva,
+    total: payload.total,
+    payment_method: payload.paymentMethod,
+    cash_received: payload.cashReceived,
+    change_value: payload.changeValue,
+    created_at: payload.createdAt || new Date().toISOString(),
+  }], token);
+
+  const saleId = saleRows[0]?.id;
+  if (!saleId) return null;
+
+  if (payload.items.length > 0) {
+    await insertRows('sale_items', payload.items.map((item) => ({
+      sale_id: saleId,
+      store_id: storeId,
+      product_id: uuidLike(item.productId) ? item.productId : null,
+      product_name: item.productName,
+      quantity: item.quantity,
+      unit_cost: item.unitCost,
+      unit_sale_price: item.unitSalePrice,
+      discount_percent: item.discountPercent,
+      line_subtotal: item.lineSubtotal,
+      line_total: item.lineTotal,
+      iva: item.iva,
+      created_at: item.createdAt || new Date().toISOString(),
+    })), token);
+  }
+
+  return saleId;
+}
+
+export async function createPurchaseWithItems(
+  token: string,
+  storeId: string,
+  payload: {
+    supplierId?: string;
+    total: number;
+    paid: boolean;
+    pricePolicy: 'automatic' | 'manual';
+    reference?: string;
+    createdAt?: string;
+    items: Array<{
+      productId?: string;
+      productName: string;
+      quantityPackages: number;
+      unitsPerPackage: number;
+      enteredUnits: number;
+      packageCost: number;
+      unitCostWithIva: number;
+      subtotal: number;
+      createdAt?: string;
+    }>;
+  },
+): Promise<string | null> {
+  const purchaseRows = await insertRows<{ id: string }>('purchases', [{
+    store_id: storeId,
+    supplier_id: uuidLike(payload.supplierId) ? payload.supplierId : null,
+    total: payload.total,
+    paid: payload.paid,
+    price_policy: payload.pricePolicy,
+    reference: payload.reference || null,
+    created_at: payload.createdAt || new Date().toISOString(),
+  }], token);
+
+  const purchaseId = purchaseRows[0]?.id;
+  if (!purchaseId) return null;
+
+  if (payload.items.length > 0) {
+    await insertRows('purchase_items', payload.items.map((item) => ({
+      purchase_id: purchaseId,
+      store_id: storeId,
+      product_id: uuidLike(item.productId) ? item.productId : null,
+      product_name: item.productName,
+      quantity_packages: item.quantityPackages,
+      units_per_package: item.unitsPerPackage,
+      entered_units: item.enteredUnits,
+      package_cost: item.packageCost,
+      unit_cost_with_iva: item.unitCostWithIva,
+      subtotal: item.subtotal,
+      created_at: item.createdAt || new Date().toISOString(),
+    })), token);
+  }
+
+  return purchaseId;
+}
+
+export async function createKardexMovementRow(
+  token: string,
+  storeId: string,
+  movement: {
+    productId?: string;
+    productName: string;
+    type: 'entry' | 'sale' | 'adjustment';
+    reference?: string;
+    quantity: number;
+    stockBefore: number;
+    stockAfter: number;
+    unitCost: number;
+    unitSalePrice?: number;
+    totalCost: number;
+    createdAt?: string;
+  },
+): Promise<void> {
+  await insertRows('kardex_movements', [{
+    store_id: storeId,
+    product_id: uuidLike(movement.productId) ? movement.productId : null,
+    product_name: movement.productName,
+    type: movement.type,
+    reference: movement.reference || null,
+    quantity: movement.quantity,
+    stock_before: movement.stockBefore,
+    stock_after: movement.stockAfter,
+    unit_cost: movement.unitCost,
+    unit_sale_price: movement.unitSalePrice ?? null,
+    total_cost: movement.totalCost,
+    created_at: movement.createdAt || new Date().toISOString(),
+  }], token);
+}
+
+export async function createRechargeRow(
+  token: string,
+  storeId: string,
+  recharge: {
+    type: RechargeType;
+    provider: string;
+    phoneNumber?: string;
+    amount: number;
+    commission: number;
+    total: number;
+    createdAt?: string;
+  },
+): Promise<void> {
+  await insertRows('recharges', [{
+    store_id: storeId,
+    type: recharge.type,
+    provider: recharge.provider,
+    phone_number: recharge.phoneNumber || null,
+    amount: recharge.amount,
+    commission: recharge.commission,
+    total: recharge.total,
+    created_at: recharge.createdAt || new Date().toISOString(),
+  }], token);
+}

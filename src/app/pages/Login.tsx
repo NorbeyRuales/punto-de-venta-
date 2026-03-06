@@ -12,20 +12,23 @@ export function Login() {
   const [password, setPassword] = useState('');
   const [showCreateStore, setShowCreateStore] = useState(false);
   const [error, setError] = useState('');
-  const { login } = usePOS();
+  const [storeName, setStoreName] = useState('');
+  const [nit, setNit] = useState('');
+  const [address, setAddress] = useState('');
+  const [phone, setPhone] = useState('');
+  const { login, createStore } = usePOS();
   const navigate = useNavigate();
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     
-    const success = login(username, password);
+    const success = await login(username, password);
     if (success) {
       toast.success('¡Bienvenido!');
       navigate('/dashboard');
     } else {
-      setError('Usuario o contraseña incorrectos');
-      toast.error('Credenciales inválidas');
+      setError('Email o contraseña incorrectos');
     }
   };
 
@@ -48,6 +51,8 @@ export function Login() {
                 id="storeName"
                 placeholder="Ej: Tienda Don Pepe"
                 className="h-12"
+                value={storeName}
+                onChange={(e) => setStoreName(e.target.value)}
               />
             </div>
 
@@ -57,6 +62,8 @@ export function Login() {
                 id="nit"
                 placeholder="900123456-1"
                 className="h-12"
+                value={nit}
+                onChange={(e) => setNit(e.target.value)}
               />
             </div>
 
@@ -66,6 +73,8 @@ export function Login() {
                 id="address"
                 placeholder="Calle 123 #45-67"
                 className="h-12"
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
               />
             </div>
 
@@ -75,6 +84,8 @@ export function Login() {
                 id="phone"
                 placeholder="3001234567"
                 className="h-12"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
               />
             </div>
 
@@ -82,7 +93,24 @@ export function Login() {
               <Button
                 type="button"
                 className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60] text-white"
-                onClick={() => {
+                onClick={async () => {
+                  if (!storeName.trim()) {
+                    toast.error('Ingresa el nombre de la tienda');
+                    return;
+                  }
+
+                  const success = await createStore({
+                    name: storeName.trim(),
+                    nit: nit.trim(),
+                    address: address.trim(),
+                    phone: phone.trim(),
+                    email: username.trim(),
+                  });
+
+                  if (!success) {
+                    return;
+                  }
+
                   toast.success('¡Tienda creada exitosamente!');
                   setShowCreateStore(false);
                 }}
@@ -125,13 +153,13 @@ export function Login() {
 
         <form onSubmit={handleLogin} className="space-y-6">
           <div>
-            <Label htmlFor="username" className="text-base">Usuario</Label>
+            <Label htmlFor="username" className="text-base">Email</Label>
             <div className="relative mt-2">
               <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
               <Input
                 id="username"
                 type="text"
-                placeholder="Ingresa tu usuario"
+                placeholder="Ingresa tu email"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="pl-10 h-14 text-lg"
@@ -177,13 +205,13 @@ export function Login() {
 
         <div className="mt-8 p-4 bg-gray-50 rounded-lg">
           <p className="text-sm text-gray-600 text-center mb-2">
-            <strong>Usuarios de prueba:</strong>
+            <strong>Emails de prueba:</strong>
           </p>
           <p className="text-sm text-gray-600 text-center">
-            Admin: <strong>admin</strong> / <strong>admin123</strong>
+            Usa email y contraseña creados en Auth
           </p>
           <p className="text-sm text-gray-600 text-center">
-            Cajero: <strong>cajero</strong> / <strong>cajero123</strong>
+            Luego crea la tienda desde este formulario
           </p>
         </div>
       </div>

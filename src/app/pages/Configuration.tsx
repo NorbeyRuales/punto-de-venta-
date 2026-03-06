@@ -20,7 +20,11 @@ export function Configuration() {
     categories,
     addCategory,
     updateCategory,
-    deleteCategory
+    deleteCategory,
+    syncWithSupabase,
+    createStore,
+    hasConnectedStore,
+    uploadLocalBackupToSupabase
   } = usePOS();
   const location = useLocation();
   const [config, setConfig] = useState(storeConfig);
@@ -38,9 +42,30 @@ export function Configuration() {
     }
   }, [location.search]);
 
-  const handleSave = () => {
-    updateStoreConfig(config);
-    toast.success('Configuración guardada');
+  useEffect(() => {
+    setConfig(storeConfig);
+  }, [storeConfig]);
+
+  const handleSave = async () => {
+    if (!hasConnectedStore) {
+      const created = await createStore({
+        name: config.name,
+        nit: config.nit,
+        address: config.address,
+        phone: config.phone,
+        email: config.email,
+      });
+
+      if (!created) {
+        toast.error('No se pudo registrar la tienda en Supabase.');
+        return;
+      }
+    }
+
+    const saved = await updateStoreConfig(config);
+    if (!saved) return;
+
+    toast.success('Configuración guardada en Supabase y local.');
   };
 
   const handleBackup = () => {
@@ -95,6 +120,29 @@ export function Configuration() {
 
     cancelEditCategory();
     toast.success('Categoría actualizada');
+  };
+
+
+  const handleManualSync = async () => {
+    await syncWithSupabase();
+  };
+
+  const handleCreateStore = async () => {
+    const created = await createStore({
+      name: config.name,
+      nit: config.nit,
+      address: config.address,
+      phone: config.phone,
+      email: config.email,
+    });
+
+    if (created) {
+      toast.success('Tienda registrada y conectada a tu usuario.');
+    }
+  };
+
+  const handleUploadLocalData = async () => {
+    await uploadLocalBackupToSupabase(false);
   };
 
   const handleDeleteCategory = (category: string) => {
@@ -316,6 +364,12 @@ export function Configuration() {
             <Button onClick={handleSave} className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60]">
               Guardar Cambios
             </Button>
+
+            {!hasConnectedStore && (
+              <Button onClick={handleCreateStore} variant="outline" className="w-full h-12">
+                Registrar tienda en Supabase
+              </Button>
+            )}
           </Card>
         </TabsContent>
 
@@ -409,7 +463,7 @@ export function Configuration() {
 
             <div className="p-4 bg-blue-50 rounded-lg">
               <p className="text-sm text-gray-700">
-                <strong>Nota:</strong> Los usuarios de demostración son <strong>admin/admin123</strong> y <strong>cajero/cajero123</strong>
+                <strong>Nota:</strong> Los usuarios se administran desde Supabase Auth (Dashboard).
               </p>
             </div>
           </Card>
@@ -430,6 +484,15 @@ export function Configuration() {
             </div>
 
             <div className="space-y-3">
+              {!hasConnectedStore && (
+                <Button
+                  onClick={handleCreateStore}
+                  className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60]"
+                >
+                  Registrar tienda con datos actuales
+                </Button>
+              )}
+
               <Button
                 onClick={handleBackup}
                 className="w-full h-12 bg-[#FF6B00] hover:bg-[#E85F00]"
@@ -440,10 +503,27 @@ export function Configuration() {
               <Button
                 variant="outline"
                 className="w-full h-12"
+                onClick={handleManualSync}
+              >
+                Re-sincronizar catálogo con Supabase
+              </Button>
+
+              <Button
+                variant="outline"
+                className="w-full h-12"
+                onClick={handleUploadLocalData}
+              >
+                Subir datos actuales (localStorage) a Supabase
+              </Button>
+
+              <Button
+                variant="outline"
+                className="w-full h-12"
                 onClick={() => toast.info('Funcionalidad de restauración disponible')}
               >
                 Restaurar desde Backup
-              </Button>            </div>
+              </Button>
+            </div>
 
             <div className="p-4 bg-blue-50 rounded-lg">
               <p className="font-semibold mb-2">Modo Offline</p>
