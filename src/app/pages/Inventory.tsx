@@ -425,7 +425,7 @@ return (
       )}
 
       {/* Filtros */}
-      <Card className="p-4">
+      <Card className="p-4 rounded-2xl bg-[var(--card)] border-[var(--border)] shadow-[0_14px_34px_rgba(67,91,154,0.14)]">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
@@ -473,10 +473,10 @@ return (
       </Card>
 
       {/* Tabla de productos */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden rounded-2xl bg-[var(--card)] border-[var(--border)] shadow-[0_14px_34px_rgba(67,91,154,0.16)]">
         <div className="overflow-x-auto">
           <table className="w-full">
-            <thead className="bg-secondary border-b">
+            <thead className="bg-[var(--secondary-soft)] border-b border-[var(--border)]">
               <tr>
                 <th className="text-left p-4 font-semibold">Detalle</th>
                 <th className="text-center p-4 font-semibold">Unid</th>
@@ -498,7 +498,7 @@ return (
                 </tr>
               ) : (
                 filteredProducts.map(product => (
-                  <tr key={product.id} className="border-b hover:bg-secondary/50">
+                  <tr key={product.id} className="border-b border-[var(--border)] even:bg-[rgba(206,181,255,0.12)] hover:bg-[rgba(206,181,255,0.22)] transition-colors">
                     <td className="p-4">
                       <p className="font-semibold">{product.name}</p>
                       <p className="text-sm text-gray-600">
