@@ -21,12 +21,13 @@ import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding
 export function Layout({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showRouteLoading, setShowRouteLoading] = useState(false);
-  const { currentUser, logout, storeConfig } = usePOS();
+  const { currentUser, logout, storeConfig, isAuthenticated, hasConnectedStore } = usePOS();
   const navigate = useNavigate();
   const location = useLocation();
   const navigation = useNavigation();
   const hideTimeoutRef = useRef<number | null>(null);
   const navigationStateRef = useRef(navigation.state);
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const logoSrc = storeConfig.logo || DEFAULT_LOGO_PATH;
 
   const menuItems = [
@@ -77,6 +78,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    const updateOnline = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', updateOnline);
+    window.addEventListener('offline', updateOnline);
+    return () => {
+      window.removeEventListener('online', updateOnline);
+      window.removeEventListener('offline', updateOnline);
+    };
+  }, []);
+
+  const showConnectionDot = isAuthenticated;
+  const isConnected = isAuthenticated && hasConnectedStore && isOnline;
+
   return (
     <div className="min-h-screen bg-secondary flex">
       {showRouteLoading && (
@@ -88,17 +102,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <aside className="hidden lg:flex lg:flex-col w-64 bg-white border-r border-border">
         <div className="p-6 border-b border-border">
           <div className="flex flex-col items-center text-center gap-2">
-            <div className="w-16 h-16 rounded-xl border border-border bg-white overflow-hidden flex items-center justify-center">
-              <img
-                src={logoSrc}
-                alt="Logo de la tienda"
-                className="w-full h-full object-contain"
-                onError={(event) => {
-                  if (event.currentTarget.src !== FALLBACK_LOGO_DATA_URL) {
-                    event.currentTarget.src = FALLBACK_LOGO_DATA_URL;
-                  }
-                }}
-              />
+            <div className="relative w-16 h-16">
+              <div className="w-full h-full rounded-xl border border-border bg-white overflow-hidden flex items-center justify-center">
+                <img
+                  src={logoSrc}
+                  alt="Logo de la tienda"
+                  className="w-full h-full object-contain"
+                  onError={(event) => {
+                    if (event.currentTarget.src !== FALLBACK_LOGO_DATA_URL) {
+                      event.currentTarget.src = FALLBACK_LOGO_DATA_URL;
+                    }
+                  }}
+                />
+              </div>
+              {showConnectionDot && (
+                <span
+                  className={`absolute -bottom-2 -right-2 size-4 rounded-full border-2 border-white shadow-[0_0_0_2px_rgba(91,124,255,0.35),0_0_8px_rgba(15,23,42,0.25)] ${isConnected ? 'bg-[#2ECC71]' : 'bg-[#E74C3C]'}`}
+                  aria-label={isConnected ? 'Conectado' : 'Sin conexión'}
+                  title={isConnected ? 'Conectado' : 'Sin conexión'}
+                />
+              )}
             </div>
             <span className="sr-only">{storeConfig.name}</span>
           </div>
@@ -147,17 +170,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <aside className="absolute left-0 top-0 bottom-0 w-64 bg-white flex flex-col">
             <div className="p-6 border-b border-border flex items-center justify-between">
               <div className="flex flex-col items-center text-center gap-2">
-                <div className="w-14 h-14 rounded-xl border border-border bg-white overflow-hidden flex items-center justify-center">
-                  <img
-                    src={logoSrc}
-                    alt="Logo de la tienda"
-                    className="w-full h-full object-contain"
-                    onError={(event) => {
-                      if (event.currentTarget.src !== FALLBACK_LOGO_DATA_URL) {
-                        event.currentTarget.src = FALLBACK_LOGO_DATA_URL;
-                      }
-                    }}
-                  />
+                <div className="relative w-14 h-14">
+                  <div className="w-full h-full rounded-xl border border-border bg-white overflow-hidden flex items-center justify-center">
+                    <img
+                      src={logoSrc}
+                      alt="Logo de la tienda"
+                      className="w-full h-full object-contain"
+                      onError={(event) => {
+                        if (event.currentTarget.src !== FALLBACK_LOGO_DATA_URL) {
+                          event.currentTarget.src = FALLBACK_LOGO_DATA_URL;
+                        }
+                      }}
+                    />
+                  </div>
+                  {showConnectionDot && (
+                    <span
+                      className={`absolute -bottom-2 -right-2 size-4 rounded-full border-2 border-white shadow-[0_0_0_2px_rgba(91,124,255,0.35),0_0_8px_rgba(15,23,42,0.25)] ${isConnected ? 'bg-[#2ECC71]' : 'bg-[#E74C3C]'}`}
+                      aria-label={isConnected ? 'Conectado' : 'Sin conexión'}
+                      title={isConnected ? 'Conectado' : 'Sin conexión'}
+                    />
+                  )}
                 </div>
                 <span className="sr-only">{storeConfig.name}</span>
               </div>
@@ -212,17 +244,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <Menu className="w-6 h-6" />
           </button>
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg border border-border bg-white overflow-hidden flex items-center justify-center">
-              <img
-                src={logoSrc}
-                alt="Logo de la tienda"
-                className="w-full h-full object-contain"
-                onError={(event) => {
-                  if (event.currentTarget.src !== FALLBACK_LOGO_DATA_URL) {
-                    event.currentTarget.src = FALLBACK_LOGO_DATA_URL;
-                  }
-                }}
-              />
+            <div className="relative w-8 h-8">
+              <div className="w-full h-full rounded-lg border border-border bg-white overflow-hidden flex items-center justify-center">
+                <img
+                  src={logoSrc}
+                  alt="Logo de la tienda"
+                  className="w-full h-full object-contain"
+                  onError={(event) => {
+                    if (event.currentTarget.src !== FALLBACK_LOGO_DATA_URL) {
+                      event.currentTarget.src = FALLBACK_LOGO_DATA_URL;
+                    }
+                  }}
+                />
+              </div>
+              {showConnectionDot && (
+                <span
+                  className={`absolute -bottom-2 -right-2 size-3.5 rounded-full border-2 border-white shadow-[0_0_0_2px_rgba(91,124,255,0.35),0_0_6px_rgba(15,23,42,0.2)] ${isConnected ? 'bg-[#2ECC71]' : 'bg-[#E74C3C]'}`}
+                  aria-label={isConnected ? 'Conectado' : 'Sin conexión'}
+                  title={isConnected ? 'Conectado' : 'Sin conexión'}
+                />
+              )}
             </div>
             <h2 className="font-bold">{storeConfig.name}</h2>
           </div>
