@@ -123,13 +123,23 @@ export function POS() {
     console.log('Venta:', sale);
   };
 
+  const handlePrint = () => {
+    toast.info('Funcionalidad de impresión en preparación.');
+  };
+
+  const handleShareWhatsapp = () => {
+    toast.info('Funcionalidad de WhatsApp en preparación.');
+  };
+
   const subtotal = cart.reduce((sum, item) => sum + (item.product.salePrice * item.quantity), 0);
   const totalDiscount = cart.reduce((sum, item) => {
     const itemPrice = item.product.salePrice * item.quantity;
     return sum + ((itemPrice * item.discount) / 100);
   }, 0);
+  const cashValue = parseFloat(cashReceived) || 0;
+  const isCashInsufficient = paymentMethod === 'efectivo' && cashReceived !== '' && cashValue < cartTotal;
   const change = paymentMethod === 'efectivo' 
-    ? Math.max(0, (parseFloat(cashReceived) || 0) - cartTotal)
+    ? Math.max(0, cashValue - cartTotal)
     : 0;
 
   return (
@@ -147,6 +157,7 @@ export function POS() {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10 h-14 text-lg"
               autoFocus
+              aria-label="Buscar productos"
             />
           </div>
 
@@ -238,6 +249,8 @@ export function POS() {
                     <button
                       onClick={() => removeFromCart(item.product.id)}
                       className="text-red-600 hover:text-red-700"
+                      aria-label="Eliminar del carrito"
+                      title="Eliminar del carrito"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -250,6 +263,8 @@ export function POS() {
                         variant="outline"
                         className="h-8 w-8 p-0"
                         onClick={() => handleQuantityChange(item.product.id, item.quantity - 1)}
+                        aria-label="Disminuir cantidad"
+                        title="Disminuir cantidad"
                       >
                         <Minus className="w-4 h-4" />
                       </Button>
@@ -259,6 +274,8 @@ export function POS() {
                         variant="outline"
                         className="h-8 w-8 p-0"
                         onClick={() => handleQuantityChange(item.product.id, item.quantity + 1)}
+                        aria-label="Aumentar cantidad"
+                        title="Aumentar cantidad"
                       >
                         <Plus className="w-4 h-4" />
                       </Button>
@@ -338,7 +355,9 @@ export function POS() {
                 onChange={(e) => setDiscountAmount(e.target.value)}
                 placeholder="0"
                 className="h-12 text-lg"
+                aria-describedby="pos-discount-help"
               />
+              <p id="pos-discount-help" className="text-xs text-gray-500 mt-1">Rango permitido: 0 a 100.</p>
             </div>
             <div className="flex gap-2">
               <Button onClick={handleApplyDiscount} className="flex-1 bg-[#2ECC71] hover:bg-[#27AE60]">
@@ -406,9 +425,20 @@ export function POS() {
                   value={cashReceived}
                   onChange={(e) => setCashReceived(e.target.value)}
                   placeholder="0"
-                  className="h-12 text-lg"
+                  className={`h-12 text-lg ${isCashInsufficient ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
                   autoFocus
+                  aria-invalid={isCashInsufficient}
+                  aria-describedby="pos-cash-help"
                 />
+                {isCashInsufficient ? (
+                  <p id="pos-cash-help" className="text-xs text-red-600 mt-1">
+                    El efectivo debe ser igual o mayor al total.
+                  </p>
+                ) : (
+                  <p id="pos-cash-help" className="text-xs text-gray-500 mt-1">
+                    Ingresa el valor recibido para calcular el cambio.
+                  </p>
+                )}
                 {cashReceived && (
                   <div className="mt-2 p-3 bg-blue-50 rounded-lg">
                     <p className="text-sm text-gray-600">Cambio a Devolver</p>
@@ -448,17 +478,19 @@ export function POS() {
                 variant="outline"
                 onClick={() => setShowPaymentDialog(false)}
                 className="h-12"
+                aria-label="Cerrar"
+                title="Cerrar"
               >
                 <X className="w-5 h-5" />
               </Button>
             </div>
 
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" className="flex-1">
+              <Button variant="outline" size="sm" className="flex-1" onClick={handlePrint} title="Imprimir comprobante">
                 <Printer className="w-4 h-4 mr-1" />
                 Imprimir
               </Button>
-              <Button variant="outline" size="sm" className="flex-1">
+              <Button variant="outline" size="sm" className="flex-1" onClick={handleShareWhatsapp} title="Enviar por WhatsApp">
                 <Share2 className="w-4 h-4 mr-1" />
                 WhatsApp
               </Button>

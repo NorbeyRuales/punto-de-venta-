@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
 import { toast } from 'sonner';
 import type { Product } from '../context/POSContext';
 
@@ -47,12 +48,11 @@ export function Inventory() {
   const [showKardexDialog, setShowKardexDialog] = useState(false);
   const [selectedKardexProduct, setSelectedKardexProduct] = useState<Product | null>(null);
   const defaultCategory = categories[0] || 'General';
-
-  const [formData, setFormData] = useState({
+  const buildEmptyForm = (category: string) => ({
     name: '',
     sku: '',
     barcode: '',
-    category: defaultCategory,
+    category,
     costPrice: '',
     unitsPerPurchase: '1',
     profitMargin: '30',
@@ -63,6 +63,10 @@ export function Inventory() {
     iva: '0',
     supplierName: ''
   });
+  const [formData, setFormData] = useState(buildEmptyForm(defaultCategory));
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [isExporting, setIsExporting] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const purchaseCost = parseFloat(formData.costPrice) || 0;
   const unitsPerPurchase = parseFloat(formData.unitsPerPurchase) || 0;
@@ -73,6 +77,64 @@ export function Inventory() {
   const calculatedCostWithIva = purchaseCost * (1 + (ivaRate / 100));
   const calculatedUnitCostWithIva = unitsPerPurchase > 0 ? calculatedCostWithIva / unitsPerPurchase : 0;
   const calculatedUnitSalePrice = marginFactor > 0 ? calculatedUnitCostWithIva / marginFactor : 0;
+  const emptyFormData = buildEmptyForm(defaultCategory);
+
+  const mapProductToForm = (product: Product) => ({
+    name: product.name,
+    sku: product.sku,
+    barcode: product.barcode,
+    category: product.category,
+    costPrice: product.costPrice.toString(),
+    unitsPerPurchase: (product.unitsPerPurchase || 1).toString(),
+    profitMargin: (product.profitMargin ?? 30).toString(),
+    stock: product.stock.toString(),
+    minStock: product.minStock.toString(),
+    unit: product.unit,
+    isBulk: product.isBulk,
+    iva: product.iva.toString(),
+    supplierName: product.supplierName || ''
+  });
+
+  const hasFormChanges = (current: typeof formData, baseline: typeof formData) =>
+    Object.keys(baseline).some((key) =>
+      current[key as keyof typeof baseline] !== baseline[key as keyof typeof baseline]
+    );
+
+  const isAddDirty = hasFormChanges(formData, emptyFormData);
+  const isEditDirty = selectedProduct ? hasFormChanges(formData, mapProductToForm(selectedProduct)) : false;
+
+  const errorClass = (field: keyof typeof formData) =>
+    formErrors[field] ? 'border-red-500 focus-visible:ring-red-500' : '';
+
+  const clearFormError = (field: keyof typeof formData) => {
+    if (!formErrors[field]) return;
+    setFormErrors(prev => {
+      const { [field]: _removed, ...rest } = prev;
+      return rest;
+    });
+  };
+
+  const validateForm = () => {
+    const errors: Record<string, string> = {};
+    if (!formData.name.trim()) {
+      errors.name = 'Nombre requerido';
+    }
+    if (!formData.supplierName.trim()) {
+      errors.supplierName = 'Proveedor requerido';
+    }
+    if (purchaseCost <= 0) {
+      errors.costPrice = 'Debe ser mayor a 0';
+    }
+    if (unitsPerPurchase <= 0) {
+      errors.unitsPerPurchase = 'Debe ser mayor a 0';
+    }
+    if (!formData.profitMargin.trim()) {
+      errors.profitMargin = 'Utilidad requerida';
+    } else if (profitMargin < 0 || profitMargin >= 100) {
+      errors.profitMargin = 'Debe estar entre 0 y 99.99';
+    }
+    return errors;
+  };
 
   useEffect(() => {
     if (categoryFilter !== 'all' && !categories.includes(categoryFilter)) {
@@ -93,6 +155,34 @@ export function Inventory() {
       setFormData(prev => ({ ...prev, category: defaultCategory }));
     }
   }, [categories, formData.category, defaultCategory]);
+
+  useEffect(() => {
+    const handleShortcuts = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTypingTarget = target
+        && (target.tagName === 'INPUT'
+          || target.tagName === 'TEXTAREA'
+          || target.tagName === 'SELECT'
+          || target.isContentEditable);
+
+      if (isTypingTarget) return;
+
+      if (event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      if ((event.key === 'n' || event.key === 'N') && event.altKey) {
+        event.preventDefault();
+        setShowAddDialog(true);
+        setFormErrors({});
+      }
+    };
+
+    window.addEventListener('keydown', handleShortcuts);
+    return () => window.removeEventListener('keydown', handleShortcuts);
+  }, []);
 
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -115,8 +205,10 @@ export function Inventory() {
     : [];
 
   const handleAddProduct = () => {
-    if (!formData.name || purchaseCost <= 0 || unitsPerPurchase <= 0 || profitMargin >= 100 || !formData.supplierName) {
-      toast.error('Complete los campos requeridos (incluyendo proveedor) y use una utilidad menor a 100%');
+    const errors = validateForm();
+    setFormErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      toast.error('Revisa los campos marcados.');
       return;
     }
 
@@ -140,13 +232,16 @@ export function Inventory() {
 
     toast.success('Producto agregado exitosamente');
     setShowAddDialog(false);
+    setFormErrors({});
     resetForm();
   };
 
   const handleEditProduct = () => {
     if (!selectedProduct) return;
-    if (!formData.name || purchaseCost <= 0 || unitsPerPurchase <= 0 || profitMargin >= 100 || !formData.supplierName) {
-      toast.error('Complete los campos requeridos (incluyendo proveedor) y use una utilidad menor a 100%');
+    const errors = validateForm();
+    setFormErrors(errors);
+    if (Object.keys(errors).length > 0) {
+      toast.error('Revisa los campos marcados.');
       return;
     }
 
@@ -171,57 +266,69 @@ export function Inventory() {
     toast.success('Producto actualizado');
     setShowEditDialog(false);
     setSelectedProduct(null);
+    setFormErrors({});
     resetForm();
   };
 
-  const handleDeleteProduct = (productId: string) => {
-    if (confirm('¿Está seguro de eliminar este producto?')) {
-      deleteProduct(productId);
-      toast.success('Producto eliminado');
-    }
+  const handleDeleteProduct = (product: Product) => {
+    const confirmed = confirm(`¿Eliminar "${product.name}"? Esta acción no se puede deshacer.`);
+    if (!confirmed) return;
+    deleteProduct(product.id);
+    toast.success('Producto eliminado');
   };
 
   const openEditDialog = (product: Product) => {
     setSelectedProduct(product);
-    setFormData({
-      name: product.name,
-      sku: product.sku,
-      barcode: product.barcode,
-      category: product.category,
-      costPrice: product.costPrice.toString(),
-      unitsPerPurchase: (product.unitsPerPurchase || 1).toString(),
-      profitMargin: (product.profitMargin ?? 30).toString(),
-      stock: product.stock.toString(),
-      minStock: product.minStock.toString(),
-      unit: product.unit,
-      isBulk: product.isBulk,
-      iva: product.iva.toString(),
-      supplierName: product.supplierName || ''
-    });
+    setFormData(mapProductToForm(product));
+    setFormErrors({});
     setShowEditDialog(true);
   };
 
   const resetForm = () => {
     setLastLookedUpBarcode('');
     setBarcodeLookupStatus('idle');
-    setFormData({
-      name: '',
-      sku: '',
-      barcode: '',
-      category: defaultCategory,
-      costPrice: '',
-      unitsPerPurchase: '1',
-      profitMargin: '30',
-      stock: '',
-      minStock: '',
-      unit: 'unidad',
-      isBulk: false,
-      iva: '0',
-      supplierName: ''
-    });
+    setFormData(buildEmptyForm(defaultCategory));
+    setFormErrors({});
+  };
+
+  const handleAddDialogChange = (open: boolean) => {
+    if (!open && isAddDirty) {
+      const confirmed = confirm('Tienes cambios sin guardar. ¿Cerrar sin guardar?');
+      if (!confirmed) return;
+    }
+    setShowAddDialog(open);
+    if (!open) {
+      resetForm();
+      return;
+    }
+    setFormErrors({});
+  };
+
+  const handleEditDialogChange = (open: boolean) => {
+    if (!open && isEditDirty) {
+      const confirmed = confirm('Tienes cambios sin guardar. ¿Cerrar sin guardar?');
+      if (!confirmed) return;
+    }
+    setShowEditDialog(open);
+    if (!open) {
+      setSelectedProduct(null);
+      resetForm();
+      return;
+    }
+    setFormErrors({});
   };
 
   const exportToCSV = () => {
+    if (isExporting) return;
+    setIsExporting(true);
+    const csvEscape = (value: string | number) => {
+      const text = String(value ?? '');
+      if (/[",\n]/.test(text)) {
+        return `"${text.replace(/"/g, '""')}"`;
+      }
+      return text;
+    };
+
     const headers = ['Detalle', 'Unid', 'Precio con IVA', 'Precio costo uni', 'Precio venta', 'Utilidad (%)', 'Stock', 'Stock mínimo'];
     const rows = products.map(p => [
       p.name,
@@ -237,14 +344,18 @@ export function Inventory() {
       p.minStock
     ]);
     
-    const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `inventario-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    toast.success('Inventario exportado');
+    try {
+      const csvContent = [headers, ...rows].map(row => row.map(csvEscape).join(',')).join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `inventario-${new Date().toISOString().split('T')[0]}.csv`;
+      a.click();
+      toast.success('Inventario exportado');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const calculateProfitMargin = (cost: number, sale: number): number => {
@@ -403,7 +514,7 @@ return (
             Gestionar Categorías
           </Button>
           <Button
-            onClick={() => setShowAddDialog(true)}
+            onClick={() => handleAddDialogChange(true)}
             className="bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
           >
             <Plus className="w-5 h-5 mr-2" />
@@ -430,9 +541,12 @@ return (
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
             <Input
+              ref={searchInputRef}
               placeholder="Buscar productos..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              aria-label="Buscar productos"
+              aria-describedby="inventory-search-help"
               className="pl-10 h-12"
             />
           </div>
@@ -465,10 +579,15 @@ return (
             variant="outline"
             onClick={exportToCSV}
             className="h-12"
+            disabled={isExporting}
           >
             <Download className="w-5 h-5 mr-2" />
-            Exportar CSV
+            {isExporting ? 'Exportando...' : 'Exportar CSV'}
           </Button>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 text-xs text-gray-500">
+          <p id="inventory-search-help">Atajos: / buscar · Alt+N agregar producto</p>
+          <p aria-live="polite">Mostrando {filteredProducts.length} de {products.length} productos</p>
         </div>
       </Card>
 
@@ -535,30 +654,51 @@ return (
                     </td>
                     <td className="p-4"> {/* Acciones */}
                       <div className="flex items-center justify-center gap-2">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openKardexDialog(product)}
+                              aria-label="Ver kardex"
+                              title="Ver kardex"
+                            >
+                              <History className="w-4 h-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Ver kardex (historial)</TooltipContent>
+                        </Tooltip>
 
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openKardexDialog(product)}
-                        >
-                          <History className="w-4 h-4" />
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openEditDialog(product)}
+                              aria-label="Editar producto"
+                              title="Editar producto"
+                            >
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Editar producto</TooltipContent>
+                        </Tooltip>
 
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openEditDialog(product)}
-                        >
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="text-red-600 hover:text-red-700"
-                          onClick={() => handleDeleteProduct(product.id)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-red-600 hover:text-red-700"
+                              onClick={() => handleDeleteProduct(product)}
+                              aria-label="Eliminar producto"
+                              title="Eliminar producto"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Eliminar producto</TooltipContent>
+                        </Tooltip>
                       </div>
                     </td>
                   </tr>
@@ -570,20 +710,34 @@ return (
       </Card>
 
       {/* Dialog Agregar Producto */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+      <Dialog open={showAddDialog} onOpenChange={handleAddDialogChange}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Agregar Producto</DialogTitle>
           </DialogHeader>
+          <p className="text-xs text-gray-500">Los campos con * son obligatorios.</p>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label>Nombre *</Label>
               <Input
                 value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, name: e.target.value });
+                  clearFormError('name');
+                }}
                 placeholder="Nombre del producto"
+                aria-invalid={!!formErrors.name}
+                aria-describedby={formErrors.name ? 'inventory-name-error' : 'inventory-name-help'}
+                className={errorClass('name')}
               />
+              {formErrors.name ? (
+                <p id="inventory-name-error" className="text-xs text-red-600 mt-1">{formErrors.name}</p>
+              ) : (
+                <p id="inventory-name-help" className="text-xs text-gray-500 mt-1">
+                  
+                </p>
+              )}
             </div>
 
             <div>
@@ -593,6 +747,7 @@ return (
                 onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
                 placeholder="Auto-generado"
               />
+              <p className="text-xs text-gray-500 mt-1"></p>
             </div>
 
             <div>
@@ -616,18 +771,30 @@ return (
                   }
                 }}
                 placeholder={isSearchingBarcode ? 'Buscando producto...' : 'Escanear o ingresar'}
+                aria-describedby="inventory-barcode-help inventory-barcode-status"
               />
+              <p id="inventory-barcode-help" className="text-xs text-gray-500 mt-1">
+                Formato válido: 8 a 14 dígitos. Presiona Enter para buscar.
+              </p>
               {barcodeLookupStatus === 'searching' && (
-                <p className="text-xs text-gray-500 mt-1">Consultando producto en internet...</p>
+                <p id="inventory-barcode-status" className="text-xs text-gray-500 mt-1" role="status" aria-live="polite">
+                  Consultando producto en internet...
+                </p>
               )}
               {barcodeLookupStatus === 'found' && (
-                <p className="text-xs text-green-600 mt-1">Producto encontrado y nombre autocompletado.</p>
+                <p id="inventory-barcode-status" className="text-xs text-green-600 mt-1" role="status" aria-live="polite">
+                  Producto encontrado y nombre autocompletado.
+                </p>
               )}
               {barcodeLookupStatus === 'not-found' && (
-                <p className="text-xs text-amber-600 mt-1">No se encontró información para este código.</p>
+                <p id="inventory-barcode-status" className="text-xs text-amber-600 mt-1" role="status" aria-live="polite">
+                  No se encontró información para este código.
+                </p>
               )}
               {barcodeLookupStatus === 'error' && (
-                <p className="text-xs text-red-600 mt-1">Error consultando internet. Intenta nuevamente.</p>
+                <p id="inventory-barcode-status" className="text-xs text-red-600 mt-1" role="status" aria-live="polite">
+                  Error consultando internet. Intenta nuevamente.
+                </p>
               )}
             </div>
 
@@ -643,15 +810,19 @@ return (
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-gray-500 mt-1">Crea categorías desde Configuración.</p>
             </div>
 
             <div>
               <Label>Proveedor *</Label>
               <Select
                 value={formData.supplierName || 'none'}
-                onValueChange={(val) => setFormData({ ...formData, supplierName: val === 'none' ? '' : val })}
+                onValueChange={(val) => {
+                  setFormData({ ...formData, supplierName: val === 'none' ? '' : val });
+                  clearFormError('supplierName');
+                }}
               >
-                <SelectTrigger>
+                <SelectTrigger className={errorClass('supplierName')} aria-invalid={!!formErrors.supplierName}>
                   <SelectValue placeholder="Seleccione proveedor" />
                 </SelectTrigger>
                 <SelectContent>
@@ -661,6 +832,11 @@ return (
                   ))}
                 </SelectContent>
               </Select>
+              {formErrors.supplierName ? (
+                <p className="text-xs text-red-600 mt-1">{formErrors.supplierName}</p>
+              ) : (
+                <p className="text-xs text-gray-500 mt-1">Obligatorio para trazabilidad y compras.</p>
+              )}
             </div>
 
             <div>
@@ -668,9 +844,22 @@ return (
               <Input
                 type="number"
                 value={formData.costPrice}
-                onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, costPrice: e.target.value });
+                  clearFormError('costPrice');
+                }}
                 placeholder="0"
+                aria-invalid={!!formErrors.costPrice}
+                aria-describedby={formErrors.costPrice ? 'inventory-cost-error' : 'inventory-cost-help'}
+                className={errorClass('costPrice')}
               />
+              {formErrors.costPrice ? (
+                <p id="inventory-cost-error" className="text-xs text-red-600 mt-1">{formErrors.costPrice}</p>
+              ) : (
+                <p id="inventory-cost-help" className="text-xs text-gray-500 mt-1">
+                  Sin IVA. Se usa para calcular costo unitario.
+                </p>
+              )}
             </div>
 
             <div>
@@ -679,9 +868,22 @@ return (
                 type="number"
                 min="1"
                 value={formData.unitsPerPurchase}
-                onChange={(e) => setFormData({ ...formData, unitsPerPurchase: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, unitsPerPurchase: e.target.value });
+                  clearFormError('unitsPerPurchase');
+                }}
                 placeholder="1"
+                aria-invalid={!!formErrors.unitsPerPurchase}
+                aria-describedby={formErrors.unitsPerPurchase ? 'inventory-units-error' : 'inventory-units-help'}
+                className={errorClass('unitsPerPurchase')}
               />
+              {formErrors.unitsPerPurchase ? (
+                <p id="inventory-units-error" className="text-xs text-red-600 mt-1">{formErrors.unitsPerPurchase}</p>
+              ) : (
+                <p id="inventory-units-help" className="text-xs text-gray-500 mt-1">
+                  Ej: si compras por caja de 12, ingresa 12.
+                </p>
+              )}
             </div>
 
             <div>
@@ -690,9 +892,22 @@ return (
                 type="number"
                 min="0"
                 value={formData.profitMargin}
-                onChange={(e) => setFormData({ ...formData, profitMargin: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, profitMargin: e.target.value });
+                  clearFormError('profitMargin');
+                }}
                 placeholder="30"
+                aria-invalid={!!formErrors.profitMargin}
+                aria-describedby={formErrors.profitMargin ? 'inventory-margin-error' : 'inventory-margin-help'}
+                className={errorClass('profitMargin')}
               />
+              {formErrors.profitMargin ? (
+                <p id="inventory-margin-error" className="text-xs text-red-600 mt-1">{formErrors.profitMargin}</p>
+              ) : (
+                <p id="inventory-margin-help" className="text-xs text-gray-500 mt-1">
+                  Margen sobre costo con IVA. Menor a 100%.
+                </p>
+              )}
             </div>
 
             <div>
@@ -703,6 +918,7 @@ return (
                 onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
                 placeholder="0"
               />
+              <p className="text-xs text-gray-500 mt-1">Si ya tienes inventario disponible, indícalo aquí.</p>
             </div>
 
             <div>
@@ -713,6 +929,7 @@ return (
                 onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
                 placeholder="5"
               />
+              <p className="text-xs text-gray-500 mt-1">Usado para alertas de stock bajo.</p>
             </div>
 
             <div>
@@ -724,6 +941,7 @@ return (
                 onChange={(e) => handleEditCostWithIvaChange(e.target.value)}
                 placeholder="0"
               />
+              <p className="text-xs text-gray-500 mt-1">Se calcula con IVA. Puedes ajustarlo.</p>
             </div>
 
             <div>
@@ -735,6 +953,7 @@ return (
                 onChange={(e) => handleEditUnitCostChange(e.target.value)}
                 placeholder="0"
               />
+              <p className="text-xs text-gray-500 mt-1">Costo unitario con IVA.</p>
             </div>
 
             <div>
@@ -746,6 +965,7 @@ return (
                 onChange={(e) => handleEditUnitSalePriceChange(e.target.value)}
                 placeholder="0"
               />
+              <p className="text-xs text-gray-500 mt-1">Ajusta el precio y recalcularemos la utilidad.</p>
             </div>
 
             <div>
@@ -763,6 +983,7 @@ return (
                   <SelectItem value="paquete">Paquete</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-gray-500 mt-1">Se muestra junto al stock.</p>
             </div>
 
             <div>
@@ -778,6 +999,7 @@ return (
                   <SelectItem value="19">19%</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-gray-500 mt-1">Afecta el precio con IVA y el costo unitario.</p>
             </div>
           </div>
 
@@ -791,8 +1013,7 @@ return (
             <Button
               variant="outline"
               onClick={() => {
-                setShowAddDialog(false);
-                resetForm();
+                handleAddDialogChange(false);
               }}
               className="flex-1"
             >
@@ -803,19 +1024,33 @@ return (
       </Dialog>
 
       {/* Dialog Editar Producto */}
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+      <Dialog open={showEditDialog} onOpenChange={handleEditDialogChange}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar Producto</DialogTitle>
           </DialogHeader>
+          <p className="text-xs text-gray-500">Los campos con * son obligatorios.</p>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label>Nombre *</Label>
               <Input
                 value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, name: e.target.value });
+                  clearFormError('name');
+                }}
+                aria-invalid={!!formErrors.name}
+                aria-describedby={formErrors.name ? 'inventory-name-error' : 'inventory-name-help'}
+                className={errorClass('name')}
               />
+              {formErrors.name ? (
+                <p id="inventory-name-error" className="text-xs text-red-600 mt-1">{formErrors.name}</p>
+              ) : (
+                <p id="inventory-name-help" className="text-xs text-gray-500 mt-1">
+                  Usa el nombre comercial para encontrarlo rápido.
+                </p>
+              )}
             </div>
 
             <div>
@@ -824,6 +1059,7 @@ return (
                 value={formData.sku}
                 onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
               />
+              <p className="text-xs text-gray-500 mt-1">Puedes editarlo si cambia el código interno.</p>
             </div>
 
             <div>
@@ -831,7 +1067,11 @@ return (
               <Input
                 value={formData.barcode}
                 onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+                aria-describedby="inventory-barcode-help"
               />
+              <p id="inventory-barcode-help" className="text-xs text-gray-500 mt-1">
+                Formato válido: 8 a 14 dígitos.
+              </p>
             </div>
 
             <div>
@@ -846,15 +1086,19 @@ return (
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-gray-500 mt-1">Crea categorías desde Configuración.</p>
             </div>
 
             <div>
               <Label>Proveedor *</Label>
               <Select
                 value={formData.supplierName || 'none'}
-                onValueChange={(val) => setFormData({ ...formData, supplierName: val === 'none' ? '' : val })}
+                onValueChange={(val) => {
+                  setFormData({ ...formData, supplierName: val === 'none' ? '' : val });
+                  clearFormError('supplierName');
+                }}
               >
-                <SelectTrigger>
+                <SelectTrigger className={errorClass('supplierName')} aria-invalid={!!formErrors.supplierName}>
                   <SelectValue placeholder="Seleccione proveedor" />
                 </SelectTrigger>
                 <SelectContent>
@@ -864,6 +1108,11 @@ return (
                   ))}
                 </SelectContent>
               </Select>
+              {formErrors.supplierName ? (
+                <p className="text-xs text-red-600 mt-1">{formErrors.supplierName}</p>
+              ) : (
+                <p className="text-xs text-gray-500 mt-1">Obligatorio para trazabilidad y compras.</p>
+              )}
             </div>
 
             <div>
@@ -871,8 +1120,21 @@ return (
               <Input
                 type="number"
                 value={formData.costPrice}
-                onChange={(e) => setFormData({ ...formData, costPrice: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, costPrice: e.target.value });
+                  clearFormError('costPrice');
+                }}
+                aria-invalid={!!formErrors.costPrice}
+                aria-describedby={formErrors.costPrice ? 'inventory-cost-error' : 'inventory-cost-help'}
+                className={errorClass('costPrice')}
               />
+              {formErrors.costPrice ? (
+                <p id="inventory-cost-error" className="text-xs text-red-600 mt-1">{formErrors.costPrice}</p>
+              ) : (
+                <p id="inventory-cost-help" className="text-xs text-gray-500 mt-1">
+                  Sin IVA. Se usa para calcular costo unitario.
+                </p>
+              )}
             </div>
 
             <div>
@@ -881,8 +1143,21 @@ return (
                 type="number"
                 min="1"
                 value={formData.unitsPerPurchase}
-                onChange={(e) => setFormData({ ...formData, unitsPerPurchase: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, unitsPerPurchase: e.target.value });
+                  clearFormError('unitsPerPurchase');
+                }}
+                aria-invalid={!!formErrors.unitsPerPurchase}
+                aria-describedby={formErrors.unitsPerPurchase ? 'inventory-units-error' : 'inventory-units-help'}
+                className={errorClass('unitsPerPurchase')}
               />
+              {formErrors.unitsPerPurchase ? (
+                <p id="inventory-units-error" className="text-xs text-red-600 mt-1">{formErrors.unitsPerPurchase}</p>
+              ) : (
+                <p id="inventory-units-help" className="text-xs text-gray-500 mt-1">
+                  Ej: si compras por caja de 12, ingresa 12.
+                </p>
+              )}
             </div>
 
             <div>
@@ -891,8 +1166,21 @@ return (
                 type="number"
                 min="0"
                 value={formData.profitMargin}
-                onChange={(e) => setFormData({ ...formData, profitMargin: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, profitMargin: e.target.value });
+                  clearFormError('profitMargin');
+                }}
+                aria-invalid={!!formErrors.profitMargin}
+                aria-describedby={formErrors.profitMargin ? 'inventory-margin-error' : 'inventory-margin-help'}
+                className={errorClass('profitMargin')}
               />
+              {formErrors.profitMargin ? (
+                <p id="inventory-margin-error" className="text-xs text-red-600 mt-1">{formErrors.profitMargin}</p>
+              ) : (
+                <p id="inventory-margin-help" className="text-xs text-gray-500 mt-1">
+                  Margen sobre costo con IVA. Menor a 100%.
+                </p>
+              )}
             </div>
 
             <div>
@@ -902,6 +1190,7 @@ return (
                 value={formData.stock}
                 onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
               />
+              <p className="text-xs text-gray-500 mt-1">Actualiza si haces ajustes manuales.</p>
             </div>
 
             <div>
@@ -911,6 +1200,7 @@ return (
                 value={formData.minStock}
                 onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
               />
+              <p className="text-xs text-gray-500 mt-1">Usado para alertas de stock bajo.</p>
             </div>
 
             <div>
@@ -921,6 +1211,7 @@ return (
                 value={calculatedCostWithIva ? calculatedCostWithIva.toFixed(2) : ''}
                 onChange={(e) => handleEditCostWithIvaChange(e.target.value)}
               />
+              <p className="text-xs text-gray-500 mt-1">Se calcula con IVA. Puedes ajustarlo.</p>
             </div>
 
             <div>
@@ -931,6 +1222,7 @@ return (
                 value={calculatedUnitCostWithIva ? calculatedUnitCostWithIva.toFixed(2) : ''}
                 onChange={(e) => handleEditUnitCostChange(e.target.value)}
               />
+              <p className="text-xs text-gray-500 mt-1">Costo unitario con IVA.</p>
             </div>
 
             <div>
@@ -941,6 +1233,7 @@ return (
                 value={calculatedUnitSalePrice ? calculatedUnitSalePrice.toFixed(2) : ''}
                 onChange={(e) => handleEditUnitSalePriceChange(e.target.value)}
               />
+              <p className="text-xs text-gray-500 mt-1">Ajusta el precio y recalcularemos la utilidad.</p>
             </div>
 
             <div>
@@ -958,6 +1251,7 @@ return (
                   <SelectItem value="paquete">Paquete</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-gray-500 mt-1">Se muestra junto al stock.</p>
             </div>
 
             <div>
@@ -973,6 +1267,7 @@ return (
                   <SelectItem value="19">19%</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-gray-500 mt-1">Afecta el precio con IVA y el costo unitario.</p>
             </div>
           </div>
 
@@ -986,9 +1281,7 @@ return (
             <Button
               variant="outline"
               onClick={() => {
-                setShowEditDialog(false);
-                setSelectedProduct(null);
-                resetForm();
+                handleEditDialogChange(false);
               }}
               className="flex-1"
             >

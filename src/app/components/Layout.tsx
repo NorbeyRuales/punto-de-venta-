@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useLocation, useNavigation } from 'react-router';
 import { usePOS } from '../context/POSContext';
 import { 
   LayoutDashboard, 
@@ -20,9 +20,13 @@ import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [showRouteLoading, setShowRouteLoading] = useState(false);
   const { currentUser, logout, storeConfig } = usePOS();
   const navigate = useNavigate();
   const location = useLocation();
+  const navigation = useNavigation();
+  const hideTimeoutRef = useRef<number | null>(null);
+  const navigationStateRef = useRef(navigation.state);
   const logoSrc = storeConfig.logo || DEFAULT_LOGO_PATH;
 
   const menuItems = [
@@ -42,13 +46,49 @@ export function Layout({ children }: { children: React.ReactNode }) {
     navigate('/');
   };
 
+  const showLoadingBar = () => {
+    if (hideTimeoutRef.current) {
+      window.clearTimeout(hideTimeoutRef.current);
+    }
+    setShowRouteLoading(true);
+    hideTimeoutRef.current = window.setTimeout(() => {
+      if (navigationStateRef.current === 'idle') {
+        setShowRouteLoading(false);
+      }
+    }, 700);
+  };
+
+  useEffect(() => {
+    showLoadingBar();
+  }, [location.pathname]);
+
+  useEffect(() => {
+    navigationStateRef.current = navigation.state;
+    if (navigation.state !== 'idle') {
+      showLoadingBar();
+    }
+  }, [navigation.state]);
+
+  useEffect(() => {
+    return () => {
+      if (hideTimeoutRef.current) {
+        window.clearTimeout(hideTimeoutRef.current);
+      }
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-secondary flex">
+      {showRouteLoading && (
+        <div className="top-loading-bar" role="status" aria-live="polite">
+          <div className="top-loading-bar__indicator" />
+        </div>
+      )}
       {/* Sidebar Desktop */}
       <aside className="hidden lg:flex lg:flex-col w-64 bg-white border-r border-border">
         <div className="p-6 border-b border-border">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg border border-border bg-white overflow-hidden flex items-center justify-center">
+          <div className="flex flex-col items-center text-center gap-2">
+            <div className="w-16 h-16 rounded-xl border border-border bg-white overflow-hidden flex items-center justify-center">
               <img
                 src={logoSrc}
                 alt="Logo de la tienda"
@@ -60,10 +100,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 }}
               />
             </div>
-            <div>
-              <h2 className="font-bold text-lg">{storeConfig.name}</h2>
-              <p className="text-sm text-muted-foreground">{currentUser?.username}</p>
-            </div>
+            <span className="sr-only">{storeConfig.name}</span>
           </div>
         </div>
         
@@ -109,8 +146,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
           />
           <aside className="absolute left-0 top-0 bottom-0 w-64 bg-white flex flex-col">
             <div className="p-6 border-b border-border flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg border border-border bg-white overflow-hidden flex items-center justify-center">
+              <div className="flex flex-col items-center text-center gap-2">
+                <div className="w-14 h-14 rounded-xl border border-border bg-white overflow-hidden flex items-center justify-center">
                   <img
                     src={logoSrc}
                     alt="Logo de la tienda"
@@ -122,10 +159,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                     }}
                   />
                 </div>
-                <div>
-                  <h2 className="font-bold text-lg">{storeConfig.name}</h2>
-                  <p className="text-sm text-muted-foreground">{currentUser?.username}</p>
-                </div>
+                <span className="sr-only">{storeConfig.name}</span>
               </div>
               <button onClick={() => setIsSidebarOpen(false)}>
                 <X className="w-6 h-6" />

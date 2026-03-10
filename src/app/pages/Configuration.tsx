@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -34,6 +34,11 @@ export function Configuration() {
   const [newCategory, setNewCategory] = useState('');
   const [editingCategory, setEditingCategory] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isBackingUp, setIsBackingUp] = useState(false);
+  const [isRegisteringStore, setIsRegisteringStore] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -48,29 +53,42 @@ export function Configuration() {
     setConfig(storeConfig);
   }, [storeConfig]);
 
+  const hasConfigChanges = useMemo(
+    () => JSON.stringify(config) !== JSON.stringify(storeConfig),
+    [config, storeConfig]
+  );
+
   const handleSave = async () => {
-    if (!hasConnectedStore) {
-      const created = await createStore({
-        name: config.name,
-        nit: config.nit,
-        address: config.address,
-        phone: config.phone,
-        email: config.email,
-      });
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      if (!hasConnectedStore) {
+        const created = await createStore({
+          name: config.name,
+          nit: config.nit,
+          address: config.address,
+          phone: config.phone,
+          email: config.email,
+        });
 
-      if (!created) {
-        toast.error('No se pudo registrar la tienda en Supabase.');
-        return;
+        if (!created) {
+          toast.error('No se pudo registrar la tienda en Supabase.');
+          return;
+        }
       }
+
+      const saved = await updateStoreConfig(config);
+      if (!saved) return;
+
+      toast.success('Configuración guardada en Supabase y local.');
+    } finally {
+      setIsSaving(false);
     }
-
-    const saved = await updateStoreConfig(config);
-    if (!saved) return;
-
-    toast.success('Configuración guardada en Supabase y local.');
   };
 
   const handleBackup = () => {
+    if (isBackingUp) return;
+    setIsBackingUp(true);
     const data = {
       products: localStorage.getItem('pos_products'),
       sales: localStorage.getItem('pos_sales'),
@@ -81,13 +99,17 @@ export function Configuration() {
       config: localStorage.getItem('pos_config')
     };
     
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `backup-tiendapos-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    toast.success('Backup descargado');
+    try {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup-tiendapos-${new Date().toISOString().split('T')[0]}.json`;
+      a.click();
+      toast.success('Backup descargado');
+    } finally {
+      setIsBackingUp(false);
+    }
   };
 
   const handleAddCategory = () => {
@@ -158,25 +180,47 @@ export function Configuration() {
 
 
   const handleManualSync = async () => {
-    await syncWithSupabase();
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      await syncWithSupabase();
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const handleCreateStore = async () => {
-    const created = await createStore({
-      name: config.name,
-      nit: config.nit,
-      address: config.address,
-      phone: config.phone,
-      email: config.email,
-    });
+    if (isRegisteringStore) return;
+    setIsRegisteringStore(true);
+    try {
+      const created = await createStore({
+        name: config.name,
+        nit: config.nit,
+        address: config.address,
+        phone: config.phone,
+        email: config.email,
+      });
 
-    if (created) {
-      toast.success('Tienda registrada y conectada a tu usuario.');
+      if (created) {
+        toast.success('Tienda registrada y conectada a tu usuario.');
+      }
+    } finally {
+      setIsRegisteringStore(false);
     }
   };
 
   const handleUploadLocalData = async () => {
-    await uploadLocalBackupToSupabase(false);
+    if (isUploading) return;
+    setIsUploading(true);
+    try {
+      await uploadLocalBackupToSupabase(false);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handlePrinterTest = () => {
+    toast.info('Funcionalidad de impresión de prueba en preparación.');
   };
 
   const handleDeleteCategory = (category: string) => {
@@ -466,13 +510,25 @@ export function Configuration() {
               </Select>
             </div>
 
-            <Button onClick={handleSave} className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60]">
-              Guardar Cambios
+            <Button
+              onClick={handleSave}
+              className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60]"
+              disabled={isSaving || !hasConfigChanges}
+            >
+              {isSaving ? 'Guardando...' : 'Guardar Cambios'}
             </Button>
+            {!hasConfigChanges && (
+              <p className="text-xs text-gray-500 text-center">No hay cambios pendientes por guardar.</p>
+            )}
 
             {!hasConnectedStore && (
-              <Button onClick={handleCreateStore} variant="outline" className="w-full h-12">
-                Registrar tienda en Supabase
+              <Button
+                onClick={handleCreateStore}
+                variant="outline"
+                className="w-full h-12"
+                disabled={isRegisteringStore}
+              >
+                {isRegisteringStore ? 'Registrando...' : 'Registrar tienda en Supabase'}
               </Button>
             )}
           </Card>
@@ -515,12 +571,16 @@ export function Configuration() {
               </p>
             </div>
 
-            <Button variant="outline" className="w-full h-12">
+            <Button variant="outline" className="w-full h-12" onClick={handlePrinterTest}>
               Imprimir Prueba
             </Button>
 
-            <Button onClick={handleSave} className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60]">
-              Guardar Cambios
+            <Button
+              onClick={handleSave}
+              className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60]"
+              disabled={isSaving || !hasConfigChanges}
+            >
+              {isSaving ? 'Guardando...' : 'Guardar Cambios'}
             </Button>
           </Card>
         </TabsContent>
@@ -593,38 +653,42 @@ export function Configuration() {
                 <Button
                   onClick={handleCreateStore}
                   className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60]"
+                  disabled={isRegisteringStore}
                 >
-                  Registrar tienda con datos actuales
+                  {isRegisteringStore ? 'Registrando tienda...' : 'Registrar tienda con datos actuales'}
                 </Button>
               )}
 
               <Button
                 onClick={handleBackup}
                 className="w-full h-12 bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
+                disabled={isBackingUp}
               >
-                Descargar Backup Completo
+                {isBackingUp ? 'Generando backup...' : 'Descargar Backup Completo'}
               </Button>
 
               <Button
                 variant="outline"
                 className="w-full h-12"
                 onClick={handleManualSync}
+                disabled={isSyncing}
               >
-                Re-sincronizar catálogo con Supabase
+                {isSyncing ? 'Sincronizando...' : 'Re-sincronizar catálogo con Supabase'}
               </Button>
 
               <Button
                 variant="outline"
                 className="w-full h-12"
                 onClick={handleUploadLocalData}
+                disabled={isUploading}
               >
-                Subir datos actuales (localStorage) a Supabase
+                {isUploading ? 'Subiendo datos...' : 'Subir datos actuales (localStorage) a Supabase'}
               </Button>
 
               <Button
                 variant="outline"
                 className="w-full h-12"
-                onClick={() => toast.info('Funcionalidad de restauración disponible')}
+                onClick={() => toast.info('Funcionalidad de restauración en preparación')}
               >
                 Restaurar desde Backup
               </Button>

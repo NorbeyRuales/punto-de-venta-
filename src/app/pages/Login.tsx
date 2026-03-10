@@ -161,7 +161,6 @@ export function Login() {
               }}
             />
           </div>
-          <h1 className="text-4xl font-bold">TiendaPOS</h1>
           <p className="text-[var(--muted-foreground)] text-lg">Sistema de Punto de Venta</p>
         </div>
 
