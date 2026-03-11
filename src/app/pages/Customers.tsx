@@ -1,3 +1,4 @@
+// Gestión de clientes, fiados y pagos.
 import { useState } from 'react';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -32,6 +33,7 @@ export function Customers() {
     addPaymentToCustomer
   } = usePOS();
 
+  // Estado de UI y formularios.
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -53,6 +55,7 @@ export function Customers() {
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentDescription, setPaymentDescription] = useState('');
 
+  // Búsqueda simple por nombre/teléfono.
   const filteredCustomers = customers.filter(c =>
     c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     c.phone.includes(searchQuery)
@@ -61,6 +64,7 @@ export function Customers() {
   const totalDebt = customers.reduce((sum, c) => sum + c.debt, 0);
   const customersWithDebt = customers.filter(c => c.debt > 0).length;
 
+  // Alta y edición de clientes.
   const handleAddCustomer = () => {
     if (!formData.name || !formData.phone) {
       toast.error('Complete los campos requeridos');
@@ -97,6 +101,7 @@ export function Customers() {
     resetForm();
   };
 
+  // Registro de deuda y pagos.
   const handleAddDebt = () => {
     if (!selectedCustomer || !debtAmount) {
       toast.error('Complete los campos requeridos');

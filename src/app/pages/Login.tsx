@@ -1,3 +1,4 @@
+// Pantalla de inicio de sesión y creación inicial de tienda.
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { usePOS } from '../context/POSContext';
@@ -9,6 +10,7 @@ import { toast } from 'sonner';
 import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
 
 export function Login() {
+  // Estado del formulario y flags de vista.
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showCreateStore, setShowCreateStore] = useState(false);
@@ -22,6 +24,7 @@ export function Login() {
   const navigate = useNavigate();
   const logoSrc = storeConfig.logo || DEFAULT_LOGO_PATH;
 
+  // Maneja autenticación contra Supabase.
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -35,6 +38,7 @@ export function Login() {
     }
   };
 
+  // Vista: creación de tienda (primer uso).
   if (showCreateStore) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#d3d3ff] via-[#ceb5ff] to-[#80a8ff] flex items-center justify-center p-4">
@@ -145,6 +149,7 @@ export function Login() {
     );
   }
 
+  // Vista: login normal.
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#d3d3ff] via-[#ceb5ff] to-[#80a8ff] flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-[var(--card)] border border-[var(--border)] shadow-[var(--shadow-card)] rounded-2xl p-8 text-foreground">

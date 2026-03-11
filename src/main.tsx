@@ -1,7 +1,9 @@
 
-  import { createRoot } from "react-dom/client";
-  import App from "./app/App.tsx";
-  import "./styles/index.css";
+// Punto de entrada: carga estilos globales y monta el componente raíz en #root.
+import { createRoot } from "react-dom/client";
+import App from "./app/App.tsx";
+import "./styles/index.css";
 
-  createRoot(document.getElementById("root")!).render(<App />);
+// Renderiza la aplicación dentro del contenedor principal del HTML.
+createRoot(document.getElementById("root")!).render(<App />);
   

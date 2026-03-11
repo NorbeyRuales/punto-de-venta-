@@ -1,3 +1,4 @@
+// Punto de venta: búsqueda, carrito, descuentos y cobro.
 import { useState, useRef } from 'react';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -35,6 +36,7 @@ export function POS() {
     customers
   } = usePOS();
 
+  // Estado de UI y cobro.
   const [searchQuery, setSearchQuery] = useState('');
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('efectivo');
@@ -44,6 +46,7 @@ export function POS() {
   const [discountAmount, setDiscountAmount] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // Resultados de búsqueda por nombre/SKU/código de barras.
   const filteredProducts = searchQuery
     ? products.filter(p =>
         p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -52,6 +55,7 @@ export function POS() {
       )
     : [];
 
+  // Agrega un producto al carrito validando stock.
   const handleAddToCart = (productId: string) => {
     const product = products.find(p => p.id === productId);
     if (product) {
@@ -66,6 +70,7 @@ export function POS() {
     }
   };
 
+  // Ajusta cantidades del carrito con validaciones.
   const handleQuantityChange = (productId: string, newQuantity: number) => {
     const product = products.find(p => p.id === productId);
     if (product && newQuantity > product.stock) {
@@ -79,6 +84,7 @@ export function POS() {
     }
   };
 
+  // Aplica descuento porcentual a un ítem del carrito.
   const handleApplyDiscount = () => {
     if (selectedProduct && discountAmount) {
       const discount = parseFloat(discountAmount);
@@ -93,6 +99,7 @@ export function POS() {
     }
   };
 
+  // Valida y completa una venta.
   const handlePayment = () => {
     if (cart.length === 0) {
       toast.error('El carrito está vacío');
@@ -131,6 +138,7 @@ export function POS() {
     toast.info('Funcionalidad de WhatsApp en preparación.');
   };
 
+  // Totales de la venta.
   const subtotal = cart.reduce((sum, item) => sum + (item.product.salePrice * item.quantity), 0);
   const totalDiscount = cart.reduce((sum, item) => {
     const itemPrice = item.product.salePrice * item.quantity;

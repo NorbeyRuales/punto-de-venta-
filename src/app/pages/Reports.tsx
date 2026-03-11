@@ -1,3 +1,4 @@
+// Reportes de ventas con gráficos y ranking.
 import { useState } from 'react';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -13,6 +14,7 @@ export function Reports() {
   const { sales, getSalesInRange, products } = usePOS();
   const [period, setPeriod] = useState('today');
 
+  // Calcula rango de fechas según periodo seleccionado.
   const getDateRange = () => {
     const now = new Date();
     switch (period) {
@@ -26,6 +28,7 @@ export function Reports() {
   const { start, end } = getDateRange();
   const periodSales = getSalesInRange(start, end);
   
+  // Métricas agregadas del periodo.
   const totalSales = periodSales.reduce((sum, s) => sum + s.total, 0);
   const totalCost = periodSales.reduce((sum, sale) => {
     return sum + sale.items.reduce((itemSum, item) => itemSum + (item.product.costPrice * item.quantity), 0);
@@ -64,6 +67,7 @@ export function Reports() {
   const categoryData = Array.from(categorySales.entries()).map(([name, value]) => ({ name, value }));
   const COLORS = ['#15D9E6', '#E6C915', '#E61595', '#8BE9FD', '#FFD27F', '#2ECC71'];
 
+  // Placeholder de exportación.
   const exportToExcel = () => {
     toast.success('Exportando reporte...');
   };

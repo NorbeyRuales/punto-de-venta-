@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import * as React from "react";
 import * as TabsPrimitive from "@radix-ui/react-tabs";
@@ -64,3 +65,4 @@ function TabsContent({
 }
 
 export { Tabs, TabsList, TabsTrigger, TabsContent };
+

@@ -1,3 +1,4 @@
+// Dashboard con KPIs, alertas de stock y gráficas de ventas.
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -20,6 +21,7 @@ export function Dashboard() {
   const { getSalesToday, products, sales, customers } = usePOS();
   const navigate = useNavigate();
 
+  // KPIs principales del día.
   const todaySales = getSalesToday();
   const totalToday = todaySales.reduce((sum, sale) => sum + sale.total, 0);
   const transactionsToday = todaySales.length;

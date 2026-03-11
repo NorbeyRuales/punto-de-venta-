@@ -1,3 +1,4 @@
+// Configuración de Vite (React + Tailwind + alias de rutas).
 import { defineConfig } from 'vite'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'

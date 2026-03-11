@@ -1,3 +1,4 @@
+// Hook para detectar viewport móvil según breakpoint.
 import * as React from "react";
 
 const MOBILE_BREAKPOINT = 768;
@@ -8,6 +9,7 @@ export function useIsMobile() {
   );
 
   React.useEffect(() => {
+    // Usa matchMedia para escuchar cambios de tamaño.
     const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT - 1}px)`);
     const onChange = () => {
       setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);

@@ -1,3 +1,4 @@
+// Registro de compras y actualización de stock.
 import { useEffect, useMemo, useState } from 'react';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -16,6 +17,7 @@ type PurchaseItemDraft = {
 
 export function Purchases() {
   const { suppliers, products, registerPurchase, storeConfig } = usePOS();
+  // Estado del formulario y de los ítems de compra.
   const [supplierId, setSupplierId] = useState('');
   const [pricePolicy, setPricePolicy] = useState<'automatic' | 'manual'>(storeConfig.purchasePricePolicy || 'automatic');
   const [draft, setDraft] = useState<PurchaseItemDraft>({
@@ -32,17 +34,20 @@ export function Purchases() {
 
   const selectedSupplier = suppliers.find(s => s.id === supplierId) || null;
 
+  // Productos filtrados por proveedor seleccionado.
   const supplierProducts = useMemo(() => {
     if (!selectedSupplier) return [];
     return products.filter(product => (product.supplierName || '').trim() === selectedSupplier.name.trim());
   }, [products, selectedSupplier]);
 
+  // Mapa rápido para acceder a productos por id.
   const productById = useMemo(() => {
     const map = new Map<string, typeof products[number]>();
     products.forEach(product => map.set(product.id, product));
     return map;
   }, [products]);
 
+  // Agrega ítems al borrador de compra.
   const addItemToPurchase = () => {
     const quantity = parseFloat(draft.quantityPackages);
     const cost = parseFloat(draft.packageCost);
@@ -92,6 +97,7 @@ export function Purchases() {
     setEditDraft({ quantityPackages: '', packageCost: '' });
   };
 
+  // Guarda cambios del ítem en edición.
   const saveEditItem = (productId: string) => {
     const quantity = parseFloat(editDraft.quantityPackages);
     const cost = parseFloat(editDraft.packageCost);
@@ -111,12 +117,14 @@ export function Purchases() {
     cancelEditItem();
   };
 
+  // Total calculado de la compra.
   const purchaseTotal = items.reduce((sum, item) => sum + (item.quantity * item.cost), 0);
 
   useEffect(() => {
     setPricePolicy(storeConfig.purchasePricePolicy || 'automatic');
   }, [storeConfig.purchasePricePolicy]);
 
+  // Registra la compra y aplica política de precio.
   const handleRegisterPurchase = () => {
     if (!supplierId) {
       toast.error('Seleccione proveedor');

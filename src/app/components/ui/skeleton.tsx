@@ -1,3 +1,4 @@
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 import { cn } from "./utils";
 
 function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
@@ -11,3 +12,4 @@ function Skeleton({ className, ...props }: React.ComponentProps<"div">) {
 }
 
 export { Skeleton };
+

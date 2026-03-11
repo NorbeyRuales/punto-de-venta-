@@ -1,3 +1,4 @@
+// Contexto principal del POS: centraliza estado, acciones de negocio y sincronización.
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
@@ -160,6 +161,7 @@ export interface StoreConfig {
   userRole: 'admin' | 'cashier';
 }
 
+// Contrato público del contexto (estado + acciones expuestas a la UI).
 interface POSContextType {
   // Autenticación
   isAuthenticated: boolean;
@@ -230,6 +232,7 @@ interface POSContextType {
 
 const POSContext = createContext<POSContextType | undefined>(undefined);
 
+// Datos semilla locales (para que el POS funcione sin conexión al iniciar).
 // Base de datos inicial con productos colombianos
 const initialProducts: Product[] = [
   // Lácteos
@@ -270,6 +273,7 @@ const initialProducts: Product[] = [
   { id: '25', name: 'Salchichón Zenú 250g', sku: 'CAR004', barcode: '7702006000004', category: 'Carnes Frías', costPrice: 4500, salePrice: 6200, stock: 22, minStock: 5, unit: 'unidad', isBulk: false, iva: 5, unitPrice: 0 },
 ];
 
+// Productos semilla de un proveedor específico (para pruebas/demo).
 const distribunzelSeedProducts: Omit<Product, 'id'>[] = [
   { name: 'APRONAX CAPSULAS', sku: 'DZL001', barcode: '7799000000001', category: 'Aseo', costPrice: 11551, salePrice: 2063, stock: 0, minStock: 5, unit: 'unidad', isBulk: false, iva: 0, unitsPerPurchase: 8, profitMargin: 30, unitPrice: 2063 },
   { name: 'BALANCE CLIN 1', sku: 'DZL002', barcode: '7799000000002', category: 'Aseo', costPrice: 22500, salePrice: 4688, stock: 0, minStock: 5, unit: 'unidad', isBulk: false, iva: 0, unitsPerPurchase: 6, profitMargin: 20, unitPrice: 4688 },
@@ -293,6 +297,7 @@ const distribunzelSeedProducts: Omit<Product, 'id'>[] = [
   supplierName: 'DISTRIBUNZEL'
 }));
 
+// Lista base de proveedores para demo.
 const supplierSeedNames = [
   'DISTRITIENDAS DE COLOMBIA',
   'COLOMBINA',
@@ -336,6 +341,7 @@ const supplierSeedNames = [
   'BOLSAS PLASTICAS'
 ];
 
+// Proveedores semilla con datos ficticios.
 const initialSuppliers: Supplier[] = supplierSeedNames.map((name, index) => {
   const suffix = (index + 1).toString().padStart(3, '0');
   return {
@@ -352,6 +358,7 @@ const initialSuppliers: Supplier[] = supplierSeedNames.map((name, index) => {
 });
 
 export function POSProvider({ children }: { children: ReactNode }) {
+  // Estado principal: sesión, tienda actual, catálogo y transacciones.
   const [session, setSession] = useState<SupabaseSession | null>(null);
   const [currentStoreId, setCurrentStoreId] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
@@ -410,6 +417,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   }, [storeConfig.name, storeConfig.logo]);
 
+  // Sincroniza catálogo remoto (categorías + productos) desde Supabase.
   const syncProductsFromSupabase = async (nextSession: SupabaseSession, storeId: string): Promise<boolean> => {
     try {
       const remote = await loadCategoriesAndProducts(nextSession.access_token, storeId);
@@ -909,6 +917,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     setCart([]);
   };
 
+  // Calcula costo unitario con IVA según unidades por compra.
   const buildUnitCostWithIva = (product: Product, nextCostPrice?: number): number => {
     const units = Number(product.unitsPerPurchase ?? 1) || 1;
     const baseCost = typeof nextCostPrice === 'number' ? nextCostPrice : product.costPrice;
@@ -916,6 +925,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     return (baseCost * ivaFactor) / units;
   };
 
+  // Registra un movimiento de Kardex local y lo intenta persistir en Supabase.
   const appendKardexMovement = (movement: Omit<KardexMovement, 'id' | 'date'>) => {
     const nextMovement: KardexMovement = {
       ...movement,
@@ -1499,6 +1509,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 }
 
 export function usePOS() {
+  // Hook de conveniencia para consumir el contexto con validación.
   const context = useContext(POSContext);
   if (context === undefined) {
     throw new Error('usePOS must be used within a POSProvider');

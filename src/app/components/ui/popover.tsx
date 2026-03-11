@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import * as React from "react";
 import * as PopoverPrimitive from "@radix-ui/react-popover";
@@ -46,3 +47,4 @@ function PopoverAnchor({
 }
 
 export { Popover, PopoverTrigger, PopoverContent, PopoverAnchor };
+

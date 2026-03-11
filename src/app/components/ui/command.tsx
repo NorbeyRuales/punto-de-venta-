@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import * as React from "react";
 import { Command as CommandPrimitive } from "cmdk";
@@ -175,3 +176,4 @@ export {
   CommandShortcut,
   CommandSeparator,
 };
+

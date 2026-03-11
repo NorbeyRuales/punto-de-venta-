@@ -1,3 +1,4 @@
+-- Función para importar backup local JSON al esquema del POS.
 create or replace function public.import_local_pos_backup(
   p_store_id uuid,
   p_backup jsonb,

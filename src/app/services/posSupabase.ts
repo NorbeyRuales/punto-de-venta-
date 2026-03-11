@@ -1,6 +1,8 @@
+// Capa de acceso a datos en Supabase (REST + RPC) para el POS.
 import { deleteRows, insertRows, rpc, selectRows, updateRows } from '../../lib/supabaseClient';
 import type { Product } from '../context/POSContext';
 
+// Tipos "shape" de filas usadas en llamadas REST.
 type StoreUserRow = {
   role: 'admin' | 'cashier';
   store_id: string;
@@ -34,9 +36,11 @@ type ProductRow = {
 type PaymentMethod = 'efectivo' | 'tarjeta' | 'transferencia' | 'credito' | 'otro';
 type RechargeType = 'mobile' | 'service' | 'pin';
 
+// Valida UUIDs antes de hacer operaciones sensibles.
 const uuidLike = (value?: string | null): boolean =>
   !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
+// Devuelve la membresía actual del usuario en una tienda.
 export async function fetchMyStoreMembership(token: string, userId: string): Promise<StoreUserRow | null> {
   const rows = await selectRows<StoreUserRow>(
     'store_users',
@@ -54,6 +58,7 @@ export async function bootstrapStore(token: string, payload: {
   phone?: string;
   email?: string;
 }): Promise<string> {
+  // RPC que crea tienda y asigna el usuario como admin.
   const storeId = await rpc<string>('bootstrap_my_store', {
     p_name: payload.name,
     p_nit: payload.nit || null,
@@ -65,6 +70,7 @@ export async function bootstrapStore(token: string, payload: {
   return storeId;
 }
 
+// Carga catálogo de categorías y productos, normalizando los datos para la UI.
 export async function loadCategoriesAndProducts(token: string, storeId: string): Promise<{ categories: string[]; products: Product[] }> {
   const categories = await selectRows<CategoryRow>(
     'categories',
@@ -103,6 +109,7 @@ export async function loadCategoriesAndProducts(token: string, storeId: string):
   };
 }
 
+// CRUD de categorías.
 export async function createCategory(token: string, storeId: string, name: string): Promise<void> {
   await insertRows('categories', [{ store_id: storeId, name }], token);
 }
@@ -133,6 +140,7 @@ async function findCategoryId(token: string, storeId: string, categoryName: stri
   return rows[0]?.id ?? null;
 }
 
+// Crea un producto y devuelve la versión normalizada.
 export async function createProduct(token: string, storeId: string, product: Omit<Product, 'id'>): Promise<Product | null> {
   const categoryId = await findCategoryId(token, storeId, product.category);
 
@@ -178,6 +186,7 @@ export async function createProduct(token: string, storeId: string, product: Omi
   };
 }
 
+// Actualiza un producto con un patch parcial (solo campos provistos).
 export async function patchProduct(token: string, storeId: string, productId: string, patch: Partial<Product>): Promise<void> {
   const dbPatch: Record<string, unknown> = {};
 
@@ -204,10 +213,12 @@ export async function patchProduct(token: string, storeId: string, productId: st
   await updateRows('products', `store_id=eq.${storeId}&id=eq.${productId}`, dbPatch, token);
 }
 
+// Elimina un producto por id.
 export async function removeProduct(token: string, storeId: string, productId: string): Promise<void> {
   await deleteRows('products', `store_id=eq.${storeId}&id=eq.${productId}`, token);
 }
 
+// Importa un backup local (JSON) usando RPC.
 export async function importLocalBackup(
   token: string,
   storeId: string,
@@ -225,6 +236,7 @@ export async function importLocalBackup(
   );
 }
 
+// Actualiza la configuración principal de la tienda.
 export async function updateStoreDetails(
   token: string,
   storeId: string,
@@ -259,6 +271,7 @@ export async function updateStoreDetails(
   await updateRows('stores', `id=eq.${storeId}`, dbPatch, token);
 }
 
+// CRUD de clientes y movimientos de deuda.
 export async function createCustomer(
   token: string,
   storeId: string,
@@ -314,6 +327,7 @@ export async function insertCustomerDebtTx(
   }], token);
 }
 
+// CRUD de proveedores.
 export async function createSupplierRow(
   token: string,
   storeId: string,
@@ -356,6 +370,7 @@ export async function deleteSupplierRow(token: string, storeId: string, supplier
   await deleteRows('suppliers', `store_id=eq.${storeId}&id=eq.${supplierId}`, token);
 }
 
+// Registra una venta y sus ítems asociados.
 export async function createSaleWithItems(
   token: string,
   storeId: string,
@@ -421,6 +436,7 @@ export async function createSaleWithItems(
   return saleId;
 }
 
+// Registra una compra con ítems detallados.
 export async function createPurchaseWithItems(
   token: string,
   storeId: string,
@@ -476,6 +492,7 @@ export async function createPurchaseWithItems(
   return purchaseId;
 }
 
+// Inserta un movimiento de Kardex (entradas/salidas/ajustes).
 export async function createKardexMovementRow(
   token: string,
   storeId: string,
@@ -509,6 +526,7 @@ export async function createKardexMovementRow(
   }], token);
 }
 
+// Registra una recarga (celular/servicio/pin).
 export async function createRechargeRow(
   token: string,
   storeId: string,

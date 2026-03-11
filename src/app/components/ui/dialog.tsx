@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
@@ -135,3 +136,4 @@ export {
   DialogTitle,
   DialogTrigger,
 };
+

@@ -1,3 +1,4 @@
+// Vista de factura (demo) con datos de la tienda.
 import { Card } from '../components/ui/card';
 import { usePOS } from '../context/POSContext';
 import { format } from 'date-fns';
@@ -8,7 +9,7 @@ export function Invoice() {
   const { storeConfig } = usePOS();
   const logoSrc = storeConfig.logo || DEFAULT_LOGO_PATH;
 
-  // Ejemplo de factura - en producción vendría de parámetros o estado
+  // Ejemplo de factura - en producción vendría de parámetros o estado.
   const invoice = {
     number: 'FAC-000001',
     date: new Date(),

@@ -1,3 +1,4 @@
+// Definición centralizada de rutas y layout protegido.
 import { createBrowserRouter } from "react-router";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
@@ -13,14 +14,17 @@ import { Invoice } from "./pages/Invoice";
 import { Layout } from "./components/Layout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
+// Mapa de rutas: login público y módulos internos protegidos.
 export const router = createBrowserRouter([
   {
     path: "/",
+    // Login no requiere autenticación.
     element: <Login />,
   },
   {
     path: "/dashboard",
     element: (
+      // Todas las rutas internas pasan por el Layout y se protegen por sesión.
       <ProtectedRoute>
         <Layout>
           <Dashboard />

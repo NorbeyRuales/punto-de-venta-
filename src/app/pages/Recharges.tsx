@@ -1,3 +1,4 @@
+// Recargas y pago de servicios con cálculo de comisión.
 import { useState } from 'react';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -11,6 +12,7 @@ import { toast } from 'sonner';
 
 export function Recharges() {
   const { addRecharge, recharges } = usePOS();
+  // Estado del formulario de recargas.
   const [rechargeType, setRechargeType] = useState('mobile');
   const [provider, setProvider] = useState('Claro');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -20,6 +22,7 @@ export function Recharges() {
   const serviceProviders = ['Energía', 'Agua', 'Gas', 'Internet'];
   const pinProviders = ['Netflix', 'DirecTV', 'Spotify', 'PlayStation'];
 
+  // Procesa recarga/servicio/pin y registra comisión.
   const handleRecharge = () => {
     if (!amount) {
       toast.error('Ingrese el monto');
@@ -44,6 +47,7 @@ export function Recharges() {
     setAmount('');
   };
 
+  // Resumen de totales.
   const totalRecharges = recharges.reduce((sum, r) => sum + r.total, 0);
   const totalCommission = recharges.reduce((sum, r) => sum + r.commission, 0);
 

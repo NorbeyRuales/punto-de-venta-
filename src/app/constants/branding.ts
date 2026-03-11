@@ -1,3 +1,4 @@
+// Constantes de branding usadas en toda la app.
 export const DEFAULT_LOGO_PATH = '/branding/logo.jpeg';
 
 // Ligero placeholder inline para evitar íconos rotos mientras se sube el logo real.

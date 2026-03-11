@@ -1,3 +1,4 @@
+// Gestión de proveedores y sus datos de contacto.
 import { useState } from 'react';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -11,6 +12,7 @@ import type { Supplier } from '../context/POSContext';
 
 export function Suppliers() {
   const { suppliers, addSupplier, updateSupplier, deleteSupplier } = usePOS();
+  // Estado de filtros y formularios.
   const [searchQuery, setSearchQuery] = useState('');
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -18,10 +20,12 @@ export function Suppliers() {
   const [formData, setFormData] = useState({ name: '', nit: '', phone: '', email: '', address: '', bankAccounts: [''] });
   const [editFormData, setEditFormData] = useState({ name: '', nit: '', phone: '', email: '', address: '', bankAccounts: [''] });
 
+  // Filtra proveedores por nombre.
   const filteredSuppliers = suppliers.filter(s =>
     s.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
+  // Alta de proveedores.
   const handleAdd = () => {
     const trimmedName = formData.name.trim();
     const trimmedNit = formData.nit.trim();
@@ -48,6 +52,7 @@ export function Suppliers() {
     setFormData({ name: '', nit: '', phone: '', email: '', address: '', bankAccounts: [''] });
   };
 
+  // Edición de proveedores.
   const handleEdit = () => {
     if (!selectedSupplier) return;
     const trimmedName = editFormData.name.trim();
@@ -96,6 +101,7 @@ export function Suppliers() {
     setShowEditDialog(true);
   };
 
+  // Eliminación con confirmación.
   const handleDelete = (supplierId: string) => {
     if (!confirm('¿Está seguro de eliminar este proveedor?')) return;
     deleteSupplier(supplierId);

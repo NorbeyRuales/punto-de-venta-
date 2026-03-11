@@ -1,3 +1,4 @@
+/* Variables de tema, tokens y estilos base del sistema. */
 @custom-variant dark (&:is(.dark *));
 
 :root {

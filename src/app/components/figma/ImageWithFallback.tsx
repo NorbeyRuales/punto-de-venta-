@@ -1,3 +1,4 @@
+// Imagen con fallback para assets generados desde Figma.
 import React, { useState } from 'react'
 
 const ERROR_IMG_SRC =
@@ -6,6 +7,7 @@ const ERROR_IMG_SRC =
 export function ImageWithFallback(props: React.ImgHTMLAttributes<HTMLImageElement>) {
   const [didError, setDidError] = useState(false)
 
+  // Cambia a fallback si la imagen principal falla.
   const handleError = () => {
     setDidError(true)
   }

@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import * as React from "react";
 import * as ProgressPrimitive from "@radix-ui/react-progress";
@@ -29,3 +30,4 @@ function Progress({
 }
 
 export { Progress };
+

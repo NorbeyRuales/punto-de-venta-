@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import * as React from "react";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
@@ -30,3 +31,4 @@ function Checkbox({
 }
 
 export { Checkbox };
+

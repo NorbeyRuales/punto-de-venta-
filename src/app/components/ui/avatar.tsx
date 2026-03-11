@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import * as React from "react";
 import * as AvatarPrimitive from "@radix-ui/react-avatar";
@@ -51,3 +52,4 @@ function AvatarFallback({
 }
 
 export { Avatar, AvatarImage, AvatarFallback };
+

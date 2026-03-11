@@ -1,3 +1,4 @@
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 import * as React from "react";
 
 import { cn } from "./utils";
@@ -90,3 +91,4 @@ export {
   CardDescription,
   CardContent,
 };
+

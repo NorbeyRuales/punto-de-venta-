@@ -1,3 +1,4 @@
+// Configuración general: tienda, categorías, impresora, roles y backups.
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router';
 import { usePOS } from '../context/POSContext';
@@ -29,6 +30,7 @@ export function Configuration() {
     uploadLocalBackupToSupabase
   } = usePOS();
   const location = useLocation();
+  // Estado de pestañas y formularios.
   const [config, setConfig] = useState(storeConfig);
   const [activeTab, setActiveTab] = useState('store');
   const [newCategory, setNewCategory] = useState('');
@@ -40,6 +42,7 @@ export function Configuration() {
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRegisteringStore, setIsRegisteringStore] = useState(false);
 
+  // Lee el tab desde querystring (?tab=categories, etc).
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const tab = params.get('tab');
@@ -49,6 +52,7 @@ export function Configuration() {
     }
   }, [location.search]);
 
+  // Mantiene configuración local sincronizada con el contexto.
   useEffect(() => {
     setConfig(storeConfig);
   }, [storeConfig]);
@@ -58,6 +62,7 @@ export function Configuration() {
     [config, storeConfig]
   );
 
+  // Guarda configuración local y en Supabase.
   const handleSave = async () => {
     if (isSaving) return;
     setIsSaving(true);
@@ -86,6 +91,7 @@ export function Configuration() {
     }
   };
 
+  // Descarga un backup JSON con datos locales.
   const handleBackup = () => {
     if (isBackingUp) return;
     setIsBackingUp(true);
@@ -112,6 +118,7 @@ export function Configuration() {
     }
   };
 
+  // Alta de categorías.
   const handleAddCategory = () => {
     const created = addCategory(newCategory);
     if (!created) {
@@ -128,6 +135,7 @@ export function Configuration() {
     setEditingValue(category);
   };
 
+  // Convierte imagen seleccionada a data URL para previsualización/guardado.
   const handleLogoFile = async (file: File | null) => {
     if (!file) return;
 
@@ -179,6 +187,7 @@ export function Configuration() {
   };
 
 
+  // Forzar sincronización con Supabase.
   const handleManualSync = async () => {
     if (isSyncing) return;
     setIsSyncing(true);
@@ -189,6 +198,7 @@ export function Configuration() {
     }
   };
 
+  // Registra la tienda actual en Supabase si aún no existe.
   const handleCreateStore = async () => {
     if (isRegisteringStore) return;
     setIsRegisteringStore(true);
@@ -209,6 +219,7 @@ export function Configuration() {
     }
   };
 
+  // Sube datos actuales desde localStorage a Supabase.
   const handleUploadLocalData = async () => {
     if (isUploading) return;
     setIsUploading(true);
@@ -223,6 +234,7 @@ export function Configuration() {
     toast.info('Funcionalidad de impresión de prueba en preparación.');
   };
 
+  // Eliminación de categorías con reasignación opcional.
   const handleDeleteCategory = (category: string) => {
     const inUse = products.some(product => product.category === category);
 

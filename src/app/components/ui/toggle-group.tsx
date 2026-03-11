@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import * as React from "react";
 import * as ToggleGroupPrimitive from "@radix-ui/react-toggle-group";
@@ -71,3 +72,4 @@ function ToggleGroupItem({
 }
 
 export { ToggleGroup, ToggleGroupItem };
+

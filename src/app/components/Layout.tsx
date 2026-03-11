@@ -1,3 +1,4 @@
+// Layout principal con sidebar, header móvil y estado de conexión.
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation, useNavigation } from 'react-router';
 import { usePOS } from '../context/POSContext';
@@ -30,6 +31,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
   const logoSrc = storeConfig.logo || DEFAULT_LOGO_PATH;
 
+  // Menú lateral con rutas principales.
   const menuItems = [
     { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/pos', icon: ShoppingCart, label: 'Nueva Venta' },
@@ -42,11 +44,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { path: '/configuration', icon: Settings, label: 'Configuración' },
   ];
 
+  // Cierra sesión y redirige a login.
   const handleLogout = () => {
     logout();
     navigate('/');
   };
 
+  // Muestra la barra superior al cambiar de ruta.
   const showLoadingBar = () => {
     if (hideTimeoutRef.current) {
       window.clearTimeout(hideTimeoutRef.current);
@@ -59,6 +63,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }, 700);
   };
 
+  // Dispara la animación al navegar.
   useEffect(() => {
     showLoadingBar();
   }, [location.pathname]);
@@ -70,6 +75,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [navigation.state]);
 
+  // Limpia timeout de la barra al desmontar.
   useEffect(() => {
     return () => {
       if (hideTimeoutRef.current) {
@@ -78,6 +84,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // Escucha cambios de conectividad para indicador visual.
   useEffect(() => {
     const updateOnline = () => setIsOnline(navigator.onLine);
     window.addEventListener('online', updateOnline);
@@ -88,6 +95,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  // Indicadores de estado.
   const showConnectionDot = isAuthenticated;
   const isConnected = isAuthenticated && hasConnectedStore && isOnline;
 

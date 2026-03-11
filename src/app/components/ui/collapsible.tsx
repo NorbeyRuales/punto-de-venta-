@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import * as CollapsiblePrimitive from "@radix-ui/react-collapsible";
 
@@ -31,3 +32,4 @@ function CollapsibleContent({
 }
 
 export { Collapsible, CollapsibleTrigger, CollapsibleContent };
+

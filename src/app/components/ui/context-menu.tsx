@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import * as React from "react";
 import * as ContextMenuPrimitive from "@radix-ui/react-context-menu";
@@ -250,3 +251,4 @@ export {
   ContextMenuSubTrigger,
   ContextMenuRadioGroup,
 };
+

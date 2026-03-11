@@ -1,3 +1,4 @@
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 import * as React from "react";
 import * as NavigationMenuPrimitive from "@radix-ui/react-navigation-menu";
 import { cva } from "class-variance-authority";
@@ -166,3 +167,4 @@ export {
   NavigationMenuViewport,
   navigationMenuTriggerStyle,
 };
+

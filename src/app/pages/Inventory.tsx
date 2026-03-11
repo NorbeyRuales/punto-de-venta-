@@ -1,3 +1,4 @@
+// Inventario: alta/edición de productos, filtros, Kardex y exportación.
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { usePOS } from '../context/POSContext';
@@ -30,12 +31,14 @@ type BarcodeLookupResponse = {
   fuente?: string;
 };
 
+// Endpoint de Edge Function para buscar info por código de barras.
 const barcodeLookupUrl = (barcode: string) =>
   `https://wujuzvjilkfrddmofyxa.supabase.co/functions/v1/make-server-cf6a4e6a/barcode-scrape/${barcode}`;
 
 export function Inventory() {
   const { products, addProduct, updateProduct, deleteProduct, categories, suppliers, getKardexByProduct } = usePOS();
   const navigate = useNavigate();
+  // Filtros y estado de UI.
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [supplierFilter, setSupplierFilter] = useState('all');
@@ -47,6 +50,7 @@ export function Inventory() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showKardexDialog, setShowKardexDialog] = useState(false);
   const [selectedKardexProduct, setSelectedKardexProduct] = useState<Product | null>(null);
+  // Formularios y valores derivados.
   const defaultCategory = categories[0] || 'General';
   const buildEmptyForm = (category: string) => ({
     name: '',
@@ -68,6 +72,7 @@ export function Inventory() {
   const [isExporting, setIsExporting] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // Cálculos automáticos de costos/IVA/utilidad.
   const purchaseCost = parseFloat(formData.costPrice) || 0;
   const unitsPerPurchase = parseFloat(formData.unitsPerPurchase) || 0;
   const profitMargin = parseFloat(formData.profitMargin) || 0;
@@ -136,6 +141,7 @@ export function Inventory() {
     return errors;
   };
 
+  // Mantiene filtros válidos cuando cambia catálogo.
   useEffect(() => {
     if (categoryFilter !== 'all' && !categories.includes(categoryFilter)) {
       setCategoryFilter('all');
@@ -156,6 +162,7 @@ export function Inventory() {
     }
   }, [categories, formData.category, defaultCategory]);
 
+  // Atajos de teclado: "/" para buscar, Alt+N para nuevo producto.
   useEffect(() => {
     const handleShortcuts = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -184,6 +191,7 @@ export function Inventory() {
     return () => window.removeEventListener('keydown', handleShortcuts);
   }, []);
 
+  // Filtrado por búsqueda, categoría y proveedor.
   const filteredProducts = products.filter(p => {
     const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       p.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -204,6 +212,7 @@ export function Inventory() {
     ? getKardexByProduct(selectedKardexProduct.id)
     : [];
 
+  // Alta de producto.
   const handleAddProduct = () => {
     const errors = validateForm();
     setFormErrors(errors);
@@ -236,6 +245,7 @@ export function Inventory() {
     resetForm();
   };
 
+  // Edición de producto.
   const handleEditProduct = () => {
     if (!selectedProduct) return;
     const errors = validateForm();
@@ -318,6 +328,7 @@ export function Inventory() {
     setFormErrors({});
   };
 
+  // Exportación rápida de inventario a CSV.
   const exportToCSV = () => {
     if (isExporting) return;
     setIsExporting(true);
@@ -358,6 +369,7 @@ export function Inventory() {
     }
   };
 
+  // Helpers de cálculo para vistas.
   const calculateProfitMargin = (cost: number, sale: number): number => {
     if (sale === 0) return 0;
     return ((sale - cost) / sale) * 100;
@@ -423,6 +435,7 @@ export function Inventory() {
     setFormData(prev => ({ ...prev, profitMargin: nextMargin.toFixed(2) }));
   };
 
+  // Consulta un servicio externo para autocompletar por código de barras.
   const searchProductByBarcode = async () => {
     const barcode = formData.barcode.trim();
 
@@ -487,6 +500,7 @@ export function Inventory() {
     }
   };
 
+  // Dispara búsqueda de código de barras con debounce.
   useEffect(() => {
     if (!showAddDialog) return;
 

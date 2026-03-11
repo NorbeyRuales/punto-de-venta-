@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import { useTheme } from "next-themes";
 import { Toaster as Sonner, ToasterProps } from "sonner";
@@ -23,3 +24,4 @@ const Toaster = ({ ...props }: ToasterProps) => {
 };
 
 export { Toaster };
+

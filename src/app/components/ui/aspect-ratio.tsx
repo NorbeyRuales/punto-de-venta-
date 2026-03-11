@@ -1,4 +1,5 @@
 "use client";
+// Componente UI base (shadcn/Radix) con estilos del sistema.
 
 import * as AspectRatioPrimitive from "@radix-ui/react-aspect-ratio";
 
@@ -9,3 +10,4 @@ function AspectRatio({
 }
 
 export { AspectRatio };
+
