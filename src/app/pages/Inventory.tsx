@@ -36,7 +36,7 @@ const barcodeLookupUrl = (barcode: string) =>
   `https://wujuzvjilkfrddmofyxa.supabase.co/functions/v1/make-server-cf6a4e6a/barcode-scrape/${barcode}`;
 
 export function Inventory() {
-  const { products, addProduct, updateProduct, deleteProduct, categories, suppliers, getKardexByProduct } = usePOS();
+  const { products, addProduct, updateProduct, deleteProduct, categories, suppliers, getKardexByProduct, adjustStock } = usePOS();
   const navigate = useNavigate();
   // Filtros y estado de UI.
   const [searchQuery, setSearchQuery] = useState('');
@@ -255,23 +255,45 @@ export function Inventory() {
       return;
     }
 
-    updateProduct(selectedProduct.id, {
+    const nextStockRaw = parseFloat(formData.stock);
+    const nextStock = Number.isFinite(nextStockRaw) ? nextStockRaw : selectedProduct.stock;
+    const nextIva = parseFloat(formData.iva) || 0;
+    const nextMinStockRaw = parseFloat(formData.minStock);
+    const nextMinStock = Number.isFinite(nextMinStockRaw) ? nextMinStockRaw : selectedProduct.minStock;
+    const stockChanged = nextStock !== selectedProduct.stock;
+
+    const productPatch = {
       name: formData.name,
       sku: formData.sku,
       barcode: formData.barcode,
       category: formData.category,
       costPrice: purchaseCost,
       salePrice: calculatedUnitSalePrice,
-      stock: parseFloat(formData.stock),
-      minStock: parseFloat(formData.minStock),
+      stock: nextStock,
+      minStock: nextMinStock,
       unit: formData.unit,
       isBulk: formData.isBulk,
-      iva: parseFloat(formData.iva) || 0,
+      iva: nextIva,
       supplierName: formData.supplierName || undefined,
       unitsPerPurchase,
       profitMargin,
       unitPrice: calculatedUnitSalePrice
-    });
+    };
+
+    if (stockChanged) {
+      const { stock, ...patchWithoutStock } = productPatch;
+      updateProduct(selectedProduct.id, patchWithoutStock);
+      adjustStock(selectedProduct.id, nextStock, {
+        reference: `AJU-${Date.now().toString().slice(-6)}`,
+        productName: formData.name,
+        nextCostPrice: purchaseCost,
+        nextIva,
+        nextUnitsPerPurchase: unitsPerPurchase,
+        unitSalePrice: calculatedUnitSalePrice
+      });
+    } else {
+      updateProduct(selectedProduct.id, productPatch);
+    }
 
     toast.success('Producto actualizado');
     setShowEditDialog(false);

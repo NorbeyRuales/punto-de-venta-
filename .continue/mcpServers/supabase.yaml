@@ -1,0 +1,13 @@
+name: Supabase MCP
+version: 0.0.1
+schema: v1
+mcpServers:
+  - name: Supabase (Postgres)
+    type: stdio
+    command: node
+    args:
+      - mcp/supabase/server.js
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      MCP_DB_ALLOW_WRITE: "false"
+      MCP_DB_MAX_ROWS: "200"

@@ -31,10 +31,129 @@ type ProductRow = {
   category_id: string | null;
   supplier_id: string | null;
   is_active: boolean;
+  supplier?: { name: string } | null;
 };
 
 type PaymentMethod = 'efectivo' | 'tarjeta' | 'transferencia' | 'credito' | 'otro';
 type RechargeType = 'mobile' | 'service' | 'pin';
+
+type CustomerDebtRow = {
+  id: string;
+  type: 'debt' | 'payment';
+  amount: number;
+  description: string | null;
+  balance: number;
+  created_at: string;
+};
+
+type CustomerRow = {
+  id: string;
+  name: string;
+  phone: string | null;
+  address: string | null;
+  email: string | null;
+  nit: string | null;
+  points: number;
+  debt: number;
+  customer_debt_transactions?: CustomerDebtRow[] | null;
+};
+
+type PurchaseItemRow = {
+  product_id: string | null;
+  quantity_packages: number;
+  package_cost: number;
+};
+
+type PurchaseRow = {
+  id: string;
+  supplier_id: string | null;
+  total: number;
+  paid: boolean;
+  reference: string | null;
+  price_policy: 'automatic' | 'manual';
+  created_at: string;
+  purchase_items?: PurchaseItemRow[] | null;
+};
+
+type SupplierRow = {
+  id: string;
+  name: string;
+  nit: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  bank_accounts: string[] | null;
+  debt: number;
+  purchases?: PurchaseRow[] | null;
+};
+
+type SaleItemRow = {
+  id: string;
+  product_id: string | null;
+  product_name: string;
+  quantity: number;
+  unit_cost: number;
+  unit_sale_price: number;
+  discount_percent: number;
+  iva: number;
+  created_at: string;
+};
+
+type SaleRow = {
+  id: string;
+  created_at: string;
+  subtotal: number;
+  discount: number;
+  iva: number;
+  total: number;
+  payment_method: PaymentMethod;
+  cash_received: number;
+  change_value: number;
+  customer_id: string | null;
+  invoice_number: string | null;
+  sale_items?: SaleItemRow[] | null;
+};
+
+type KardexRow = {
+  id: string;
+  product_id: string | null;
+  product_name: string;
+  type: 'entry' | 'sale' | 'adjustment';
+  reference: string | null;
+  quantity: number;
+  stock_before: number;
+  stock_after: number;
+  unit_cost: number;
+  unit_sale_price: number | null;
+  total_cost: number;
+  created_at: string;
+};
+
+type RechargeRow = {
+  id: string;
+  type: RechargeType;
+  provider: string;
+  phone_number: string | null;
+  amount: number;
+  commission: number;
+  total: number;
+  created_at: string;
+};
+
+type StoreRow = {
+  id: string;
+  name: string;
+  nit: string | null;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  logo: string | null;
+  dian_resolution: string | null;
+  printer_type: string;
+  show_iva: boolean;
+  purchase_price_policy: 'automatic' | 'manual';
+  currency: string | null;
+};
 
 // Valida UUIDs antes de hacer operaciones sensibles.
 const uuidLike = (value?: string | null): boolean =>
@@ -82,7 +201,7 @@ export async function loadCategoriesAndProducts(token: string, storeId: string):
 
   const products = await selectRows<ProductRow>(
     'products',
-    `select=id,name,sku,barcode,cost_price,sale_price,stock,min_stock,unit,is_bulk,iva,units_per_purchase,profit_margin,unit_price,category_id,supplier_id,is_active&store_id=eq.${storeId}&order=created_at.asc`,
+    `select=id,name,sku,barcode,cost_price,sale_price,stock,min_stock,unit,is_bulk,iva,units_per_purchase,profit_margin,unit_price,category_id,supplier_id,is_active,supplier:suppliers(name)&store_id=eq.${storeId}&order=created_at.asc`,
     token,
   );
 
@@ -94,7 +213,7 @@ export async function loadCategoriesAndProducts(token: string, storeId: string):
       sku: row.sku ?? '',
       barcode: row.barcode ?? '',
       category: row.category_id ? (categoryById.get(row.category_id) ?? 'Sin categoría') : 'Sin categoría',
-      supplierName: undefined,
+      supplierName: row.supplier?.name ?? undefined,
       costPrice: Number(row.cost_price ?? 0),
       salePrice: Number(row.sale_price ?? 0),
       stock: Number(row.stock ?? 0),
@@ -140,13 +259,24 @@ async function findCategoryId(token: string, storeId: string, categoryName: stri
   return rows[0]?.id ?? null;
 }
 
+async function findSupplierId(token: string, storeId: string, supplierName: string): Promise<string | null> {
+  const rows = await selectRows<{ id: string }>(
+    'suppliers',
+    `select=id&store_id=eq.${storeId}&name=eq.${encodeURIComponent(supplierName)}&limit=1`,
+    token,
+  );
+  return rows[0]?.id ?? null;
+}
+
 // Crea un producto y devuelve la versión normalizada.
 export async function createProduct(token: string, storeId: string, product: Omit<Product, 'id'>): Promise<Product | null> {
   const categoryId = await findCategoryId(token, storeId, product.category);
+  const supplierId = product.supplierName ? await findSupplierId(token, storeId, product.supplierName) : null;
 
   const rows = await insertRows<ProductRow>('products', [{
     store_id: storeId,
     category_id: categoryId,
+    supplier_id: supplierId,
     name: product.name,
     sku: product.sku || null,
     barcode: product.barcode || null,
@@ -206,6 +336,12 @@ export async function patchProduct(token: string, storeId: string, productId: st
 
   if (patch.category !== undefined) {
     dbPatch.category_id = await findCategoryId(token, storeId, patch.category);
+  }
+
+  if (patch.supplierName !== undefined) {
+    dbPatch.supplier_id = patch.supplierName
+      ? await findSupplierId(token, storeId, patch.supplierName)
+      : null;
   }
 
   if (Object.keys(dbPatch).length === 0) return;
@@ -550,4 +686,63 @@ export async function createRechargeRow(
     total: recharge.total,
     created_at: recharge.createdAt || new Date().toISOString(),
   }], token);
+}
+
+// Consultas de sincronización remota.
+export async function loadCustomersWithDebt(token: string, storeId: string): Promise<CustomerRow[]> {
+  return selectRows<CustomerRow>(
+    'customers',
+    'select=id,name,phone,address,email,nit,points,debt,customer_debt_transactions(id,type,amount,description,balance,created_at)'
+      + `&store_id=eq.${storeId}&order=created_at.asc`,
+    token,
+  );
+}
+
+export async function loadSuppliersWithPurchases(token: string, storeId: string): Promise<SupplierRow[]> {
+  return selectRows<SupplierRow>(
+    'suppliers',
+    'select=id,name,nit,phone,email,address,bank_accounts,debt,'
+      + 'purchases(id,created_at,total,paid,reference,price_policy,'
+      + 'purchase_items(product_id,quantity_packages,package_cost))'
+      + `&store_id=eq.${storeId}&order=name.asc`,
+    token,
+  );
+}
+
+export async function loadSalesWithItems(token: string, storeId: string): Promise<SaleRow[]> {
+  return selectRows<SaleRow>(
+    'sales',
+    'select=id,created_at,subtotal,discount,iva,total,payment_method,cash_received,change_value,customer_id,invoice_number,'
+      + 'sale_items(id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at)'
+      + `&store_id=eq.${storeId}&order=created_at.asc`,
+    token,
+  );
+}
+
+export async function loadKardexMovements(token: string, storeId: string): Promise<KardexRow[]> {
+  return selectRows<KardexRow>(
+    'kardex_movements',
+    'select=id,product_id,product_name,type,reference,quantity,stock_before,stock_after,unit_cost,unit_sale_price,total_cost,created_at'
+      + `&store_id=eq.${storeId}&order=created_at.asc`,
+    token,
+  );
+}
+
+export async function loadRecharges(token: string, storeId: string): Promise<RechargeRow[]> {
+  return selectRows<RechargeRow>(
+    'recharges',
+    'select=id,type,provider,phone_number,amount,commission,total,created_at'
+      + `&store_id=eq.${storeId}&order=created_at.asc`,
+    token,
+  );
+}
+
+export async function loadStoreDetails(token: string, storeId: string): Promise<StoreRow | null> {
+  const rows = await selectRows<StoreRow>(
+    'stores',
+    'select=id,name,nit,address,phone,email,logo,dian_resolution,printer_type,show_iva,purchase_price_policy,currency'
+      + `&id=eq.${storeId}&limit=1`,
+    token,
+  );
+  return rows[0] ?? null;
 }

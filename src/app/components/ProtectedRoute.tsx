@@ -3,7 +3,11 @@ import { Navigate } from 'react-router';
 import { usePOS } from '../context/POSContext';
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = usePOS();
+  const { isAuthenticated, isAuthReady } = usePOS();
+
+  if (!isAuthReady) {
+    return null;
+  }
 
   if (!isAuthenticated) {
     // Redirige al login cuando no hay autenticación.

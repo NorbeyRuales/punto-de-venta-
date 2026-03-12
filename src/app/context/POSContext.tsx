@@ -23,6 +23,12 @@ import {
   importLocalBackup,
   insertCustomerDebtTx,
   loadCategoriesAndProducts,
+  loadCustomersWithDebt,
+  loadKardexMovements,
+  loadRecharges,
+  loadSalesWithItems,
+  loadStoreDetails,
+  loadSuppliersWithPurchases,
   patchProduct,
   removeCategory,
   removeProduct,
@@ -32,6 +38,11 @@ import {
   updateStoreDetails,
 } from '../services/posSupabase';
 import { DEFAULT_LOGO_PATH } from '../constants/branding';
+
+const toNumber = (value: unknown, fallback = 0): number => {
+  const num = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
 
 // Tipos de datos
 export interface Product {
@@ -165,6 +176,7 @@ export interface StoreConfig {
 interface POSContextType {
   // Autenticación
   isAuthenticated: boolean;
+  isAuthReady: boolean;
   currentUser: { username: string; role: 'admin' | 'cashier' } | null;
   login: (username: string, password: string) => Promise<boolean>;
   logout: () => void;
@@ -183,6 +195,19 @@ interface POSContextType {
   addCategory: (name: string) => boolean;
   updateCategory: (oldName: string, newName: string) => boolean;
   deleteCategory: (name: string, replacementCategory?: string) => boolean;
+  adjustStock: (
+    productId: string,
+    nextStock: number,
+    options?: {
+      reference?: string;
+      unitCost?: number;
+      unitSalePrice?: number;
+      nextCostPrice?: number;
+      nextIva?: number;
+      nextUnitsPerPurchase?: number;
+      productName?: string;
+    }
+  ) => void;
   
   // Carrito
   cart: CartItem[];
@@ -198,6 +223,7 @@ interface POSContextType {
   completeSale: (paymentMethod: string, cashReceived: number, customerId?: string) => Sale;
   getSalesToday: () => Sale[];
   getSalesInRange: (startDate: Date, endDate: Date) => Sale[];
+  registerReturn: (saleId: string) => boolean;
 
   // Kardex
   kardexMovements: KardexMovement[];
@@ -362,6 +388,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<SupabaseSession | null>(null);
   const [currentStoreId, setCurrentStoreId] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<{ username: string; role: 'admin' | 'cashier' } | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -417,15 +444,181 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   }, [storeConfig.name, storeConfig.logo]);
 
-  // Sincroniza catálogo remoto (categorías + productos) desde Supabase.
-  const syncProductsFromSupabase = async (nextSession: SupabaseSession, storeId: string): Promise<boolean> => {
+  // Sincroniza datos remotos (catálogo + operaciones) desde Supabase.
+  const syncFromSupabase = async (nextSession: SupabaseSession, storeId: string): Promise<boolean> => {
     try {
-      const remote = await loadCategoriesAndProducts(nextSession.access_token, storeId);
-      setCategories(remote.categories);
-      setProducts(remote.products);
+      const [
+        catalog,
+        customerRows,
+        supplierRows,
+        salesRows,
+        kardexRows,
+        rechargeRows,
+        storeRow,
+      ] = await Promise.all([
+        loadCategoriesAndProducts(nextSession.access_token, storeId),
+        loadCustomersWithDebt(nextSession.access_token, storeId),
+        loadSuppliersWithPurchases(nextSession.access_token, storeId),
+        loadSalesWithItems(nextSession.access_token, storeId),
+        loadKardexMovements(nextSession.access_token, storeId),
+        loadRecharges(nextSession.access_token, storeId),
+        loadStoreDetails(nextSession.access_token, storeId),
+      ]);
+
+      setCategories(catalog.categories);
+      setProducts(catalog.products);
+
+      const productById = new Map(catalog.products.map(product => [product.id, product]));
+
+      const sales = salesRows.map((sale) => {
+        const items: CartItem[] = (sale.sale_items ?? []).map((item) => {
+          const productId = item.product_id ?? '';
+          const existingProduct = productById.get(productId);
+          const fallbackProduct: Product = {
+            id: productId || `unknown-${item.id}`,
+            name: item.product_name || 'Producto',
+            sku: '',
+            barcode: '',
+            category: existingProduct?.category ?? 'Sin categoría',
+            supplierName: existingProduct?.supplierName,
+            costPrice: existingProduct ? existingProduct.costPrice : toNumber(item.unit_cost),
+            salePrice: existingProduct ? existingProduct.salePrice : toNumber(item.unit_sale_price),
+            stock: existingProduct ? existingProduct.stock : 0,
+            minStock: existingProduct ? existingProduct.minStock : 0,
+            unit: existingProduct ? existingProduct.unit : 'unidad',
+            isBulk: existingProduct ? existingProduct.isBulk : false,
+            iva: existingProduct ? existingProduct.iva : toNumber(item.iva),
+            unitsPerPurchase: existingProduct?.unitsPerPurchase,
+            profitMargin: existingProduct?.profitMargin,
+            unitPrice: existingProduct?.unitPrice ?? (existingProduct ? existingProduct.salePrice : toNumber(item.unit_sale_price)),
+          };
+
+          return {
+            product: existingProduct ? { ...existingProduct } : fallbackProduct,
+            quantity: toNumber(item.quantity),
+            discount: toNumber(item.discount_percent),
+          };
+        });
+
+        return {
+          id: sale.id,
+          date: sale.created_at,
+          items,
+          subtotal: toNumber(sale.subtotal),
+          discount: toNumber(sale.discount),
+          iva: toNumber(sale.iva),
+          total: toNumber(sale.total),
+          paymentMethod: sale.payment_method || 'efectivo',
+          cashReceived: toNumber(sale.cash_received),
+          change: toNumber(sale.change_value),
+          customerId: sale.customer_id ?? undefined,
+          invoiceNumber: sale.invoice_number ?? undefined,
+        };
+      });
+
+      setSales(sales);
+
+      const salesByCustomerId = new Map<string, Sale[]>();
+      sales.forEach((sale) => {
+        if (!sale.customerId) return;
+        const current = salesByCustomerId.get(sale.customerId) ?? [];
+        current.push(sale);
+        salesByCustomerId.set(sale.customerId, current);
+      });
+
+      const customers: Customer[] = customerRows.map((row) => ({
+        id: row.id,
+        name: row.name || 'Cliente',
+        phone: row.phone ?? '',
+        address: row.address ?? '',
+        email: row.email ?? undefined,
+        nit: row.nit ?? undefined,
+        points: toNumber(row.points),
+        debt: toNumber(row.debt),
+        purchases: salesByCustomerId.get(row.id) ?? [],
+        debtHistory: (row.customer_debt_transactions ?? []).map((tx) => ({
+          id: tx.id,
+          date: tx.created_at,
+          type: tx.type,
+          amount: toNumber(tx.amount),
+          description: tx.description ?? '',
+          balance: toNumber(tx.balance),
+        })),
+      }));
+
+      setCustomers(customers);
+
+      const suppliers: Supplier[] = supplierRows.map((row) => ({
+        id: row.id,
+        name: row.name || 'Proveedor',
+        nit: row.nit ?? '',
+        phone: row.phone ?? '',
+        email: row.email ?? undefined,
+        address: row.address ?? undefined,
+        bankAccounts: row.bank_accounts ?? [],
+        debt: toNumber(row.debt),
+        purchases: (row.purchases ?? []).map((purchase) => ({
+          id: purchase.id,
+          date: purchase.created_at,
+          supplierId: row.id,
+          total: toNumber(purchase.total),
+          paid: Boolean(purchase.paid),
+          items: (purchase.purchase_items ?? []).map((item) => ({
+            productId: item.product_id ?? '',
+            quantity: toNumber(item.quantity_packages),
+            cost: toNumber(item.package_cost),
+          })),
+        })),
+      }));
+
+      setSuppliers(suppliers);
+
+      setKardexMovements(kardexRows.map((row) => ({
+        id: row.id,
+        date: row.created_at,
+        productId: row.product_id ?? '',
+        productName: row.product_name || 'Producto',
+        type: row.type,
+        reference: row.reference ?? '',
+        quantity: toNumber(row.quantity),
+        stockBefore: toNumber(row.stock_before),
+        stockAfter: toNumber(row.stock_after),
+        unitCost: toNumber(row.unit_cost),
+        unitSalePrice: row.unit_sale_price == null ? undefined : toNumber(row.unit_sale_price),
+        totalCost: toNumber(row.total_cost),
+      })));
+
+      setRecharges(rechargeRows.map((row) => ({
+        id: row.id,
+        date: row.created_at,
+        type: row.type,
+        provider: row.provider || 'N/A',
+        phoneNumber: row.phone_number ?? undefined,
+        amount: toNumber(row.amount),
+        commission: toNumber(row.commission),
+        total: toNumber(row.total),
+      })));
+
+      if (storeRow) {
+        setStoreConfig(prev => ({
+          ...prev,
+          name: storeRow.name || prev.name,
+          nit: storeRow.nit ?? '',
+          address: storeRow.address ?? '',
+          phone: storeRow.phone ?? '',
+          email: storeRow.email ?? '',
+          logo: storeRow.logo || prev.logo,
+          dianResolution: storeRow.dian_resolution ?? undefined,
+          printerType: storeRow.printer_type === 'standard' ? 'standard' : 'thermal',
+          showIVA: storeRow.show_iva ?? prev.showIVA,
+          purchasePricePolicy: storeRow.purchase_price_policy || prev.purchasePricePolicy,
+          currency: storeRow.currency ?? prev.currency,
+        }));
+      }
+
       return true;
     } catch (error) {
-      console.error('No se pudieron cargar productos/categorías desde Supabase', error);
+      console.error('No se pudieron cargar datos desde Supabase', error);
       return false;
     }
   };
@@ -529,7 +722,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
 
     const storedSession = getStoredSession();
-    if (!storedSession) return;
+    if (!storedSession) {
+      setIsAuthReady(true);
+      return;
+    }
 
     setSession(storedSession);
     setIsAuthenticated(true);
@@ -542,11 +738,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
           username: storedSession.user.email || 'usuario',
           role: membership.role,
         });
-        return syncProductsFromSupabase(storedSession, membership.store_id);
+        return syncFromSupabase(storedSession, membership.store_id);
       })
       .catch((error) => {
         console.error('No se pudo restaurar la sesión de Supabase', error);
         toast.error('No se pudo restaurar la sesión con Supabase');
+      })
+      .finally(() => {
+        setIsAuthReady(true);
       });
   }, []);
 
@@ -594,8 +793,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Guardar autenticación
   useEffect(() => {
+    if (!isAuthReady) return;
     localStorage.setItem('pos_auth', JSON.stringify({ isAuthenticated, currentUser }));
-  }, [isAuthenticated, currentUser]);
+  }, [isAuthenticated, currentUser, isAuthReady]);
 
   // Funciones de autenticación
   const login = async (username: string, password: string): Promise<boolean> => {
@@ -614,9 +814,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
       if (membership) {
         setCurrentStoreId(membership.store_id);
-        const synced = await syncProductsFromSupabase(nextSession, membership.store_id);
+        const synced = await syncFromSupabase(nextSession, membership.store_id);
         if (!synced) {
-          toast.error('Sesión iniciada, pero falló la sincronización de catálogo');
+          toast.error('Sesión iniciada, pero falló la sincronización de datos');
         }
       } else {
         setCurrentStoreId(null);
@@ -656,7 +856,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     try {
       const storeId = await bootstrapStore(session.access_token, store);
       setCurrentStoreId(storeId);
-      const synced = await syncProductsFromSupabase(session, storeId);
+      const synced = await syncFromSupabase(session, storeId);
       if (!synced) {
         toast.error('Tienda creada, pero falló la sincronización inicial.');
       }
@@ -674,13 +874,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
-    const ok = await syncProductsFromSupabase(session, currentStoreId);
+    const ok = await syncFromSupabase(session, currentStoreId);
     if (!ok) {
       toast.error('No se pudo sincronizar con Supabase.');
       return false;
     }
 
-    toast.success('Catálogo sincronizado con Supabase.');
+    toast.success('Datos sincronizados con Supabase.');
     return true;
   };
 
@@ -688,6 +888,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
     if (!session?.access_token || !currentStoreId) {
       toast.info('No hay tienda conectada para sincronizar.');
       return false;
+    }
+
+    if (clearExisting) {
+      toast.info('Para proteger la inmutabilidad del Kardex, el modo limpiar datos está deshabilitado.');
+      clearExisting = false;
     }
 
     const backupPayload = {
@@ -702,9 +907,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     try {
       await importLocalBackup(session.access_token, currentStoreId, backupPayload, clearExisting);
-      const synced = await syncProductsFromSupabase(session, currentStoreId);
+      const synced = await syncFromSupabase(session, currentStoreId);
       if (!synced) {
-        toast.error('Importación finalizada, pero falló la actualización del catálogo en pantalla.');
+        toast.error('Importación finalizada, pero falló la actualización de datos en pantalla.');
       } else {
         toast.success('Datos locales importados a Supabase correctamente.');
       }
@@ -750,15 +955,69 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const updateProduct = (id: string, updatedProduct: Partial<Product>) => {
-    setProducts(products.map(p => p.id === id ? { ...p, ...updatedProduct } : p));
+    setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedProduct } : p));
 
     if (session?.access_token && currentStoreId) {
       void patchProduct(session.access_token, currentStoreId, id, updatedProduct)
         .catch((error) => {
           console.error('No se pudo actualizar producto en Supabase', error);
           toast.error('Producto actualizado localmente, pero falló la sincronización en Supabase.');
-        });
+      });
     }
+  };
+
+  const adjustStock = (
+    productId: string,
+    nextStock: number,
+    options?: {
+      reference?: string;
+      unitCost?: number;
+      unitSalePrice?: number;
+      nextCostPrice?: number;
+      nextIva?: number;
+      nextUnitsPerPurchase?: number;
+      productName?: string;
+    }
+  ) => {
+    const product = products.find(p => p.id === productId);
+    if (!product) return;
+
+    const stockAfter = Number.isFinite(nextStock) ? nextStock : product.stock;
+    const stockBefore = product.stock;
+    if (stockAfter === stockBefore) return;
+
+    updateProduct(productId, { stock: stockAfter });
+
+    const effectiveCostPrice = typeof options?.nextCostPrice === 'number' ? options.nextCostPrice : product.costPrice;
+    const effectiveIva = typeof options?.nextIva === 'number' ? options.nextIva : product.iva;
+    const effectiveUnits = typeof options?.nextUnitsPerPurchase === 'number'
+      ? options.nextUnitsPerPurchase
+      : Number(product.unitsPerPurchase ?? 1) || 1;
+    const unitCost = typeof options?.unitCost === 'number'
+      ? options.unitCost
+      : buildUnitCostWithIva({
+          ...product,
+          costPrice: effectiveCostPrice,
+          iva: effectiveIva,
+          unitsPerPurchase: effectiveUnits,
+        });
+    const unitSalePrice = typeof options?.unitSalePrice === 'number'
+      ? options.unitSalePrice
+      : product.salePrice;
+
+    const delta = stockAfter - stockBefore;
+    appendKardexMovement({
+      productId,
+      productName: options?.productName || product.name,
+      type: 'adjustment',
+      reference: options?.reference || `AJU-${Date.now().toString().slice(-6)}`,
+      quantity: delta,
+      stockBefore,
+      stockAfter,
+      unitCost,
+      unitSalePrice,
+      totalCost: Math.abs(delta) * unitCost,
+    });
   };
 
   const deleteProduct = (id: string) => {
@@ -1068,6 +1327,46 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     clearCart();
     return newSale;
+  };
+
+  const registerReturn = (saleId: string): boolean => {
+    const sale = sales.find(s => s.id === saleId);
+    if (!sale) {
+      toast.error('No se encontró la venta para devolver.');
+      return false;
+    }
+
+    const reference = `DEV-${sale.id}`;
+    const alreadyReturned = kardexMovements.some(movement => movement.reference === reference);
+    if (alreadyReturned) {
+      toast.info('Esta venta ya tiene una devolución registrada.');
+      return false;
+    }
+
+    sale.items.forEach(item => {
+      const product = products.find(p => p.id === item.product.id) ?? item.product;
+      const stockBefore = product.stock;
+      const stockAfter = stockBefore + item.quantity;
+
+      updateProduct(product.id, { stock: stockAfter });
+
+      const unitCost = buildUnitCostWithIva(product);
+      appendKardexMovement({
+        productId: product.id,
+        productName: product.name,
+        type: 'adjustment',
+        reference,
+        quantity: item.quantity,
+        stockBefore,
+        stockAfter,
+        unitCost,
+        unitSalePrice: product.salePrice,
+        totalCost: unitCost * item.quantity,
+      });
+    });
+
+    toast.success('Devolución registrada en Kardex.');
+    return true;
   };
 
   const getSalesToday = (): Sale[] => {
@@ -1459,6 +1758,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   return (
     <POSContext.Provider value={{
       isAuthenticated,
+      isAuthReady,
       currentUser,
       login,
       logout,
@@ -1475,6 +1775,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       addCategory,
       updateCategory,
       deleteCategory,
+      adjustStock,
       cart,
       addToCart,
       removeFromCart,
@@ -1486,6 +1787,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       completeSale,
       getSalesToday,
       getSalesInRange,
+      registerReturn,
       kardexMovements,
       getKardexByProduct,
       customers,

@@ -685,7 +685,7 @@ export function Configuration() {
                 onClick={handleManualSync}
                 disabled={isSyncing}
               >
-                {isSyncing ? 'Sincronizando...' : 'Re-sincronizar catálogo con Supabase'}
+                {isSyncing ? 'Sincronizando...' : 'Re-sincronizar datos con Supabase'}
               </Button>
 
               <Button

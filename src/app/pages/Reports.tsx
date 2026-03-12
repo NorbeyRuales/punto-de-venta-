@@ -9,9 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { startOfDay, endOfDay, subDays, format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { toast } from 'sonner';
 
 export function Reports() {
-  const { sales, getSalesInRange, products } = usePOS();
+  const { sales, getSalesInRange, products, kardexMovements, registerReturn } = usePOS();
   const [period, setPeriod] = useState('today');
 
   // Calcula rango de fechas según periodo seleccionado.
@@ -66,6 +67,24 @@ export function Reports() {
 
   const categoryData = Array.from(categorySales.entries()).map(([name, value]) => ({ name, value }));
   const COLORS = ['#15D9E6', '#E6C915', '#E61595', '#8BE9FD', '#FFD27F', '#2ECC71'];
+  const returnedReferences = new Set(
+    kardexMovements
+      .map(movement => movement.reference)
+      .filter(Boolean)
+  );
+
+  const handleReturnSale = (saleId: string, invoiceNumber?: string) => {
+    const reference = `DEV-${saleId}`;
+    if (returnedReferences.has(reference)) {
+      toast.info('Esta venta ya tiene una devolución registrada.');
+      return;
+    }
+
+    const confirmed = confirm(`¿Registrar devolución total de la factura ${invoiceNumber || saleId}?`);
+    if (!confirmed) return;
+
+    registerReturn(saleId);
+  };
 
   // Placeholder de exportación.
   const exportToExcel = () => {
@@ -183,17 +202,32 @@ export function Reports() {
                 <th className="text-left p-3">Factura</th>
                 <th className="text-left p-3">Método Pago</th>
                 <th className="text-right p-3">Total</th>
+                <th className="text-right p-3">Acciones</th>
               </tr>
             </thead>
             <tbody>
-              {periodSales.slice(-20).reverse().map(sale => (
-                <tr key={sale.id} className="border-b">
-                  <td className="p-3">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</td>
-                  <td className="p-3">{sale.invoiceNumber}</td>
-                  <td className="p-3 capitalize">{sale.paymentMethod}</td>
-                  <td className="p-3 text-right font-bold text-[#2ECC71]">${sale.total.toLocaleString('es-CO')}</td>
-                </tr>
-              ))}
+              {periodSales.slice(-20).reverse().map(sale => {
+                const returnRef = `DEV-${sale.id}`;
+                const isReturned = returnedReferences.has(returnRef);
+                return (
+                  <tr key={sale.id} className="border-b">
+                    <td className="p-3">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</td>
+                    <td className="p-3">{sale.invoiceNumber}</td>
+                    <td className="p-3 capitalize">{sale.paymentMethod}</td>
+                    <td className="p-3 text-right font-bold text-[#2ECC71]">${sale.total.toLocaleString('es-CO')}</td>
+                    <td className="p-3 text-right">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isReturned}
+                        onClick={() => handleReturnSale(sale.id, sale.invoiceNumber)}
+                      >
+                        {isReturned ? 'Devuelto' : 'Devolver'}
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
