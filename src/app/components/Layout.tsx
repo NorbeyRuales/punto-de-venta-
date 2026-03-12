@@ -11,6 +11,7 @@ import {
   TrendingUp, 
   FileText, 
   Smartphone, 
+  Wallet,
   Settings, 
   LogOut, 
   Menu,
@@ -35,6 +36,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const menuItems = [
     { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/pos', icon: ShoppingCart, label: 'Nueva Venta' },
+    { path: '/cash-register', icon: Wallet, label: 'Caja' },
     { path: '/purchases', icon: ShoppingBag, label: 'Compras' },
     { path: '/inventory', icon: Package, label: 'Inventario' },
     { path: '/customers', icon: Users, label: 'Clientes' },

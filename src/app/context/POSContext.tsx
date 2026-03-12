@@ -12,6 +12,8 @@ import {
   bootstrapStore,
   createCategory,
   createCustomer,
+  createCashMovement,
+  createCashSession,
   createKardexMovementRow,
   createProduct,
   createPurchaseWithItems,
@@ -23,6 +25,8 @@ import {
   importLocalBackup,
   insertCustomerDebtTx,
   loadCategoriesAndProducts,
+  loadCashMovements,
+  loadCashSessions,
   loadCustomersWithDebt,
   loadKardexMovements,
   loadRecharges,
@@ -33,6 +37,7 @@ import {
   removeCategory,
   removeProduct,
   renameCategory,
+  updateCashSession,
   updateCustomerRow,
   updateSupplierRow,
   updateStoreDetails,
@@ -43,6 +48,9 @@ const toNumber = (value: unknown, fallback = 0): number => {
   const num = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(num) ? num : fallback;
 };
+
+const uuidLike = (value?: string | null): boolean =>
+  !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
 // Tipos de datos
 export interface Product {
@@ -83,6 +91,7 @@ export interface Sale {
   change: number;
   customerId?: string;
   invoiceNumber?: string;
+  cashSessionId?: string;
 }
 
 export interface Customer {
@@ -157,6 +166,38 @@ export interface RechargeTransaction {
   total: number;
 }
 
+export interface CashSession {
+  id: string;
+  storeId?: string;
+  userId?: string;
+  openedAt: string;
+  closedAt?: string;
+  openingCash: number;
+  expectedCash?: number;
+  countedCash?: number;
+  difference?: number;
+  status: 'open' | 'closed';
+}
+
+export interface CashMovement {
+  id: string;
+  cashSessionId: string;
+  userId?: string;
+  type: 'cash_in' | 'cash_out';
+  amount: number;
+  reason?: string;
+  date: string;
+}
+
+export interface CashSessionReport {
+  salesTotal: number;
+  salesByMethod: Record<string, number>;
+  cashSalesTotal: number;
+  cashInTotal: number;
+  cashOutTotal: number;
+  expectedCash: number;
+}
+
 export interface StoreConfig {
   name: string;
   nit: string;
@@ -220,10 +261,19 @@ interface POSContextType {
   
   // Ventas
   sales: Sale[];
-  completeSale: (paymentMethod: string, cashReceived: number, customerId?: string) => Sale;
+  completeSale: (paymentMethod: string, cashReceived: number, customerId?: string) => Sale | null;
   getSalesToday: () => Sale[];
   getSalesInRange: (startDate: Date, endDate: Date) => Sale[];
   registerReturn: (saleId: string) => boolean;
+
+  // Caja
+  cashSessions: CashSession[];
+  cashMovements: CashMovement[];
+  currentCashSession: CashSession | null;
+  openCashSession: (openingCash: number) => Promise<boolean>;
+  closeCashSession: (countedCash: number) => Promise<CashSession | null>;
+  addCashMovement: (type: 'cash_in' | 'cash_out', amount: number, reason?: string) => Promise<CashMovement | null>;
+  getCashSessionReport: (sessionId: string) => CashSessionReport;
 
   // Kardex
   kardexMovements: KardexMovement[];
@@ -398,6 +448,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [recharges, setRecharges] = useState<RechargeTransaction[]>([]);
+  const [cashSessions, setCashSessions] = useState<CashSession[]>([]);
+  const [cashMovements, setCashMovements] = useState<CashMovement[]>([]);
   const [storeConfig, setStoreConfig] = useState<StoreConfig>({
     name: 'Mi Tienda',
     nit: '900123456-1',
@@ -454,6 +506,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
         salesRows,
         kardexRows,
         rechargeRows,
+        cashSessionRows,
+        cashMovementRows,
         storeRow,
       ] = await Promise.all([
         loadCategoriesAndProducts(nextSession.access_token, storeId),
@@ -462,6 +516,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
         loadSalesWithItems(nextSession.access_token, storeId),
         loadKardexMovements(nextSession.access_token, storeId),
         loadRecharges(nextSession.access_token, storeId),
+        loadCashSessions(nextSession.access_token, storeId),
+        loadCashMovements(nextSession.access_token, storeId),
         loadStoreDetails(nextSession.access_token, storeId),
       ]);
 
@@ -513,6 +569,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           change: toNumber(sale.change_value),
           customerId: sale.customer_id ?? undefined,
           invoiceNumber: sale.invoice_number ?? undefined,
+          cashSessionId: sale.cash_session_id ?? undefined,
         };
       });
 
@@ -599,6 +656,29 @@ export function POSProvider({ children }: { children: ReactNode }) {
         total: toNumber(row.total),
       })));
 
+      setCashSessions(cashSessionRows.map((row) => ({
+        id: row.id,
+        storeId: row.store_id,
+        userId: row.user_id ?? undefined,
+        openedAt: row.opened_at,
+        closedAt: row.closed_at ?? undefined,
+        openingCash: toNumber(row.opening_cash),
+        expectedCash: row.expected_cash == null ? undefined : toNumber(row.expected_cash),
+        countedCash: row.counted_cash == null ? undefined : toNumber(row.counted_cash),
+        difference: row.difference == null ? undefined : toNumber(row.difference),
+        status: row.status,
+      })));
+
+      setCashMovements(cashMovementRows.map((row) => ({
+        id: row.id,
+        cashSessionId: row.cash_session_id,
+        userId: row.user_id ?? undefined,
+        type: row.type,
+        amount: toNumber(row.amount),
+        reason: row.reason ?? undefined,
+        date: row.created_at,
+      })));
+
       if (storeRow) {
         setStoreConfig(prev => ({
           ...prev,
@@ -632,6 +712,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const loadedCustomers = localStorage.getItem('pos_customers');
     const loadedSuppliers = localStorage.getItem('pos_suppliers');
     const loadedRecharges = localStorage.getItem('pos_recharges');
+    const loadedCashSessions = localStorage.getItem('pos_cash_sessions');
+    const loadedCashMovements = localStorage.getItem('pos_cash_movements');
     const loadedConfig = localStorage.getItem('pos_config');
     const authData = localStorage.getItem('pos_auth');
 
@@ -707,6 +789,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
       setSuppliers(initialSuppliers);
     }
     if (loadedRecharges) setRecharges(JSON.parse(loadedRecharges));
+    if (loadedCashSessions) setCashSessions(JSON.parse(loadedCashSessions));
+    if (loadedCashMovements) setCashMovements(JSON.parse(loadedCashMovements));
     if (loadedConfig) {
       const parsedConfig = JSON.parse(loadedConfig) as Partial<StoreConfig>;
       setStoreConfig(prev => ({
@@ -715,14 +799,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
         purchasePricePolicy: parsedConfig.purchasePricePolicy || 'automatic'
       }));
     }
-    if (authData) {
-      const auth = JSON.parse(authData);
-      setIsAuthenticated(auth.isAuthenticated);
-      setCurrentUser(auth.currentUser);
-    }
-
     const storedSession = getStoredSession();
     if (!storedSession) {
+      setSession(null);
+      setIsAuthenticated(false);
+      setCurrentUser(null);
+      setCurrentStoreId(null);
+      localStorage.removeItem('pos_auth');
       setIsAuthReady(true);
       return;
     }
@@ -785,6 +868,16 @@ export function POSProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     localStorage.setItem('pos_recharges', JSON.stringify(recharges));
   }, [recharges]);
+
+  // Guardar sesiones de caja
+  useEffect(() => {
+    localStorage.setItem('pos_cash_sessions', JSON.stringify(cashSessions));
+  }, [cashSessions]);
+
+  // Guardar movimientos de caja
+  useEffect(() => {
+    localStorage.setItem('pos_cash_movements', JSON.stringify(cashMovements));
+  }, [cashMovements]);
 
   // Guardar configuración
   useEffect(() => {
@@ -902,6 +995,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
       suppliers: localStorage.getItem('pos_suppliers'),
       kardex: localStorage.getItem('pos_kardex'),
       recharges: localStorage.getItem('pos_recharges'),
+      cash_sessions: localStorage.getItem('pos_cash_sessions'),
+      cash_movements: localStorage.getItem('pos_cash_movements'),
       config: localStorage.getItem('pos_config'),
     };
 
@@ -1213,14 +1308,203 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const currentCashSession = [...cashSessions]
+    .filter((session) => session.status === 'open')
+    .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime())[0] ?? null;
+
   const cartTotal = cart.reduce((total, item) => {
     const itemPrice = item.product.salePrice * item.quantity;
     const discountAmount = (itemPrice * item.discount) / 100;
     return total + (itemPrice - discountAmount);
   }, 0);
 
+  const getCashSessionReport = (sessionId: string): CashSessionReport => {
+    const session = cashSessions.find(s => s.id === sessionId);
+    if (!session) {
+      return {
+        salesTotal: 0,
+        salesByMethod: {},
+        cashSalesTotal: 0,
+        cashInTotal: 0,
+        cashOutTotal: 0,
+        expectedCash: 0,
+      };
+    }
+
+    const sessionSales = sales.filter(sale => sale.cashSessionId === sessionId);
+    const salesByMethod: Record<string, number> = {};
+    let salesTotal = 0;
+
+    sessionSales.forEach((sale) => {
+      salesTotal += sale.total;
+      const method = sale.paymentMethod || 'otro';
+      salesByMethod[method] = (salesByMethod[method] || 0) + sale.total;
+    });
+
+    const cashSalesTotal = salesByMethod['efectivo'] || 0;
+    const sessionMovements = cashMovements.filter(movement => movement.cashSessionId === sessionId);
+    const cashInTotal = sessionMovements
+      .filter(movement => movement.type === 'cash_in')
+      .reduce((sum, movement) => sum + movement.amount, 0);
+    const cashOutTotal = sessionMovements
+      .filter(movement => movement.type === 'cash_out')
+      .reduce((sum, movement) => sum + movement.amount, 0);
+
+    const expectedCash = session.openingCash + cashSalesTotal + cashInTotal - cashOutTotal;
+
+    return {
+      salesTotal,
+      salesByMethod,
+      cashSalesTotal,
+      cashInTotal,
+      cashOutTotal,
+      expectedCash,
+    };
+  };
+
+  // Funciones de caja
+  const openCashSession = async (openingCash: number): Promise<boolean> => {
+    if (currentCashSession) {
+      toast.info('Ya existe una caja abierta en esta tienda.');
+      return false;
+    }
+
+    const safeOpeningCash = Number.isFinite(openingCash) ? Math.max(0, openingCash) : 0;
+    const openedAt = new Date().toISOString();
+    let sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    if (session?.access_token && currentStoreId) {
+      try {
+        const remoteId = await createCashSession(session.access_token, currentStoreId, {
+          userId: session.user.id,
+          openingCash: safeOpeningCash,
+          openedAt,
+        });
+        if (remoteId) {
+          sessionId = remoteId;
+        }
+      } catch (error) {
+        console.error('No se pudo abrir caja en Supabase', error);
+        toast.error('Caja abierta localmente, pero falló en Supabase.');
+      }
+    }
+
+    const newSession: CashSession = {
+      id: sessionId,
+      storeId: currentStoreId ?? undefined,
+      userId: session?.user.id,
+      openedAt,
+      openingCash: safeOpeningCash,
+      status: 'open',
+    };
+
+    setCashSessions(prev => [...prev, newSession]);
+    toast.success('Caja abierta correctamente.');
+    return true;
+  };
+
+  const addCashMovement = async (
+    type: 'cash_in' | 'cash_out',
+    amount: number,
+    reason?: string,
+  ): Promise<CashMovement | null> => {
+    if (!currentCashSession) {
+      toast.error('No hay una caja abierta.');
+      return null;
+    }
+
+    const safeAmount = Number.isFinite(amount) ? Math.max(0, amount) : 0;
+    if (safeAmount <= 0) {
+      toast.error('El monto debe ser mayor a 0.');
+      return null;
+    }
+
+    const movementDate = new Date().toISOString();
+    let movementId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    if (session?.access_token && currentStoreId && uuidLike(currentCashSession.id)) {
+      try {
+        const remoteId = await createCashMovement(session.access_token, currentStoreId, {
+          cashSessionId: currentCashSession.id,
+          userId: session.user.id,
+          type,
+          amount: safeAmount,
+          reason,
+          createdAt: movementDate,
+        });
+        if (remoteId) {
+          movementId = remoteId;
+        }
+      } catch (error) {
+        console.error('No se pudo guardar movimiento de caja en Supabase', error);
+        toast.error('Movimiento guardado localmente, pero falló en Supabase.');
+      }
+    }
+
+    const movement: CashMovement = {
+      id: movementId,
+      cashSessionId: currentCashSession.id,
+      userId: session?.user.id,
+      type,
+      amount: safeAmount,
+      reason: reason?.trim() ? reason.trim() : undefined,
+      date: movementDate,
+    };
+
+    setCashMovements(prev => [...prev, movement]);
+    toast.success(type === 'cash_in' ? 'Ingreso registrado.' : 'Retiro registrado.');
+    return movement;
+  };
+
+  const closeCashSession = async (countedCash: number): Promise<CashSession | null> => {
+    if (!currentCashSession) {
+      toast.error('No hay una caja abierta para cerrar.');
+      return null;
+    }
+
+    const safeCounted = Number.isFinite(countedCash) ? Math.max(0, countedCash) : 0;
+    const report = getCashSessionReport(currentCashSession.id);
+    const expectedCash = report.expectedCash;
+    const difference = safeCounted - expectedCash;
+    const closedAt = new Date().toISOString();
+
+    const closedSession: CashSession = {
+      ...currentCashSession,
+      closedAt,
+      expectedCash,
+      countedCash: safeCounted,
+      difference,
+      status: 'closed',
+    };
+
+    setCashSessions(prev => prev.map(sessionItem => sessionItem.id === currentCashSession.id ? closedSession : sessionItem));
+
+    if (session?.access_token && currentStoreId && uuidLike(currentCashSession.id)) {
+      try {
+        await updateCashSession(session.access_token, currentStoreId, currentCashSession.id, {
+          closedAt,
+          expectedCash,
+          countedCash: safeCounted,
+          difference,
+          status: 'closed',
+        });
+      } catch (error) {
+        console.error('No se pudo cerrar caja en Supabase', error);
+        toast.error('Caja cerrada localmente, pero falló en Supabase.');
+      }
+    }
+
+    toast.success('Caja cerrada correctamente.');
+    return closedSession;
+  };
+
   // Funciones de ventas
-  const completeSale = (paymentMethod: string, cashReceived: number, customerId?: string): Sale => {
+  const completeSale = (paymentMethod: string, cashReceived: number, customerId?: string): Sale | null => {
+    if (!currentCashSession) {
+      toast.error('Debes abrir una caja antes de registrar ventas.');
+      return null;
+    }
+
     const subtotal = cart.reduce((sum, item) => sum + (item.product.salePrice * item.quantity), 0);
     const totalDiscount = cart.reduce((sum, item) => {
       const itemPrice = item.product.salePrice * item.quantity;
@@ -1248,6 +1532,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       change,
       customerId,
       invoiceNumber: `FAC-${(sales.length + 1).toString().padStart(6, '0')}`,
+      cashSessionId: currentCashSession.id,
     };
 
     // Actualizar stock
@@ -1287,13 +1572,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     setSales([...sales, newSale]);
 
-    if (session?.access_token && currentStoreId) {
+    if (session?.access_token && currentStoreId && uuidLike(currentCashSession.id)) {
       const paymentMethodValue = ['efectivo', 'tarjeta', 'transferencia', 'credito'].includes(paymentMethod)
         ? paymentMethod as 'efectivo' | 'tarjeta' | 'transferencia' | 'credito'
         : 'otro';
 
       void createSaleWithItems(session.access_token, currentStoreId, {
         customerId,
+        cashSessionId: currentCashSession.id,
         invoiceNumber: newSale.invoiceNumber,
         subtotal: newSale.subtotal,
         discount: newSale.discount,
@@ -1323,6 +1609,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
         console.error('No se pudo guardar la venta en Supabase', error);
         toast.error('Venta guardada localmente, pero falló en Supabase.');
       });
+    } else if (session?.access_token && currentStoreId) {
+      toast.error('Venta guardada localmente, pero la caja no está sincronizada.');
     }
 
     clearCart();
@@ -1788,6 +2076,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
       getSalesToday,
       getSalesInRange,
       registerReturn,
+      cashSessions,
+      cashMovements,
+      currentCashSession,
+      openCashSession,
+      closeCashSession,
+      addCashMovement,
+      getCashSessionReport,
       kardexMovements,
       getKardexByProduct,
       customers,

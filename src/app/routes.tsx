@@ -11,6 +11,7 @@ import { Reports } from "./pages/Reports";
 import { Recharges } from "./pages/Recharges";
 import { Configuration } from "./pages/Configuration";
 import { Invoice } from "./pages/Invoice";
+import { CashRegister } from "./pages/CashRegister";
 import { Layout } from "./components/Layout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
@@ -98,6 +99,16 @@ export const router = createBrowserRouter([
       <ProtectedRoute>
         <Layout>
           <Recharges />
+        </Layout>
+      </ProtectedRoute>
+    ),
+  },
+  {
+    path: "/cash-register",
+    element: (
+      <ProtectedRoute>
+        <Layout>
+          <CashRegister />
         </Layout>
       </ProtectedRoute>
     ),

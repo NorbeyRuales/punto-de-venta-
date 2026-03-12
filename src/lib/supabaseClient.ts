@@ -42,17 +42,59 @@ export function storeSession(session: SupabaseSession | null) {
   localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
 }
 
+// Refresca el token usando el refresh_token almacenado.
+export async function refreshSession(): Promise<SupabaseSession | null> {
+  const current = getStoredSession();
+  if (!current?.refresh_token) {
+    storeSession(null);
+    return null;
+  }
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST',
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: `Bearer ${supabaseAnonKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ refresh_token: current.refresh_token }),
+  });
+
+  if (!response.ok) {
+    storeSession(null);
+    return null;
+  }
+
+  const data = await response.json() as { access_token: string; refresh_token: string; user: SupabaseSession['user'] };
+  const nextSession: SupabaseSession = {
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    user: data.user,
+  };
+  storeSession(nextSession);
+  return nextSession;
+}
+
 // Helper genérico para invocar endpoints de Supabase con headers base.
 async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
-  const response = await fetch(`${supabaseUrl}${path}`, {
+  const doFetch = async (authToken?: string) => fetch(`${supabaseUrl}${path}`, {
     ...init,
     headers: {
       apikey: supabaseAnonKey,
-      Authorization: token ? `Bearer ${token}` : `Bearer ${supabaseAnonKey}`,
+      Authorization: authToken ? `Bearer ${authToken}` : `Bearer ${supabaseAnonKey}`,
       'Content-Type': 'application/json',
       ...(init.headers || {}),
     },
   });
+
+  let response = await doFetch(token);
+
+  if (response.status === 401 && token) {
+    const refreshed = await refreshSession();
+    if (refreshed?.access_token) {
+      response = await doFetch(refreshed.access_token);
+    }
+  }
 
   const json = await response.json().catch(() => ({}));
 

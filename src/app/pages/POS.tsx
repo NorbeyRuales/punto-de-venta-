@@ -1,6 +1,8 @@
 // Punto de venta: búsqueda, carrito, descuentos y cobro.
 import { useState, useRef } from 'react';
+import { useNavigate } from 'react-router';
 import { usePOS } from '../context/POSContext';
+import type { Sale } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -23,8 +25,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 
 export function POS() {
+  const navigate = useNavigate();
   const {
     products,
+    categories,
     cart,
     addToCart,
     removeFromCart,
@@ -33,7 +37,9 @@ export function POS() {
     cartTotal,
     completeSale,
     clearCart,
-    customers
+    customers,
+    currentCashSession,
+    storeConfig
   } = usePOS();
 
   // Estado de UI y cobro.
@@ -45,15 +51,71 @@ export function POS() {
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [discountAmount, setDiscountAmount] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [completedSale, setCompletedSale] = useState<Sale | null>(null);
+
+  const formatCurrency = (value: number) => `$${Math.round(value).toLocaleString('es-CO')}`;
+
+  const normalizeText = (value: string) =>
+    value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+
+  const normalizePhone = (phone?: string) => {
+    if (!phone) return '';
+    const digits = phone.replace(/\D/g, '');
+    if (!digits) return '';
+    if (digits.startsWith('57')) return digits;
+    if (digits.length === 10) return `57${digits}`;
+    return digits;
+  };
+
+  const buildWhatsappMessage = (sale: Sale) => {
+    const customer = sale.customerId ? customers.find(c => c.id === sale.customerId) : undefined;
+    const lines = [
+      storeConfig?.name ? `Tienda: ${storeConfig.name}` : 'Comprobante de venta',
+      `Factura: ${sale.invoiceNumber || sale.id}`,
+      `Fecha: ${new Date(sale.date).toLocaleString('es-CO')}`,
+      customer?.name ? `Cliente: ${customer.name}` : null,
+      '',
+      'Detalle:',
+      ...sale.items.map(item => {
+        const unitPrice = item.product.salePrice;
+        const subtotalItem = unitPrice * item.quantity;
+        const totalItem = subtotalItem - ((subtotalItem * item.discount) / 100);
+        return `- ${item.product.name} x${item.quantity} = ${formatCurrency(totalItem)}`;
+      }),
+      '',
+      `Subtotal: ${formatCurrency(sale.subtotal)}`,
+      sale.discount > 0 ? `Descuento: -${formatCurrency(sale.discount)}` : null,
+      `IVA: ${formatCurrency(sale.iva)}`,
+      `Total: ${formatCurrency(sale.total)}`,
+      `Pago: ${sale.paymentMethod}`,
+      sale.paymentMethod === 'efectivo'
+        ? `Efectivo: ${formatCurrency(sale.cashReceived)} | Cambio: ${formatCurrency(sale.change)}`
+        : null,
+      '',
+      '¡Gracias por tu compra!',
+    ].filter(Boolean);
+
+    return lines.join('\n');
+  };
 
   // Resultados de búsqueda por nombre/SKU/código de barras.
+  const normalizedQuery = normalizeText(searchQuery);
   const filteredProducts = searchQuery
     ? products.filter(p =>
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.barcode.includes(searchQuery)
+        normalizeText(p.name).includes(normalizedQuery) ||
+        normalizeText(p.sku || '').includes(normalizedQuery) ||
+        normalizeText(p.category || '').includes(normalizedQuery) ||
+        (p.barcode || '').includes(searchQuery.trim())
       )
     : [];
+
+  const quickCategories = categories.length > 0
+    ? categories
+    : ['Lácteos', 'Bebidas', 'Aseo', 'Snacks', 'Granos', 'Carnes Frías'];
 
   // Agrega un producto al carrito validando stock.
   const handleAddToCart = (productId: string) => {
@@ -120,8 +182,10 @@ export function POS() {
       selectedCustomer || undefined
     );
 
+    if (!sale) return;
+
     toast.success('Venta completada exitosamente');
-    setShowPaymentDialog(false);
+    setCompletedSale(sale);
     setCashReceived('');
     setPaymentMethod('efectivo');
     setSelectedCustomer('');
@@ -135,7 +199,17 @@ export function POS() {
   };
 
   const handleShareWhatsapp = () => {
-    toast.info('Funcionalidad de WhatsApp en preparación.');
+    if (!completedSale) {
+      toast.info('Completa una venta para compartirla por WhatsApp.');
+      return;
+    }
+
+    const customer = completedSale.customerId ? customers.find(c => c.id === completedSale.customerId) : undefined;
+    const phone = normalizePhone(customer?.phone);
+    const message = buildWhatsappMessage(completedSale);
+    const baseUrl = phone ? `https://wa.me/${phone}` : 'https://wa.me/';
+    const url = `${baseUrl}?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   // Totales de la venta.
@@ -151,7 +225,27 @@ export function POS() {
     : 0;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)]">
+    <div className="space-y-4">
+      {!currentCashSession && (
+        <Card className="p-4 border border-amber-200 bg-amber-50">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <p className="text-sm font-semibold text-amber-800">Caja cerrada</p>
+              <p className="text-sm text-amber-700">
+                Abre una sesión de caja para registrar ventas.
+              </p>
+            </div>
+            <Button
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              onClick={() => navigate('/cash-register')}
+            >
+              Ir a apertura de caja
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)]">
       {/* Panel de productos */}
       <div className="lg:col-span-2 flex flex-col gap-4">
         <Card className="p-4">
@@ -203,12 +297,15 @@ export function POS() {
         <Card className="p-4 hidden md:block">
           <h3 className="font-bold mb-3">Categorías Rápidas</h3>
           <div className="flex flex-wrap gap-2">
-            {['Lácteos', 'Bebidas', 'Aseo', 'Snacks', 'Granos', 'Carnes Frías'].map(category => (
+            {quickCategories.map(category => (
               <Button
                 key={category}
                 variant="outline"
                 size="sm"
-                onClick={() => setSearchQuery(category)}
+                onClick={() => {
+                  setSearchQuery(category);
+                  searchInputRef.current?.focus();
+                }}
               >
                 {category}
               </Button>
@@ -338,8 +435,11 @@ export function POS() {
         <Button
           size="lg"
           className="h-16 bg-[#2ECC71] hover:bg-[#27AE60] text-white text-xl font-bold"
-          onClick={() => setShowPaymentDialog(true)}
-          disabled={cart.length === 0}
+          onClick={() => {
+            setCompletedSale(null);
+            setShowPaymentDialog(true);
+          }}
+          disabled={cart.length === 0 || !currentCashSession}
         >
           <DollarSign className="w-6 h-6 mr-2" />
           Cobrar
@@ -380,7 +480,13 @@ export function POS() {
       </Dialog>
 
       {/* Dialog de pago */}
-      <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
+      <Dialog
+        open={showPaymentDialog}
+        onOpenChange={(open) => {
+          setShowPaymentDialog(open);
+          if (open) setCompletedSale(null);
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Completar Venta</DialogTitle>
@@ -506,6 +612,7 @@ export function POS() {
           </div>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }
