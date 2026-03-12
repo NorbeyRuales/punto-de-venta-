@@ -62,15 +62,6 @@ export function POS() {
       .toLowerCase()
       .trim();
 
-  const normalizePhone = (phone?: string) => {
-    if (!phone) return '';
-    const digits = phone.replace(/\D/g, '');
-    if (!digits) return '';
-    if (digits.startsWith('57')) return digits;
-    if (digits.length === 10) return `57${digits}`;
-    return digits;
-  };
-
   const buildWhatsappMessage = (sale: Sale) => {
     const customer = sale.customerId ? customers.find(c => c.id === sale.customerId) : undefined;
     const lines = [
@@ -78,15 +69,14 @@ export function POS() {
       `Factura: ${sale.invoiceNumber || sale.id}`,
       `Fecha: ${new Date(sale.date).toLocaleString('es-CO')}`,
       customer?.name ? `Cliente: ${customer.name}` : null,
-      '',
       'Detalle:',
       ...sale.items.map(item => {
         const unitPrice = item.product.salePrice;
         const subtotalItem = unitPrice * item.quantity;
         const totalItem = subtotalItem - ((subtotalItem * item.discount) / 100);
-        return `- ${item.product.name} x${item.quantity} = ${formatCurrency(totalItem)}`;
+        const discountLabel = item.discount > 0 ? ` (-${item.discount}%)` : '';
+        return `• ${item.product.name} x${item.quantity} = ${formatCurrency(totalItem)}${discountLabel}`;
       }),
-      '',
       `Subtotal: ${formatCurrency(sale.subtotal)}`,
       sale.discount > 0 ? `Descuento: -${formatCurrency(sale.discount)}` : null,
       `IVA: ${formatCurrency(sale.iva)}`,
@@ -203,12 +193,8 @@ export function POS() {
       toast.info('Completa una venta para compartirla por WhatsApp.');
       return;
     }
-
-    const customer = completedSale.customerId ? customers.find(c => c.id === completedSale.customerId) : undefined;
-    const phone = normalizePhone(customer?.phone);
     const message = buildWhatsappMessage(completedSale);
-    const baseUrl = phone ? `https://wa.me/${phone}` : 'https://wa.me/';
-    const url = `${baseUrl}?text=${encodeURIComponent(message)}`;
+    const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
