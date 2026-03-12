@@ -1029,7 +1029,7 @@ return (
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">0% (Exento)</SelectItem>
+                  <SelectItem value="0">0% </SelectItem>
                   <SelectItem value="5">5%</SelectItem>
                   <SelectItem value="8">8%</SelectItem>
                   <SelectItem value="19">19%</SelectItem>
