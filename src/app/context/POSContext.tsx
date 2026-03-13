@@ -1,5 +1,5 @@
 // Contexto principal del POS: centraliza estado, acciones de negocio y sincronización.
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import { toast } from 'sonner';
 import {
   getStoredSession,
@@ -18,10 +18,12 @@ import {
   createProduct,
   createPurchaseWithItems,
   createRechargeRow,
-  createSaleWithItems,
+  createSaleDraftRow,
   createSupplierRow,
   deleteSupplierRow,
+  deleteSaleDraftRow,
   fetchMyStoreMembership,
+  finalizeSaleDraft,
   importLocalBackup,
   insertCustomerDebtTx,
   loadCategoriesAndProducts,
@@ -30,14 +32,17 @@ import {
   loadCustomersWithDebt,
   loadKardexMovements,
   loadRecharges,
+  loadSaleDraftsWithItems,
   loadSalesWithItems,
   loadStoreDetails,
   loadSuppliersWithPurchases,
   patchProduct,
+  replaceSaleDraftItems,
   removeCategory,
   removeProduct,
   renameCategory,
   updateCashSession,
+  updateSaleDraftRow,
   updateCustomerRow,
   updateSupplierRow,
   updateStoreDetails,
@@ -51,6 +56,14 @@ const toNumber = (value: unknown, fallback = 0): number => {
 
 const uuidLike = (value?: string | null): boolean =>
   !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+const isMissingTableError = (error: unknown, tableName: string): boolean => {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  const table = tableName.toLowerCase();
+  return message.includes(table)
+    && (message.includes('does not exist') || message.includes('could not find the table') || message.includes('schema cache'));
+};
 
 // Tipos de datos
 export interface Product {
@@ -76,6 +89,21 @@ export interface CartItem {
   product: Product;
   quantity: number;
   discount: number;
+}
+
+export type SaleDraftStatus = 'open' | 'void' | 'completed';
+
+export interface SaleDraft {
+  id: string;
+  storeId?: string;
+  userId?: string;
+  cashSessionId?: string;
+  customerId?: string;
+  status: SaleDraftStatus;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+  items: CartItem[];
 }
 
 export interface Sale {
@@ -250,7 +278,16 @@ interface POSContextType {
     }
   ) => void;
   
-  // Carrito
+  // Ventas en curso (borradores)
+  saleDrafts: SaleDraft[];
+  activeDraftId: string | null;
+  activeDraft: SaleDraft | null;
+  createSaleDraft: () => Promise<SaleDraft | null>;
+  switchSaleDraft: (draftId: string) => void;
+  discardSaleDraft: (draftId: string) => Promise<void>;
+  setActiveDraftCustomerId: (customerId: string | null) => void;
+
+  // Carrito (draft activo)
   cart: CartItem[];
   addToCart: (product: Product, quantity: number) => void;
   removeFromCart: (productId: string) => void;
@@ -261,7 +298,7 @@ interface POSContextType {
   
   // Ventas
   sales: Sale[];
-  completeSale: (paymentMethod: string, cashReceived: number, customerId?: string) => Sale | null;
+  completeSale: (paymentMethod: string, cashReceived: number) => Promise<Sale | null>;
   getSalesToday: () => Sale[];
   getSalesInRange: (startDate: Date, endDate: Date) => Sale[];
   registerReturn: (saleId: string) => boolean;
@@ -442,7 +479,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const [currentUser, setCurrentUser] = useState<{ username: string; role: 'admin' | 'cashier' } | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [saleDrafts, setSaleDrafts] = useState<SaleDraft[]>([]);
+  const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
   const [sales, setSales] = useState<Sale[]>([]);
   const [kardexMovements, setKardexMovements] = useState<KardexMovement[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -463,6 +501,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
     currency: 'COP',
     userRole: 'admin',
   });
+
+  const activeDraft = saleDrafts.find((draft) => draft.id === activeDraftId) ?? null;
+  const cart = activeDraft?.items ?? [];
+  const draftSyncTimers = useRef<Record<string, number>>({});
 
   // Mantener título y favicon sincronizados con la tienda
   useEffect(() => {
@@ -499,11 +541,23 @@ export function POSProvider({ children }: { children: ReactNode }) {
   // Sincroniza datos remotos (catálogo + operaciones) desde Supabase.
   const syncFromSupabase = async (nextSession: SupabaseSession, storeId: string): Promise<boolean> => {
     try {
+      const draftRowsPromise = loadSaleDraftsWithItems(nextSession.access_token, storeId, nextSession.user.id)
+        .catch((error) => {
+          console.error('No se pudieron cargar borradores en Supabase', error);
+          if (isMissingTableError(error, 'sale_drafts') || isMissingTableError(error, 'sale_draft_items')) {
+            toast.error('Faltan tablas de borradores en Supabase. Aplica la migración de ventas múltiples.');
+          } else {
+            toast.error('No se pudieron cargar los borradores de venta desde Supabase.');
+          }
+          return [];
+        });
+
       const [
         catalog,
         customerRows,
         supplierRows,
         salesRows,
+        draftRows,
         kardexRows,
         rechargeRows,
         cashSessionRows,
@@ -514,6 +568,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         loadCustomersWithDebt(nextSession.access_token, storeId),
         loadSuppliersWithPurchases(nextSession.access_token, storeId),
         loadSalesWithItems(nextSession.access_token, storeId),
+        draftRowsPromise,
         loadKardexMovements(nextSession.access_token, storeId),
         loadRecharges(nextSession.access_token, storeId),
         loadCashSessions(nextSession.access_token, storeId),
@@ -574,6 +629,56 @@ export function POSProvider({ children }: { children: ReactNode }) {
       });
 
       setSales(sales);
+
+      const drafts: SaleDraft[] = draftRows.map((draft) => {
+        const items: CartItem[] = (draft.sale_draft_items ?? []).map((item) => {
+          const productId = item.product_id ?? '';
+          const existingProduct = productById.get(productId);
+          const fallbackProduct: Product = {
+            id: productId || `unknown-${item.id}`,
+            name: item.product_name || 'Producto',
+            sku: '',
+            barcode: '',
+            category: existingProduct?.category ?? 'Sin categoría',
+            supplierName: existingProduct?.supplierName,
+            costPrice: existingProduct ? existingProduct.costPrice : toNumber(item.unit_cost),
+            salePrice: existingProduct ? existingProduct.salePrice : toNumber(item.unit_sale_price),
+            stock: existingProduct ? existingProduct.stock : 0,
+            minStock: existingProduct ? existingProduct.minStock : 0,
+            unit: existingProduct ? existingProduct.unit : 'unidad',
+            isBulk: existingProduct ? existingProduct.isBulk : false,
+            iva: existingProduct ? existingProduct.iva : toNumber(item.iva),
+            unitsPerPurchase: existingProduct?.unitsPerPurchase,
+            profitMargin: existingProduct?.profitMargin,
+            unitPrice: existingProduct?.unitPrice ?? (existingProduct ? existingProduct.salePrice : toNumber(item.unit_sale_price)),
+          };
+
+          return {
+            product: existingProduct ? { ...existingProduct } : fallbackProduct,
+            quantity: toNumber(item.quantity),
+            discount: toNumber(item.discount_percent),
+          };
+        });
+
+        return {
+          id: draft.id,
+          storeId: draft.store_id,
+          userId: draft.user_id ?? undefined,
+          cashSessionId: draft.cash_session_id ?? undefined,
+          customerId: draft.customer_id ?? undefined,
+          status: draft.status,
+          notes: draft.notes ?? undefined,
+          createdAt: draft.created_at,
+          updatedAt: draft.updated_at,
+          items,
+        };
+      });
+
+      setSaleDrafts(drafts);
+      setActiveDraftId((prev) => {
+        if (prev && drafts.some((draft) => draft.id === prev)) return prev;
+        return drafts[0]?.id ?? null;
+      });
 
       const salesByCustomerId = new Map<string, Sale[]>();
       sales.forEach((sale) => {
@@ -702,6 +807,18 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return false;
     }
   };
+
+  // Asegura que exista al menos un borrador activo.
+  useEffect(() => {
+    if (!session?.access_token || !currentStoreId) return;
+    if (saleDrafts.length === 0) {
+      void createSaleDraft();
+      return;
+    }
+    if (!activeDraftId) {
+      setActiveDraftId(saleDrafts[0].id);
+    }
+  }, [saleDrafts.length, activeDraftId, session?.access_token, currentStoreId]);
 
   // Cargar datos del localStorage
   useEffect(() => {
@@ -933,6 +1050,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
     setCurrentStoreId(null);
     setIsAuthenticated(false);
     setCurrentUser(null);
+    setSaleDrafts([]);
+    setActiveDraftId(null);
   };
 
   const createStore = async (store: { name: string; nit?: string; address?: string; phone?: string; email?: string }): Promise<boolean> => {
@@ -1237,38 +1356,201 @@ export function POSProvider({ children }: { children: ReactNode }) {
     return true;
   };
 
-  // Funciones de carrito
-  const addToCart = (product: Product, quantity: number) => {
-    const existingItem = cart.find(item => item.product.id === product.id);
-    if (existingItem) {
-      setCart(cart.map(item => 
-        item.product.id === product.id 
-          ? { ...item, quantity: item.quantity + quantity }
-          : item
-      ));
-    } else {
-      setCart([...cart, { product, quantity, discount: 0 }]);
+  // Borradores de venta (multi-ventas).
+  const persistDraftSnapshot = async (draft: SaleDraft) => {
+    if (!session?.access_token || !currentStoreId) return;
+    await updateSaleDraftRow(session.access_token, currentStoreId, draft.id, {
+      cashSessionId: currentCashSession?.id ?? draft.cashSessionId ?? null,
+      customerId: draft.customerId ?? null,
+      status: draft.status,
+    });
+    await replaceSaleDraftItems(session.access_token, currentStoreId, draft.id, draft.items.map((item) => ({
+      productId: item.product.id,
+      productName: item.product.name,
+      quantity: item.quantity,
+      unitCost: buildUnitCostWithIva(item.product),
+      unitSalePrice: item.product.salePrice,
+      discountPercent: item.discount,
+      iva: item.product.iva,
+    })));
+  };
+
+  const queueDraftSync = (draft: SaleDraft) => {
+    if (!session?.access_token || !currentStoreId) return;
+    const existingTimer = draftSyncTimers.current[draft.id];
+    if (existingTimer) {
+      window.clearTimeout(existingTimer);
+    }
+    draftSyncTimers.current[draft.id] = window.setTimeout(() => {
+      persistDraftSnapshot(draft)
+        .catch((error) => {
+          console.error('No se pudo sincronizar borrador en Supabase', error);
+          toast.error('No se pudo sincronizar el borrador con Supabase.');
+        })
+        .finally(() => {
+          delete draftSyncTimers.current[draft.id];
+        });
+    }, 250);
+  };
+
+  const updateDraft = (draftId: string, updater: (draft: SaleDraft) => SaleDraft) => {
+    let nextDraft: SaleDraft | null = null;
+    setSaleDrafts(prev => prev.map((draft) => {
+      if (draft.id !== draftId) return draft;
+      nextDraft = updater(draft);
+      return nextDraft;
+    }));
+    if (nextDraft) {
+      queueDraftSync(nextDraft);
     }
   };
 
+  const createSaleDraft = async (): Promise<SaleDraft | null> => {
+    if (!session?.access_token || !currentStoreId) {
+      toast.error('Debes iniciar sesión para crear ventas.');
+      return null;
+    }
+
+    try {
+      const createdAt = new Date().toISOString();
+      const draftId = await createSaleDraftRow(session.access_token, currentStoreId, {
+        userId: session.user.id,
+        cashSessionId: currentCashSession?.id,
+        status: 'open',
+      });
+      if (!draftId) return null;
+
+      const draft: SaleDraft = {
+        id: draftId,
+        storeId: currentStoreId,
+        userId: session.user.id,
+        cashSessionId: currentCashSession?.id,
+        status: 'open',
+        createdAt,
+        updatedAt: createdAt,
+        items: [],
+      };
+      setSaleDrafts(prev => [draft, ...prev]);
+      setActiveDraftId(draftId);
+      return draft;
+    } catch (error) {
+      console.error('No se pudo crear borrador en Supabase', error);
+      if (isMissingTableError(error, 'sale_drafts')) {
+        toast.error('Faltan tablas de borradores en Supabase. Aplica la migración de ventas múltiples.');
+      } else {
+        toast.error('No se pudo crear el borrador de venta.');
+      }
+      return null;
+    }
+  };
+
+  const switchSaleDraft = (draftId: string) => {
+    if (saleDrafts.some(draft => draft.id === draftId)) {
+      setActiveDraftId(draftId);
+    }
+  };
+
+  const discardSaleDraft = async (draftId: string) => {
+    const nextDrafts = saleDrafts.filter(draft => draft.id !== draftId);
+    setSaleDrafts(nextDrafts);
+
+    if (activeDraftId === draftId) {
+      setActiveDraftId(nextDrafts[0]?.id ?? null);
+    }
+
+    const pendingTimer = draftSyncTimers.current[draftId];
+    if (pendingTimer) {
+      window.clearTimeout(pendingTimer);
+      delete draftSyncTimers.current[draftId];
+    }
+
+    if (session?.access_token && currentStoreId) {
+      try {
+        await deleteSaleDraftRow(session.access_token, currentStoreId, draftId);
+      } catch (error) {
+        console.error('No se pudo eliminar borrador en Supabase', error);
+        toast.error('No se pudo eliminar el borrador en Supabase.');
+      }
+    }
+
+    if (nextDrafts.length === 0) {
+      void createSaleDraft();
+    }
+  };
+
+  const setActiveDraftCustomerId = (customerId: string | null) => {
+    if (!activeDraft) return;
+    updateDraft(activeDraft.id, (draft) => ({
+      ...draft,
+      customerId: customerId || undefined,
+      updatedAt: new Date().toISOString(),
+    }));
+  };
+
+  // Funciones de carrito (sobre el draft activo).
+  const addToCart = (product: Product, quantity: number) => {
+    if (!activeDraft) {
+      toast.error('No hay una venta activa.');
+      return;
+    }
+
+    const existingItem = cart.find(item => item.product.id === product.id);
+    const nextItems = existingItem
+      ? cart.map(item =>
+          item.product.id === product.id
+            ? { ...item, quantity: item.quantity + quantity }
+            : item
+        )
+      : [...cart, { product, quantity, discount: 0 }];
+
+    updateDraft(activeDraft.id, (draft) => ({
+      ...draft,
+      items: nextItems,
+      updatedAt: new Date().toISOString(),
+    }));
+  };
+
   const removeFromCart = (productId: string) => {
-    setCart(cart.filter(item => item.product.id !== productId));
+    if (!activeDraft) return;
+    const nextItems = cart.filter(item => item.product.id !== productId);
+    updateDraft(activeDraft.id, (draft) => ({
+      ...draft,
+      items: nextItems,
+      updatedAt: new Date().toISOString(),
+    }));
   };
 
   const updateCartQuantity = (productId: string, quantity: number) => {
-    setCart(cart.map(item => 
+    if (!activeDraft) return;
+    const nextItems = cart.map(item =>
       item.product.id === productId ? { ...item, quantity } : item
-    ));
+    );
+    updateDraft(activeDraft.id, (draft) => ({
+      ...draft,
+      items: nextItems,
+      updatedAt: new Date().toISOString(),
+    }));
   };
 
   const updateCartDiscount = (productId: string, discount: number) => {
-    setCart(cart.map(item => 
+    if (!activeDraft) return;
+    const nextItems = cart.map(item =>
       item.product.id === productId ? { ...item, discount } : item
-    ));
+    );
+    updateDraft(activeDraft.id, (draft) => ({
+      ...draft,
+      items: nextItems,
+      updatedAt: new Date().toISOString(),
+    }));
   };
 
   const clearCart = () => {
-    setCart([]);
+    if (!activeDraft) return;
+    updateDraft(activeDraft.id, (draft) => ({
+      ...draft,
+      items: [],
+      updatedAt: new Date().toISOString(),
+    }));
   };
 
   // Calcula costo unitario con IVA según unidades por compra.
@@ -1499,122 +1781,122 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   // Funciones de ventas
-  const completeSale = (paymentMethod: string, cashReceived: number, customerId?: string): Sale | null => {
+  const completeSale = async (paymentMethod: string, cashReceived: number): Promise<Sale | null> => {
     if (!currentCashSession) {
       toast.error('Debes abrir una caja antes de registrar ventas.');
       return null;
     }
 
-    const subtotal = cart.reduce((sum, item) => sum + (item.product.salePrice * item.quantity), 0);
-    const totalDiscount = cart.reduce((sum, item) => {
-      const itemPrice = item.product.salePrice * item.quantity;
-      return sum + ((itemPrice * item.discount) / 100);
-    }, 0);
-    const iva = cart.reduce((sum, item) => {
-      const itemPrice = item.product.salePrice * item.quantity;
-      const discountAmount = (itemPrice * item.discount) / 100;
-      const netPrice = itemPrice - discountAmount;
-      return sum + ((netPrice * item.product.iva) / (100 + item.product.iva));
-    }, 0);
-    const total = subtotal - totalDiscount;
-    const change = cashReceived - total;
-
-    const newSale: Sale = {
-      id: Date.now().toString(),
-      date: new Date().toISOString(),
-      items: [...cart],
-      subtotal,
-      discount: totalDiscount,
-      iva,
-      total,
-      paymentMethod,
-      cashReceived,
-      change,
-      customerId,
-      invoiceNumber: `FAC-${(sales.length + 1).toString().padStart(6, '0')}`,
-      cashSessionId: currentCashSession.id,
-    };
-
-    // Actualizar stock
-    cart.forEach(item => {
-      const stockBefore = item.product.stock;
-      const stockAfter = stockBefore - item.quantity;
-
-      updateProduct(item.product.id, {
-        stock: stockAfter
-      });
-
-      appendKardexMovement({
-        productId: item.product.id,
-        productName: item.product.name,
-        type: 'sale',
-        reference: newSale.invoiceNumber || newSale.id,
-        quantity: -item.quantity,
-        stockBefore,
-        stockAfter,
-        unitCost: buildUnitCostWithIva(item.product),
-        unitSalePrice: item.product.salePrice,
-        totalCost: buildUnitCostWithIva(item.product) * item.quantity
-      });
-    });
-
-    // Si hay cliente, actualizar puntos
-    if (customerId) {
-      const customer = customers.find(c => c.id === customerId);
-      if (customer) {
-        const points = Math.floor(total / 1000); // 1 punto por cada $1000
-        updateCustomer(customerId, {
-          points: customer.points + points,
-          purchases: [...customer.purchases, newSale]
-        });
-      }
+    if (!activeDraft || cart.length === 0) {
+      toast.error('No hay productos en la venta.');
+      return null;
     }
 
-    setSales([...sales, newSale]);
+    if (!session?.access_token || !currentStoreId) {
+      toast.error('Debes iniciar sesión para registrar ventas.');
+      return null;
+    }
 
-    if (session?.access_token && currentStoreId && uuidLike(currentCashSession.id)) {
-      const paymentMethodValue = ['efectivo', 'tarjeta', 'transferencia', 'credito'].includes(paymentMethod)
-        ? paymentMethod as 'efectivo' | 'tarjeta' | 'transferencia' | 'credito'
-        : 'otro';
+    const paymentMethodValue = ['efectivo', 'tarjeta', 'transferencia', 'credito'].includes(paymentMethod)
+      ? paymentMethod as 'efectivo' | 'tarjeta' | 'transferencia' | 'credito'
+      : 'otro';
 
-      void createSaleWithItems(session.access_token, currentStoreId, {
-        customerId,
+    try {
+      const pendingTimer = draftSyncTimers.current[activeDraft.id];
+      if (pendingTimer) {
+        window.clearTimeout(pendingTimer);
+        delete draftSyncTimers.current[activeDraft.id];
+      }
+
+      await persistDraftSnapshot({
+        ...activeDraft,
         cashSessionId: currentCashSession.id,
-        invoiceNumber: newSale.invoiceNumber,
-        subtotal: newSale.subtotal,
-        discount: newSale.discount,
-        iva: newSale.iva,
-        total: newSale.total,
+      });
+
+      const result = await finalizeSaleDraft(session.access_token, currentStoreId, {
+        draftId: activeDraft.id,
         paymentMethod: paymentMethodValue,
-        cashReceived: newSale.cashReceived,
-        changeValue: newSale.change,
-        createdAt: newSale.date,
-        items: newSale.items.map((item) => {
-          const itemSubtotal = item.product.salePrice * item.quantity;
-          const itemTotal = itemSubtotal - ((itemSubtotal * item.discount) / 100);
-          return {
+        cashReceived,
+      });
+
+      const saleRow = result.sale;
+      const newSale: Sale = {
+        id: saleRow.id,
+        date: saleRow.created_at,
+        items: [...cart],
+        subtotal: toNumber(saleRow.subtotal),
+        discount: toNumber(saleRow.discount),
+        iva: toNumber(saleRow.iva),
+        total: toNumber(saleRow.total),
+        paymentMethod: saleRow.payment_method || paymentMethodValue,
+        cashReceived: toNumber(saleRow.cash_received),
+        change: toNumber(saleRow.change_value),
+        customerId: saleRow.customer_id ?? activeDraft.customerId,
+        invoiceNumber: saleRow.invoice_number ?? undefined,
+        cashSessionId: saleRow.cash_session_id ?? currentCashSession.id,
+      };
+
+      setSales(prev => [...prev, newSale]);
+
+      if (result.product_updates?.length) {
+        const updates = new Map(result.product_updates.map((update) => [update.product_id, update.stock_after]));
+        setProducts(prev => prev.map((product) => {
+          const stockAfter = updates.get(product.id);
+          return stockAfter === undefined ? product : { ...product, stock: stockAfter };
+        }));
+
+        const newMovements: KardexMovement[] = [];
+        cart.forEach((item) => {
+          const stockAfter = updates.get(item.product.id);
+          if (stockAfter === undefined) return;
+          const stockBefore = stockAfter + item.quantity;
+          newMovements.push({
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            date: saleRow.created_at,
             productId: item.product.id,
             productName: item.product.name,
-            quantity: item.quantity,
+            type: 'sale',
+            reference: saleRow.invoice_number || saleRow.id,
+            quantity: -item.quantity,
+            stockBefore,
+            stockAfter,
             unitCost: buildUnitCostWithIva(item.product),
             unitSalePrice: item.product.salePrice,
-            discountPercent: item.discount,
-            lineSubtotal: itemSubtotal,
-            lineTotal: itemTotal,
-            iva: item.product.iva,
-            createdAt: newSale.date,
-          };
-        }),
-      }).catch((error) => {
-        console.error('No se pudo guardar la venta en Supabase', error);
-        toast.error('Venta guardada localmente, pero falló en Supabase.');
-      });
-    } else if (session?.access_token && currentStoreId) {
-      toast.error('Venta guardada localmente, pero la caja no está sincronizada.');
-    }
+            totalCost: buildUnitCostWithIva(item.product) * item.quantity,
+          });
+        });
+        if (newMovements.length > 0) {
+          setKardexMovements(prev => [...prev, ...newMovements]);
+        }
+      }
 
-    clearCart();
-    return newSale;
+      if (newSale.customerId) {
+        const points = Math.floor(newSale.total / 1000);
+        setCustomers(prev => prev.map((customer) => {
+          if (customer.id !== newSale.customerId) return customer;
+          return {
+            ...customer,
+            points: customer.points + points,
+            purchases: [...customer.purchases, newSale],
+          };
+        }));
+      }
+
+      const remainingDrafts = saleDrafts.filter(draft => draft.id !== activeDraft.id);
+      setSaleDrafts(remainingDrafts);
+      if (remainingDrafts.length === 0) {
+        await createSaleDraft();
+      } else {
+        setActiveDraftId(remainingDrafts[0].id);
+      }
+
+      toast.success('Venta registrada correctamente.');
+      return newSale;
+    } catch (error) {
+      console.error('No se pudo registrar venta en Supabase', error);
+      toast.error(error instanceof Error ? error.message : 'No se pudo registrar la venta.');
+      return null;
+    }
   };
 
   const registerReturn = (saleId: string): boolean => {
@@ -2064,6 +2346,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
       updateCategory,
       deleteCategory,
       adjustStock,
+      saleDrafts,
+      activeDraftId,
+      activeDraft,
+      createSaleDraft,
+      switchSaleDraft,
+      discardSaleDraft,
+      setActiveDraftCustomerId,
       cart,
       addToCart,
       removeFromCart,

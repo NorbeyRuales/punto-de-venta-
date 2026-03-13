@@ -1,5 +1,5 @@
 // Punto de venta: búsqueda, carrito, descuentos y cobro.
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { usePOS } from '../context/POSContext';
 import type { Sale } from '../context/POSContext';
@@ -29,6 +29,13 @@ export function POS() {
   const {
     products,
     categories,
+    saleDrafts,
+    activeDraftId,
+    activeDraft,
+    createSaleDraft,
+    switchSaleDraft,
+    discardSaleDraft,
+    setActiveDraftCustomerId,
     cart,
     addToCart,
     removeFromCart,
@@ -47,11 +54,24 @@ export function POS() {
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('efectivo');
   const [cashReceived, setCashReceived] = useState('');
-  const [selectedCustomer, setSelectedCustomer] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [discountAmount, setDiscountAmount] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const keepPaymentDialogOpenRef = useRef(false);
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
+  const selectedCustomer = activeDraft?.customerId ?? '';
+
+  useEffect(() => {
+    setPaymentMethod('efectivo');
+    setCashReceived('');
+    setSelectedProduct(null);
+    setDiscountAmount('');
+    if (keepPaymentDialogOpenRef.current) {
+      return;
+    }
+    setShowPaymentDialog(false);
+    setCompletedSale(null);
+  }, [activeDraftId]);
 
   const formatCurrency = (value: number) => `$${Math.round(value).toLocaleString('es-CO')}`;
 
@@ -152,7 +172,7 @@ export function POS() {
   };
 
   // Valida y completa una venta.
-  const handlePayment = () => {
+  const handlePayment = async () => {
     if (cart.length === 0) {
       toast.error('El carrito está vacío');
       return;
@@ -166,19 +186,20 @@ export function POS() {
       }
     }
 
-    const sale = completeSale(
+    keepPaymentDialogOpenRef.current = true;
+    const sale = await completeSale(
       paymentMethod,
-      paymentMethod === 'efectivo' ? parseFloat(cashReceived) || 0 : cartTotal,
-      selectedCustomer || undefined
+      paymentMethod === 'efectivo' ? parseFloat(cashReceived) || 0 : cartTotal
     );
 
-    if (!sale) return;
+    if (!sale) {
+      keepPaymentDialogOpenRef.current = false;
+      return;
+    }
 
-    toast.success('Venta completada exitosamente');
     setCompletedSale(sale);
     setCashReceived('');
     setPaymentMethod('efectivo');
-    setSelectedCustomer('');
 
     // Simular impresión o envío por WhatsApp
     console.log('Venta:', sale);
@@ -230,6 +251,82 @@ export function POS() {
           </div>
         </Card>
       )}
+
+      <Card className="p-3 border border-violet-200 bg-gradient-to-r from-violet-50 via-indigo-50 to-fuchsia-50">
+        <div className="flex items-center gap-3">
+          <div className="flex-1 overflow-x-auto">
+            <div className="flex items-center gap-2 min-w-max pr-2">
+              {saleDrafts.map((draft, index) => {
+                const customerName = draft.customerId
+                  ? customers.find((customer) => customer.id === draft.customerId)?.name
+                  : '';
+                const label = `Venta ${index + 1}`;
+                const isActive = draft.id === activeDraftId;
+                const count = draft.items.length;
+                return (
+                  <div
+                    key={draft.id}
+                    className={`group inline-flex items-center rounded-full border transition-all ${
+                      isActive
+                        ? 'border-violet-600 bg-violet-600 text-white shadow-sm'
+                        : 'border-violet-200 bg-white/80 text-violet-900 hover:border-violet-300 hover:bg-white'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => switchSaleDraft(draft.id)}
+                      aria-current={isActive ? 'page' : undefined}
+                      title={customerName ? `${label} · ${customerName}` : label}
+                      className="flex items-center gap-2 px-4 py-2 text-left"
+                    >
+                      <div className="flex flex-col leading-tight">
+                        <span className="text-sm font-semibold">{label}</span>
+                        {customerName && (
+                          <span className={`text-xs ${isActive ? 'text-white/80' : 'text-violet-600'} max-w-[140px] truncate`}>
+                            {customerName}
+                          </span>
+                        )}
+                      </div>
+                      {count > 0 && (
+                        <span
+                          className={`min-w-[1.5rem] rounded-full px-2 py-0.5 text-xs font-semibold ${
+                            isActive ? 'bg-white/20 text-white' : 'bg-violet-100 text-violet-700'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      )}
+                    </button>
+                    {saleDrafts.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => discardSaleDraft(draft.id)}
+                        aria-label={`Cerrar ${label}`}
+                        className={`mr-2 h-7 w-7 rounded-full grid place-items-center transition ${
+                          isActive
+                            ? 'text-white/70 hover:text-white hover:bg-white/10'
+                            : 'text-violet-500 hover:text-violet-700 hover:bg-violet-100'
+                        }`}
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => void createSaleDraft()}
+            className="h-10 rounded-full bg-violet-600 text-white hover:bg-violet-700 shadow-sm"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Nueva venta
+          </Button>
+        </div>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)]">
       {/* Panel de productos */}
@@ -470,6 +567,9 @@ export function POS() {
         open={showPaymentDialog}
         onOpenChange={(open) => {
           setShowPaymentDialog(open);
+          if (!open) {
+            keepPaymentDialogOpenRef.current = false;
+          }
           if (open) setCompletedSale(null);
         }}
       >
@@ -480,121 +580,123 @@ export function POS() {
           
           <div className="space-y-4">
             <div className="bg-secondary p-4 rounded-lg">
-              <p className="text-sm text-gray-600 mb-1">Total a Pagar</p>
+              <p className="text-sm text-gray-600 mb-1">{completedSale ? 'Total Pagado' : 'Total a Pagar'}</p>
               <p className="text-3xl font-bold text-[#2ECC71]">
-                ${cartTotal.toLocaleString('es-CO')}
+                ${(completedSale ? completedSale.total : cartTotal).toLocaleString('es-CO')}
               </p>
             </div>
 
-            <div>
-              <Label>Método de Pago</Label>
-              <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                <SelectTrigger className="h-12">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="efectivo">
-                    <div className="flex items-center gap-2">
-                      <DollarSign className="w-4 h-4" />
-                      Efectivo
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="tarjeta">
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="w-4 h-4" />
-                      Tarjeta/Datáfono
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="transferencia">Transferencia</SelectItem>
-                  <SelectItem value="nequi">
-                    <div className="flex items-center gap-2">
-                      <Smartphone className="w-4 h-4" />
-                      Nequi
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="daviplata">Daviplata</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {!completedSale && (
+              <>
+                <div>
+                  <Label>Método de Pago</Label>
+                  <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                    <SelectTrigger className="h-12">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="efectivo">
+                        <div className="flex items-center gap-2">
+                          <DollarSign className="w-4 h-4" />
+                          Efectivo
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="tarjeta">
+                        <div className="flex items-center gap-2">
+                          <CreditCard className="w-4 h-4" />
+                          Tarjeta/Datáfono
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="transferencia">Transferencia</SelectItem>
+                      <SelectItem value="nequi">
+                        <div className="flex items-center gap-2">
+                          <Smartphone className="w-4 h-4" />
+                          Nequi
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="daviplata">Daviplata</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            {paymentMethod === 'efectivo' && (
-              <div>
-                <Label>Efectivo Recibido</Label>
-                <Input
-                  type="number"
-                  value={cashReceived}
-                  onChange={(e) => setCashReceived(e.target.value)}
-                  placeholder="0"
-                  className={`h-12 text-lg ${isCashInsufficient ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
-                  autoFocus
-                  aria-invalid={isCashInsufficient}
-                  aria-describedby="pos-cash-help"
-                />
-                {isCashInsufficient ? (
-                  <p id="pos-cash-help" className="text-xs text-red-600 mt-1">
-                    El efectivo debe ser igual o mayor al total.
-                  </p>
-                ) : (
-                  <p id="pos-cash-help" className="text-xs text-gray-500 mt-1">
-                    Ingresa el valor recibido para calcular el cambio.
-                  </p>
-                )}
-                {cashReceived && (
-                  <div className="mt-2 p-3 bg-blue-50 rounded-lg">
-                    <p className="text-sm text-gray-600">Cambio a Devolver</p>
-                    <p className="text-xl font-bold text-blue-600">
-                      ${change.toLocaleString('es-CO')}
-                    </p>
+                {paymentMethod === 'efectivo' && (
+                  <div>
+                    <Label>Efectivo Recibido</Label>
+                    <Input
+                      type="number"
+                      value={cashReceived}
+                      onChange={(e) => setCashReceived(e.target.value)}
+                      placeholder="0"
+                      className={`h-12 text-lg ${isCashInsufficient ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+                      autoFocus
+                      aria-invalid={isCashInsufficient}
+                      aria-describedby="pos-cash-help"
+                    />
+                    {isCashInsufficient ? (
+                      <p id="pos-cash-help" className="text-xs text-red-600 mt-1">
+                        El efectivo debe ser igual o mayor al total.
+                      </p>
+                    ) : (
+                      <p id="pos-cash-help" className="text-xs text-gray-500 mt-1">
+                        Ingresa el valor recibido para calcular el cambio.
+                      </p>
+                    )}
+                    {cashReceived && (
+                      <div className="mt-2 p-3 bg-blue-50 rounded-lg">
+                        <p className="text-sm text-gray-600">Cambio a Devolver</p>
+                        <p className="text-xl font-bold text-blue-600">
+                          ${change.toLocaleString('es-CO')}
+                        </p>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
+
+                <div>
+                  <Label>Cliente (Opcional)</Label>
+                  <Select value={selectedCustomer} onValueChange={(value) => setActiveDraftCustomerId(value || null)}>
+                    <SelectTrigger className="h-12">
+                      <SelectValue placeholder="Seleccionar cliente" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customers.map(customer => (
+                        <SelectItem key={customer.id} value={customer.id}>
+                          {customer.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex gap-2 pt-4">
+                  <Button
+                    onClick={handlePayment}
+                    className="flex-1 h-12 bg-[#2ECC71] hover:bg-[#27AE60] text-white"
+                  >
+                    <DollarSign className="w-5 h-5 mr-2" />
+                    Completar Venta
+                  </Button>
+                </div>
+              </>
             )}
 
-            <div>
-              <Label>Cliente (Opcional)</Label>
-              <Select value={selectedCustomer} onValueChange={setSelectedCustomer}>
-                <SelectTrigger className="h-12">
-                  <SelectValue placeholder="Seleccionar cliente" />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers.map(customer => (
-                    <SelectItem key={customer.id} value={customer.id}>
-                      {customer.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex gap-2 pt-4">
-              <Button
-                onClick={handlePayment}
-                className="flex-1 h-12 bg-[#2ECC71] hover:bg-[#27AE60] text-white"
-              >
-                <DollarSign className="w-5 h-5 mr-2" />
-                Completar Venta
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setShowPaymentDialog(false)}
-                className="h-12"
-                aria-label="Cerrar"
-                title="Cerrar"
-              >
-                <X className="w-5 h-5" />
-              </Button>
-            </div>
-
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" className="flex-1" onClick={handlePrint} title="Imprimir comprobante">
-                <Printer className="w-4 h-4 mr-1" />
-                Imprimir
-              </Button>
-              <Button variant="outline" size="sm" className="flex-1" onClick={handleShareWhatsapp} title="Enviar por WhatsApp">
-                <Share2 className="w-4 h-4 mr-1" />
-                WhatsApp
-              </Button>
-            </div>
+            {completedSale && (
+              <div className="space-y-2">
+                <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                  Venta registrada. Puedes imprimir o compartir antes de cerrar.
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" className="flex-1" onClick={handlePrint} title="Imprimir comprobante">
+                    <Printer className="w-4 h-4 mr-1" />
+                    Imprimir
+                  </Button>
+                  <Button variant="outline" size="sm" className="flex-1" onClick={handleShareWhatsapp} title="Enviar por WhatsApp">
+                    <Share2 className="w-4 h-4 mr-1" />
+                    WhatsApp
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

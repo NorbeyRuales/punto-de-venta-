@@ -117,6 +117,38 @@ type SaleRow = {
   sale_items?: SaleItemRow[] | null;
 };
 
+type SaleDraftStatus = 'open' | 'void' | 'completed';
+
+type SaleDraftItemRow = {
+  id: string;
+  product_id: string | null;
+  product_name: string;
+  quantity: number;
+  unit_cost: number;
+  unit_sale_price: number;
+  discount_percent: number;
+  iva: number;
+  created_at: string;
+};
+
+type SaleDraftRow = {
+  id: string;
+  store_id: string;
+  user_id: string | null;
+  cash_session_id: string | null;
+  customer_id: string | null;
+  status: SaleDraftStatus;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  sale_draft_items?: SaleDraftItemRow[] | null;
+};
+
+type FinalizeSaleDraftResponse = {
+  sale: SaleRow;
+  product_updates: Array<{ product_id: string; stock_after: number }>;
+};
+
 type KardexRow = {
   id: string;
   product_id: string | null;
@@ -600,6 +632,129 @@ export async function createSaleWithItems(
   }
 
   return saleId;
+}
+
+// Borradores de venta (multi-ventas).
+export async function createSaleDraftRow(
+  token: string,
+  storeId: string,
+  payload: {
+    userId?: string;
+    cashSessionId?: string;
+    customerId?: string;
+    status?: SaleDraftStatus;
+    notes?: string;
+  },
+): Promise<string | null> {
+  const rows = await insertRows<{ id: string }>('sale_drafts', [{
+    store_id: storeId,
+    user_id: uuidLike(payload.userId) ? payload.userId : null,
+    cash_session_id: uuidLike(payload.cashSessionId) ? payload.cashSessionId : null,
+    customer_id: uuidLike(payload.customerId) ? payload.customerId : null,
+    status: payload.status ?? 'open',
+    notes: payload.notes ?? null,
+  }], token);
+  return rows[0]?.id ?? null;
+}
+
+export async function updateSaleDraftRow(
+  token: string,
+  storeId: string,
+  draftId: string,
+  patch: {
+    cashSessionId?: string | null;
+    customerId?: string | null;
+    status?: SaleDraftStatus;
+    notes?: string | null;
+  },
+): Promise<void> {
+  if (!uuidLike(draftId)) return;
+  const dbPatch: Record<string, unknown> = {};
+  if (patch.cashSessionId !== undefined) dbPatch.cash_session_id = uuidLike(patch.cashSessionId) ? patch.cashSessionId : null;
+  if (patch.customerId !== undefined) dbPatch.customer_id = uuidLike(patch.customerId) ? patch.customerId : null;
+  if (patch.status !== undefined) dbPatch.status = patch.status;
+  if (patch.notes !== undefined) dbPatch.notes = patch.notes || null;
+  if (Object.keys(dbPatch).length === 0) return;
+  await updateRows('sale_drafts', `store_id=eq.${storeId}&id=eq.${draftId}`, dbPatch, token);
+}
+
+export async function deleteSaleDraftRow(
+  token: string,
+  storeId: string,
+  draftId: string,
+): Promise<void> {
+  if (!uuidLike(draftId)) return;
+  await deleteRows('sale_drafts', `store_id=eq.${storeId}&id=eq.${draftId}`, token);
+}
+
+export async function replaceSaleDraftItems(
+  token: string,
+  storeId: string,
+  draftId: string,
+  items: Array<{
+    productId?: string;
+    productName: string;
+    quantity: number;
+    unitCost: number;
+    unitSalePrice: number;
+    discountPercent: number;
+    iva: number;
+    createdAt?: string;
+  }>,
+): Promise<void> {
+  if (!uuidLike(draftId)) return;
+  await deleteRows('sale_draft_items', `store_id=eq.${storeId}&draft_id=eq.${draftId}`, token);
+
+  if (items.length === 0) return;
+
+  await insertRows('sale_draft_items', items.map((item) => ({
+    draft_id: draftId,
+    store_id: storeId,
+    product_id: uuidLike(item.productId) ? item.productId : null,
+    product_name: item.productName,
+    quantity: item.quantity,
+    unit_cost: item.unitCost,
+    unit_sale_price: item.unitSalePrice,
+    discount_percent: item.discountPercent,
+    iva: item.iva,
+    created_at: item.createdAt || new Date().toISOString(),
+  })), token);
+}
+
+export async function loadSaleDraftsWithItems(
+  token: string,
+  storeId: string,
+  userId?: string,
+): Promise<SaleDraftRow[]> {
+  const userFilter = uuidLike(userId) ? `&user_id=eq.${userId}` : '';
+  return selectRows<SaleDraftRow>(
+    'sale_drafts',
+    'select=id,store_id,user_id,cash_session_id,customer_id,status,notes,created_at,updated_at,'
+      + 'sale_draft_items(id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at)'
+      + `&store_id=eq.${storeId}&status=eq.open${userFilter}&order=created_at.desc`,
+    token,
+  );
+}
+
+export async function finalizeSaleDraft(
+  token: string,
+  storeId: string,
+  payload: {
+    draftId: string;
+    paymentMethod: PaymentMethod;
+    cashReceived: number;
+  },
+): Promise<FinalizeSaleDraftResponse> {
+  return rpc<FinalizeSaleDraftResponse>(
+    'finalize_sale_draft',
+    {
+      p_store_id: storeId,
+      p_draft_id: payload.draftId,
+      p_payment_method: payload.paymentMethod,
+      p_cash_received: payload.cashReceived,
+    },
+    token,
+  );
 }
 
 // Registra una compra con ítems detallados.
