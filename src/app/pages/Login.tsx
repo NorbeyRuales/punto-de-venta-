@@ -1,10 +1,11 @@
 // Pantalla de inicio de sesión y creación inicial de tienda.
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { usePOS } from '../context/POSContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { User, Lock, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
@@ -13,6 +14,14 @@ export function Login() {
   // Estado del formulario y flags de vista.
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [offlinePin, setOfflinePinInput] = useState('');
+  const [offlinePinSetup, setOfflinePinSetup] = useState('');
+  const [offlinePinConfirm, setOfflinePinConfirm] = useState('');
+  const [offlineUsername, setOfflineUsername] = useState('');
+  const [offlineRole, setOfflineRole] = useState<'admin' | 'cashier'>('cashier');
+  const [showOfflinePanel, setShowOfflinePanel] = useState(false);
+  const [isSettingPin, setIsSettingPin] = useState(false);
+  const [isOfflineSubmitting, setIsOfflineSubmitting] = useState(false);
   const [showCreateStore, setShowCreateStore] = useState(false);
   const [error, setError] = useState('');
   const [storeName, setStoreName] = useState('');
@@ -20,9 +29,59 @@ export function Login() {
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
   const [showRegisterButton, setShowRegisterButton] = useState(false); // Para hacer visible el botón "Crear Tienda", cambia este valor a `true`.
-  const { login, createStore, storeConfig } = usePOS();
+  const {
+    login,
+    loginOffline,
+    setOfflinePin,
+    offlinePinConfigured,
+    offlineDefaultRole,
+    createStore,
+    storeConfig,
+  } = usePOS();
   const navigate = useNavigate();
   const logoSrc = storeConfig.logo || DEFAULT_LOGO_PATH;
+
+  useEffect(() => {
+    setOfflineRole(offlineDefaultRole);
+  }, [offlineDefaultRole]);
+
+  const checkSupabaseReachable = async (): Promise<boolean> => {
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+
+    if (!supabaseUrl) {
+      return navigator.onLine;
+    }
+
+    if (!navigator.onLine) {
+      return false;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 3000);
+
+    try {
+      await fetch(`${supabaseUrl}/rest/v1/`, {
+        method: 'GET',
+        mode: 'no-cors',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      return true;
+    } catch {
+      return false;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  };
+
+  const handleShowOfflinePanel = async () => {
+    if (showOfflinePanel) return;
+    const reachable = await checkSupabaseReachable();
+    if (reachable) {
+      toast.info('Estás en línea. El acceso offline se usa cuando no hay internet.');
+    }
+    setShowOfflinePanel(true);
+  };
 
   // Maneja autenticación contra Supabase.
   const handleLogin = async (e: React.FormEvent) => {
@@ -34,7 +93,62 @@ export function Login() {
       toast.success('¡Bienvenido!');
       navigate('/dashboard');
     } else {
-      setError('Email o contraseña incorrectos');
+      const reachable = await checkSupabaseReachable();
+      if (!reachable) {
+        setShowOfflinePanel(true);
+        setError('');
+        toast.info('Sin internet. Usa el PIN para ingresar en modo offline.');
+      } else {
+        setError('Email o contraseña incorrectos');
+      }
+    }
+  };
+
+  const handleSetOfflinePin = async () => {
+    if (isSettingPin) return;
+    if (!offlinePinSetup || !offlinePinConfirm) {
+      toast.error('Completa ambos campos de PIN.');
+      return;
+    }
+    if (offlinePinSetup !== offlinePinConfirm) {
+      toast.error('El PIN no coincide.');
+      return;
+    }
+    setIsSettingPin(true);
+    try {
+      const ok = await setOfflinePin(offlinePinSetup);
+      if (ok) {
+        toast.success('PIN offline configurado.');
+        setOfflinePinSetup('');
+        setOfflinePinConfirm('');
+      }
+    } finally {
+      setIsSettingPin(false);
+    }
+  };
+
+  const handleOfflineLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isOfflineSubmitting) return;
+    setError('');
+
+    if (!offlinePinConfigured) {
+      toast.error('Configura un PIN offline primero.');
+      return;
+    }
+
+    setIsOfflineSubmitting(true);
+    try {
+      const success = await loginOffline(offlinePin, offlineRole, offlineUsername);
+      if (success) {
+        toast.success('Ingreso offline activado.');
+        setOfflinePinInput('');
+        navigate('/dashboard');
+      } else {
+        setError('PIN incorrecto');
+      }
+    } finally {
+      setIsOfflineSubmitting(false);
     }
   };
 
@@ -230,6 +344,116 @@ export function Login() {
             )}
           </div>
         </form>
+
+        {!showOfflinePanel && (
+          <div className="mt-4 text-center">
+            <Button
+              type="button"
+              variant="ghost"
+              className="text-sm text-[var(--muted-foreground)] hover:text-foreground"
+              onClick={handleShowOfflinePanel}
+            >
+              Acceder offline
+            </Button>
+          </div>
+        )}
+
+        {showOfflinePanel && (
+          <div className="mt-8 border-t border-[var(--border)] pt-6 space-y-4">
+            <h2 className="text-lg font-semibold">Ingreso Offline (PIN)</h2>
+
+            {!offlinePinConfigured && (
+              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg space-y-3">
+                <p className="text-sm text-yellow-800 font-semibold">Configura un PIN de 4 dígitos</p>
+                <div className="grid gap-3">
+                  <div>
+                    <Label htmlFor="offlinePinSetup">Nuevo PIN</Label>
+                    <Input
+                      id="offlinePinSetup"
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      placeholder="0000"
+                      value={offlinePinSetup}
+                      onChange={(e) => setOfflinePinSetup(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                      className="h-12 bg-[var(--input-background)] border border-[var(--border)]"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="offlinePinConfirm">Confirmar PIN</Label>
+                    <Input
+                      id="offlinePinConfirm"
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      placeholder="0000"
+                      value={offlinePinConfirm}
+                      onChange={(e) => setOfflinePinConfirm(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                      className="h-12 bg-[var(--input-background)] border border-[var(--border)]"
+                    />
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60]"
+                  onClick={handleSetOfflinePin}
+                  disabled={isSettingPin}
+                >
+                  {isSettingPin ? 'Guardando PIN...' : 'Guardar PIN Offline'}
+                </Button>
+              </div>
+            )}
+
+            <form onSubmit={handleOfflineLogin} className="space-y-4">
+              <div>
+                <Label htmlFor="offlinePin">PIN de 4 dígitos</Label>
+                <Input
+                  id="offlinePin"
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={4}
+                  placeholder="0000"
+                  value={offlinePin}
+                  onChange={(e) => setOfflinePinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                  className="h-12 bg-[var(--input-background)] border border-[var(--border)]"
+                  disabled={!offlinePinConfigured}
+                />
+              </div>
+
+              <div>
+                <Label>Rol offline</Label>
+                <Select value={offlineRole} onValueChange={(value: 'admin' | 'cashier') => setOfflineRole(value)}>
+                  <SelectTrigger className="h-12">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Administrador</SelectItem>
+                    <SelectItem value="cashier">Cajero</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="offlineUsername">Usuario (opcional)</Label>
+                <Input
+                  id="offlineUsername"
+                  placeholder="Caja 1"
+                  value={offlineUsername}
+                  onChange={(e) => setOfflineUsername(e.target.value)}
+                  className="h-12 bg-[var(--input-background)] border border-[var(--border)]"
+                />
+              </div>
+
+              <Button
+                type="submit"
+                className="w-full h-12 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-foreground)] font-semibold"
+                disabled={!offlinePinConfigured || isOfflineSubmitting}
+              >
+                {isOfflineSubmitting ? 'Ingresando...' : 'Entrar sin Internet'}
+              </Button>
+            </form>
+          </div>
+        )}
 
 
       </div>

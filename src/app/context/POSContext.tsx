@@ -25,6 +25,7 @@ import {
   fetchMyStoreMembership,
   finalizeSaleDraft,
   importLocalBackup,
+  replaceLocalBackup,
   insertCustomerDebtTx,
   loadCategoriesAndProducts,
   loadCashMovements,
@@ -49,6 +50,14 @@ import {
 } from '../services/posSupabase';
 import { DEFAULT_LOGO_PATH } from '../constants/branding';
 
+const OFFLINE_PIN_KEY = 'pos_offline_pin_hash';
+const OFFLINE_ROLE_KEY = 'pos_offline_role_default';
+const OFFLINE_AUTH_KEY = 'pos_offline_auth';
+const OFFLINE_DIRTY_KEY = 'pos_offline_dirty';
+const OFFLINE_INVOICE_KEY = 'pos_offline_invoice_seq';
+const OFFLINE_DRAFTS_KEY = 'pos_sale_drafts';
+const OFFLINE_ACTIVE_DRAFT_KEY = 'pos_active_draft_id';
+
 const toNumber = (value: unknown, fallback = 0): number => {
   const num = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -63,6 +72,25 @@ const isMissingTableError = (error: unknown, tableName: string): boolean => {
   const table = tableName.toLowerCase();
   return message.includes(table)
     && (message.includes('does not exist') || message.includes('could not find the table') || message.includes('schema cache'));
+};
+
+const hashPin = async (pin: string): Promise<string> => {
+  if (globalThis.crypto?.subtle) {
+    const data = new TextEncoder().encode(pin);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(digest))
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('');
+  }
+  return pin;
+};
+
+const getNextOfflineInvoiceNumber = (): string => {
+  const stored = localStorage.getItem(OFFLINE_INVOICE_KEY);
+  const last = stored ? Number(stored) : 0;
+  const next = Number.isFinite(last) ? last + 1 : 1;
+  localStorage.setItem(OFFLINE_INVOICE_KEY, String(next));
+  return `OFF-${next.toString().padStart(6, '0')}`;
 };
 
 // Tipos de datos
@@ -246,9 +274,16 @@ interface POSContextType {
   // Autenticación
   isAuthenticated: boolean;
   isAuthReady: boolean;
+  isOfflineMode: boolean;
+  offlinePinConfigured: boolean;
+  offlineDefaultRole: 'admin' | 'cashier';
+  hasPendingSync: boolean;
   currentUser: { username: string; role: 'admin' | 'cashier' } | null;
   login: (username: string, password: string) => Promise<boolean>;
+  loginOffline: (pin: string, role: 'admin' | 'cashier', username?: string) => Promise<boolean>;
   logout: () => void;
+  setOfflinePin: (pin: string) => Promise<boolean>;
+  setOfflineDefaultRole: (role: 'admin' | 'cashier') => void;
   createStore: (store: { name: string; nit?: string; address?: string; phone?: string; email?: string }) => Promise<boolean>;
   syncWithSupabase: () => Promise<boolean>;
   uploadLocalBackupToSupabase: (clearExisting?: boolean) => Promise<boolean>;
@@ -476,6 +511,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const [currentStoreId, setCurrentStoreId] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isAuthReady, setIsAuthReady] = useState<boolean>(false);
+  const [isOfflineMode, setIsOfflineMode] = useState<boolean>(false);
+  const [offlinePinHash, setOfflinePinHash] = useState<string | null>(null);
+  const [offlineDefaultRole, setOfflineDefaultRoleState] = useState<'admin' | 'cashier'>('cashier');
+  const [hasPendingSync, setHasPendingSync] = useState<boolean>(false);
+  const [isBrowserOnline, setIsBrowserOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
   const [currentUser, setCurrentUser] = useState<{ username: string; role: 'admin' | 'cashier' } | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
@@ -505,6 +547,21 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const activeDraft = saleDrafts.find((draft) => draft.id === activeDraftId) ?? null;
   const cart = activeDraft?.items ?? [];
   const draftSyncTimers = useRef<Record<string, number>>({});
+  const isHydratingRef = useRef(true);
+  const offlineSnapshotRef = useRef<string | null>(null);
+  const offlinePinConfigured = Boolean(offlinePinHash);
+  const canReachSupabase = Boolean(session?.access_token && isBrowserOnline && !isOfflineMode);
+  const isConnectedToSupabase = Boolean(canReachSupabase && currentStoreId);
+
+  useEffect(() => {
+    const updateOnline = () => setIsBrowserOnline(navigator.onLine);
+    window.addEventListener('online', updateOnline);
+    window.addEventListener('offline', updateOnline);
+    return () => {
+      window.removeEventListener('online', updateOnline);
+      window.removeEventListener('offline', updateOnline);
+    };
+  }, []);
 
   // Mantener título y favicon sincronizados con la tienda
   useEffect(() => {
@@ -801,6 +858,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
         }));
       }
 
+      setIsOfflineMode(false);
+      setHasPendingSync(false);
+      localStorage.removeItem(OFFLINE_DIRTY_KEY);
+
       return true;
     } catch (error) {
       console.error('No se pudieron cargar datos desde Supabase', error);
@@ -810,7 +871,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Asegura que exista al menos un borrador activo.
   useEffect(() => {
-    if (!session?.access_token || !currentStoreId) return;
+    if (!isAuthenticated) return;
     if (saleDrafts.length === 0) {
       void createSaleDraft();
       return;
@@ -818,10 +879,25 @@ export function POSProvider({ children }: { children: ReactNode }) {
     if (!activeDraftId) {
       setActiveDraftId(saleDrafts[0].id);
     }
-  }, [saleDrafts.length, activeDraftId, session?.access_token, currentStoreId]);
+  }, [saleDrafts.length, activeDraftId, isAuthenticated]);
 
   // Cargar datos del localStorage
   useEffect(() => {
+    const storedPin = localStorage.getItem(OFFLINE_PIN_KEY);
+    if (storedPin) {
+      setOfflinePinHash(storedPin);
+    }
+    const storedRole = localStorage.getItem(OFFLINE_ROLE_KEY);
+    if (storedRole === 'admin' || storedRole === 'cashier') {
+      setOfflineDefaultRoleState(storedRole);
+    }
+    const pendingSync = localStorage.getItem(OFFLINE_DIRTY_KEY);
+    if (pendingSync === 'true') {
+      setHasPendingSync(true);
+    }
+    const offlineAuthRaw = localStorage.getItem(OFFLINE_AUTH_KEY);
+    const offlineAuth = offlineAuthRaw ? JSON.parse(offlineAuthRaw) as { username?: string; role: 'admin' | 'cashier' } : null;
+
     const loadedProducts = localStorage.getItem('pos_products');
     const loadedCategories = localStorage.getItem('pos_categories');
     const loadedSales = localStorage.getItem('pos_sales');
@@ -832,7 +908,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const loadedCashSessions = localStorage.getItem('pos_cash_sessions');
     const loadedCashMovements = localStorage.getItem('pos_cash_movements');
     const loadedConfig = localStorage.getItem('pos_config');
-    const authData = localStorage.getItem('pos_auth');
+    const loadedDrafts = localStorage.getItem(OFFLINE_DRAFTS_KEY);
+    const loadedActiveDraftId = localStorage.getItem(OFFLINE_ACTIVE_DRAFT_KEY);
 
     const productData: Product[] = loadedProducts ? JSON.parse(loadedProducts) : initialProducts;
     const distribunzelKeySet = new Set(
@@ -916,19 +993,43 @@ export function POSProvider({ children }: { children: ReactNode }) {
         purchasePricePolicy: parsedConfig.purchasePricePolicy || 'automatic'
       }));
     }
+    if (loadedDrafts) {
+      try {
+        const parsedDrafts = JSON.parse(loadedDrafts) as SaleDraft[];
+        setSaleDrafts(parsedDrafts);
+        if (loadedActiveDraftId) {
+          setActiveDraftId(loadedActiveDraftId);
+        }
+      } catch {
+        setSaleDrafts([]);
+      }
+    }
     const storedSession = getStoredSession();
     if (!storedSession) {
       setSession(null);
-      setIsAuthenticated(false);
-      setCurrentUser(null);
       setCurrentStoreId(null);
       localStorage.removeItem('pos_auth');
+
+      if (offlineAuth?.role) {
+        setIsOfflineMode(true);
+        setIsAuthenticated(true);
+        setCurrentUser({
+          username: offlineAuth.username || 'offline',
+          role: offlineAuth.role,
+        });
+      } else {
+        setIsAuthenticated(false);
+        setCurrentUser(null);
+      }
+
       setIsAuthReady(true);
+      isHydratingRef.current = false;
       return;
     }
 
     setSession(storedSession);
     setIsAuthenticated(true);
+    setIsOfflineMode(false);
 
     fetchMyStoreMembership(storedSession.access_token, storedSession.user.id)
       .then((membership) => {
@@ -938,6 +1039,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
           username: storedSession.user.email || 'usuario',
           role: membership.role,
         });
+        if (pendingSync === 'true') {
+          toast.info('Hay cambios offline pendientes. Sincroniza manualmente antes de descargar datos.');
+          return undefined;
+        }
         return syncFromSupabase(storedSession, membership.store_id);
       })
       .catch((error) => {
@@ -946,6 +1051,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       })
       .finally(() => {
         setIsAuthReady(true);
+        isHydratingRef.current = false;
       });
   }, []);
 
@@ -1007,12 +1113,67 @@ export function POSProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('pos_auth', JSON.stringify({ isAuthenticated, currentUser }));
   }, [isAuthenticated, currentUser, isAuthReady]);
 
+  // Guardar borradores locales para modo offline.
+  useEffect(() => {
+    localStorage.setItem(OFFLINE_DRAFTS_KEY, JSON.stringify(saleDrafts));
+    if (activeDraftId) {
+      localStorage.setItem(OFFLINE_ACTIVE_DRAFT_KEY, activeDraftId);
+    } else {
+      localStorage.removeItem(OFFLINE_ACTIVE_DRAFT_KEY);
+    }
+  }, [saleDrafts, activeDraftId]);
+
+  // Marcar cambios offline pendientes de sincronización.
+  useEffect(() => {
+    const snapshot = JSON.stringify({
+      products,
+      categories,
+      sales,
+      kardexMovements,
+      customers,
+      suppliers,
+      recharges,
+      cashSessions,
+      cashMovements,
+      storeConfig,
+      saleDrafts,
+    });
+
+    if (isHydratingRef.current) {
+      offlineSnapshotRef.current = snapshot;
+      return;
+    }
+
+    if (snapshot === offlineSnapshotRef.current) return;
+    offlineSnapshotRef.current = snapshot;
+
+    if (isConnectedToSupabase) return;
+
+    setHasPendingSync(true);
+    localStorage.setItem(OFFLINE_DIRTY_KEY, 'true');
+  }, [
+    products,
+    categories,
+    sales,
+    kardexMovements,
+    customers,
+    suppliers,
+    recharges,
+    cashSessions,
+    cashMovements,
+    storeConfig,
+    saleDrafts,
+    isConnectedToSupabase,
+  ]);
+
   // Funciones de autenticación
   const login = async (username: string, password: string): Promise<boolean> => {
     try {
       const nextSession = await signInWithPassword(username, password);
       storeSession(nextSession);
       setSession(nextSession);
+      setIsOfflineMode(false);
+      localStorage.removeItem(OFFLINE_AUTH_KEY);
 
       const membership = await fetchMyStoreMembership(nextSession.access_token, nextSession.user.id);
 
@@ -1024,9 +1185,15 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
       if (membership) {
         setCurrentStoreId(membership.store_id);
-        const synced = await syncFromSupabase(nextSession, membership.store_id);
-        if (!synced) {
-          toast.error('Sesión iniciada, pero falló la sincronización de datos');
+        const pendingSync = localStorage.getItem(OFFLINE_DIRTY_KEY) === 'true';
+        if (pendingSync) {
+          setHasPendingSync(true);
+          toast.info('Hay cambios offline pendientes. Sincroniza manualmente antes de descargar datos.');
+        } else {
+          const synced = await syncFromSupabase(nextSession, membership.store_id);
+          if (!synced) {
+            toast.error('Sesión iniciada, pero falló la sincronización de datos');
+          }
         }
       } else {
         setCurrentStoreId(null);
@@ -1041,6 +1208,58 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const loginOffline = async (
+    pin: string,
+    role: 'admin' | 'cashier',
+    username?: string,
+  ): Promise<boolean> => {
+    const trimmed = pin.trim();
+    if (!/^\d{4}$/.test(trimmed)) {
+      toast.error('El PIN debe tener 4 dígitos.');
+      return false;
+    }
+
+    if (!offlinePinHash) {
+      toast.error('Configura un PIN offline antes de ingresar.');
+      return false;
+    }
+
+    const hashed = await hashPin(trimmed);
+    if (hashed !== offlinePinHash) {
+      toast.error('PIN incorrecto.');
+      return false;
+    }
+
+    storeSession(null);
+    setSession(null);
+    setIsAuthenticated(true);
+    setIsOfflineMode(true);
+    const safeRole = role || offlineDefaultRole;
+    const safeUsername = username?.trim() || 'offline';
+    setCurrentUser({ username: safeUsername, role: safeRole });
+    localStorage.setItem(OFFLINE_AUTH_KEY, JSON.stringify({ username: safeUsername, role: safeRole }));
+    return true;
+  };
+
+  const setOfflinePin = async (pin: string): Promise<boolean> => {
+    const trimmed = pin.trim();
+    if (!/^\d{4}$/.test(trimmed)) {
+      toast.error('El PIN debe tener 4 dígitos.');
+      return false;
+    }
+
+    const hashed = await hashPin(trimmed);
+    setOfflinePinHash(hashed);
+    localStorage.setItem(OFFLINE_PIN_KEY, hashed);
+    localStorage.removeItem(OFFLINE_AUTH_KEY);
+    return true;
+  };
+
+  const setOfflineDefaultRole = (role: 'admin' | 'cashier') => {
+    setOfflineDefaultRoleState(role);
+    localStorage.setItem(OFFLINE_ROLE_KEY, role);
+  };
+
   const logout = () => {
     if (session?.access_token) {
       void signOut(session.access_token).catch(() => undefined);
@@ -1050,6 +1269,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
     setCurrentStoreId(null);
     setIsAuthenticated(false);
     setCurrentUser(null);
+    setIsOfflineMode(false);
+    localStorage.removeItem(OFFLINE_AUTH_KEY);
     setSaleDrafts([]);
     setActiveDraftId(null);
   };
@@ -1081,8 +1302,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const syncWithSupabase = async (): Promise<boolean> => {
-    if (!session?.access_token || !currentStoreId) {
-      toast.info('No hay tienda conectada para sincronizar.');
+    if (!canReachSupabase || !session || !currentStoreId) {
+      toast.info('No hay conexión o tienda conectada para sincronizar.');
       return false;
     }
 
@@ -1097,14 +1318,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const uploadLocalBackupToSupabase = async (clearExisting = false): Promise<boolean> => {
-    if (!session?.access_token || !currentStoreId) {
-      toast.info('No hay tienda conectada para sincronizar.');
+    if (!canReachSupabase || !session || !currentStoreId) {
+      toast.info('No hay conexión o tienda conectada para sincronizar.');
       return false;
-    }
-
-    if (clearExisting) {
-      toast.info('Para proteger la inmutabilidad del Kardex, el modo limpiar datos está deshabilitado.');
-      clearExisting = false;
     }
 
     const backupPayload = {
@@ -1120,11 +1336,17 @@ export function POSProvider({ children }: { children: ReactNode }) {
     };
 
     try {
-      await importLocalBackup(session.access_token, currentStoreId, backupPayload, clearExisting);
+      if (clearExisting) {
+        await replaceLocalBackup(session.access_token, currentStoreId, backupPayload);
+      } else {
+        await importLocalBackup(session.access_token, currentStoreId, backupPayload, false);
+      }
       const synced = await syncFromSupabase(session, currentStoreId);
       if (!synced) {
         toast.error('Importación finalizada, pero falló la actualización de datos en pantalla.');
       } else {
+        setHasPendingSync(false);
+        localStorage.removeItem(OFFLINE_DIRTY_KEY);
         toast.success('Datos locales importados a Supabase correctamente.');
       }
       return true;
@@ -1140,7 +1362,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const newProduct = { ...product, id: Date.now().toString() };
     setProducts([...products, newProduct]);
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void createProduct(session.access_token, currentStoreId, product)
         .then((created) => {
           if (!created) return;
@@ -1171,7 +1393,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const updateProduct = (id: string, updatedProduct: Partial<Product>) => {
     setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedProduct } : p));
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void patchProduct(session.access_token, currentStoreId, id, updatedProduct)
         .catch((error) => {
           console.error('No se pudo actualizar producto en Supabase', error);
@@ -1237,7 +1459,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const deleteProduct = (id: string) => {
     setProducts(products.filter(p => p.id !== id));
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void removeProduct(session.access_token, currentStoreId, id)
         .catch((error) => {
           console.error('No se pudo eliminar producto en Supabase', error);
@@ -1267,7 +1489,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     setCategories([...categories, normalizedName]);
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void createCategory(session.access_token, currentStoreId, normalizedName)
         .catch((error) => {
           console.error('No se pudo crear categoría en Supabase', error);
@@ -1298,7 +1520,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         : product
     ));
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void renameCategory(session.access_token, currentStoreId, oldName, normalizedNewName)
         .then(() => {
           const productIds = products
@@ -1337,7 +1559,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     setCategories(categories.filter(category => category !== name));
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       const productsToMove = products.filter(product => product.category === name);
 
       if (productsToMove.length > 0 && replacementCategory) {
@@ -1358,7 +1580,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Borradores de venta (multi-ventas).
   const persistDraftSnapshot = async (draft: SaleDraft) => {
-    if (!session?.access_token || !currentStoreId) return;
+    if (!isConnectedToSupabase || !session || !currentStoreId) return;
     await updateSaleDraftRow(session.access_token, currentStoreId, draft.id, {
       cashSessionId: currentCashSession?.id ?? draft.cashSessionId ?? null,
       customerId: draft.customerId ?? null,
@@ -1376,7 +1598,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const queueDraftSync = (draft: SaleDraft) => {
-    if (!session?.access_token || !currentStoreId) return;
+    if (!isConnectedToSupabase) return;
     const existingTimer = draftSyncTimers.current[draft.id];
     if (existingTimer) {
       window.clearTimeout(existingTimer);
@@ -1406,13 +1628,29 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const createSaleDraft = async (): Promise<SaleDraft | null> => {
-    if (!session?.access_token || !currentStoreId) {
-      toast.error('Debes iniciar sesión para crear ventas.');
-      return null;
-    }
-
     try {
       const createdAt = new Date().toISOString();
+      if (!isConnectedToSupabase) {
+        const draftId = `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const draft: SaleDraft = {
+          id: draftId,
+          storeId: currentStoreId ?? undefined,
+          userId: session?.user.id,
+          cashSessionId: currentCashSession?.id,
+          status: 'open',
+          createdAt,
+          updatedAt: createdAt,
+          items: [],
+        };
+        setSaleDrafts(prev => [draft, ...prev]);
+        setActiveDraftId(draftId);
+        return draft;
+      }
+
+      if (!session || !currentStoreId) {
+        return null;
+      }
+
       const draftId = await createSaleDraftRow(session.access_token, currentStoreId, {
         userId: session.user.id,
         cashSessionId: currentCashSession?.id,
@@ -1464,7 +1702,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       delete draftSyncTimers.current[draftId];
     }
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       try {
         await deleteSaleDraftRow(session.access_token, currentStoreId, draftId);
       } catch (error) {
@@ -1571,7 +1809,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     setKardexMovements(prev => [...prev, nextMovement]);
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void createKardexMovementRow(session.access_token, currentStoreId, {
         productId: movement.productId,
         productName: movement.productName,
@@ -1655,7 +1893,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const openedAt = new Date().toISOString();
     let sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       try {
         const remoteId = await createCashSession(session.access_token, currentStoreId, {
           userId: session.user.id,
@@ -1704,7 +1942,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const movementDate = new Date().toISOString();
     let movementId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    if (session?.access_token && currentStoreId && uuidLike(currentCashSession.id)) {
+    if (isConnectedToSupabase && session && currentStoreId && uuidLike(currentCashSession.id)) {
       try {
         const remoteId = await createCashMovement(session.access_token, currentStoreId, {
           cashSessionId: currentCashSession.id,
@@ -1761,7 +1999,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     setCashSessions(prev => prev.map(sessionItem => sessionItem.id === currentCashSession.id ? closedSession : sessionItem));
 
-    if (session?.access_token && currentStoreId && uuidLike(currentCashSession.id)) {
+    if (isConnectedToSupabase && session && currentStoreId && uuidLike(currentCashSession.id)) {
       try {
         await updateCashSession(session.access_token, currentStoreId, currentCashSession.id, {
           closedAt,
@@ -1792,14 +2030,113 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    if (!session?.access_token || !currentStoreId) {
-      toast.error('Debes iniciar sesión para registrar ventas.');
-      return null;
-    }
-
     const paymentMethodValue = ['efectivo', 'tarjeta', 'transferencia', 'credito'].includes(paymentMethod)
       ? paymentMethod as 'efectivo' | 'tarjeta' | 'transferencia' | 'credito'
       : 'otro';
+
+    if (!isConnectedToSupabase) {
+      const saleDate = new Date().toISOString();
+      let subtotal = 0;
+      let discountTotal = 0;
+      let ivaTotal = 0;
+
+      for (const item of cart) {
+        const product = products.find(p => p.id === item.product.id) ?? item.product;
+        if (product.stock < item.quantity) {
+          toast.error(`Stock insuficiente para ${product.name}.`);
+          return null;
+        }
+
+        const lineSubtotal = item.product.salePrice * item.quantity;
+        const lineDiscount = (lineSubtotal * item.discount) / 100;
+        const lineTotal = lineSubtotal - lineDiscount;
+        const lineIva = lineTotal * (item.product.iva / (100 + item.product.iva));
+
+        subtotal += lineSubtotal;
+        discountTotal += lineDiscount;
+        ivaTotal += lineIva;
+      }
+
+      const total = subtotal - discountTotal;
+      if (total <= 0) {
+        toast.error('No hay productos en la venta.');
+        return null;
+      }
+
+      const invoiceNumber = getNextOfflineInvoiceNumber();
+      const safeCashReceived = Number.isFinite(cashReceived) ? cashReceived : 0;
+      const change = safeCashReceived - total;
+
+      const newSale: Sale = {
+        id: `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        date: saleDate,
+        items: [...cart],
+        subtotal,
+        discount: discountTotal,
+        iva: ivaTotal,
+        total,
+        paymentMethod: paymentMethodValue,
+        cashReceived: safeCashReceived,
+        change,
+        customerId: activeDraft.customerId,
+        invoiceNumber,
+        cashSessionId: currentCashSession.id,
+      };
+
+      setSales(prev => [...prev, newSale]);
+
+      setProducts(prev => prev.map((product) => {
+        const item = cart.find(cartItem => cartItem.product.id === product.id);
+        if (!item) return product;
+        return { ...product, stock: product.stock - item.quantity };
+      }));
+
+      cart.forEach((item) => {
+        const product = products.find(p => p.id === item.product.id) ?? item.product;
+        const stockBefore = product.stock;
+        const stockAfter = stockBefore - item.quantity;
+        appendKardexMovement({
+          productId: product.id,
+          productName: product.name,
+          type: 'sale',
+          reference: invoiceNumber,
+          quantity: -item.quantity,
+          stockBefore,
+          stockAfter,
+          unitCost: buildUnitCostWithIva(product),
+          unitSalePrice: product.salePrice,
+          totalCost: buildUnitCostWithIva(product) * item.quantity,
+        });
+      });
+
+      if (newSale.customerId) {
+        const points = Math.floor(newSale.total / 1000);
+        setCustomers(prev => prev.map((customer) => {
+          if (customer.id !== newSale.customerId) return customer;
+          return {
+            ...customer,
+            points: customer.points + points,
+            purchases: [...customer.purchases, newSale],
+          };
+        }));
+      }
+
+      const remainingDrafts = saleDrafts.filter(draft => draft.id !== activeDraft.id);
+      setSaleDrafts(remainingDrafts);
+      if (remainingDrafts.length === 0) {
+        await createSaleDraft();
+      } else {
+        setActiveDraftId(remainingDrafts[0].id);
+      }
+
+      toast.success('Venta registrada correctamente.');
+      return newSale;
+    }
+
+    if (!session || !currentStoreId) {
+      toast.error('Debes iniciar sesión para registrar ventas.');
+      return null;
+    }
 
     try {
       const pendingTimer = draftSyncTimers.current[activeDraft.id];
@@ -1969,7 +2306,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     };
     setCustomers([...customers, newCustomer]);
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void createCustomer(session.access_token, currentStoreId, {
         name: newCustomer.name,
         phone: newCustomer.phone,
@@ -1991,7 +2328,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const updateCustomer = (id: string, updatedCustomer: Partial<Customer>) => {
     setCustomers(customers.map(c => c.id === id ? { ...c, ...updatedCustomer } : c));
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void updateCustomerRow(session.access_token, currentStoreId, id, {
         name: updatedCustomer.name,
         phone: updatedCustomer.phone,
@@ -2024,7 +2361,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         debtHistory: [...customer.debtHistory, transaction]
       });
 
-      if (session?.access_token && currentStoreId) {
+      if (isConnectedToSupabase && session && currentStoreId) {
         void insertCustomerDebtTx(session.access_token, currentStoreId, {
           customerId,
           type: 'debt',
@@ -2057,7 +2394,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         debtHistory: [...customer.debtHistory, transaction]
       });
 
-      if (session?.access_token && currentStoreId) {
+      if (isConnectedToSupabase && session && currentStoreId) {
         void insertCustomerDebtTx(session.access_token, currentStoreId, {
           customerId,
           type: 'payment',
@@ -2088,7 +2425,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     };
     setSuppliers([...suppliers, newSupplier]);
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void createSupplierRow(session.access_token, currentStoreId, {
         name: newSupplier.name,
         nit: newSupplier.nit,
@@ -2110,7 +2447,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const updateSupplier = (id: string, updatedSupplier: Partial<Supplier>) => {
     setSuppliers(suppliers.map(s => s.id === id ? { ...s, ...updatedSupplier } : s));
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void updateSupplierRow(session.access_token, currentStoreId, id, {
         name: updatedSupplier.name,
         nit: updatedSupplier.nit,
@@ -2129,7 +2466,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const deleteSupplier = (id: string) => {
     setSuppliers(suppliers.filter(s => s.id !== id));
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void deleteSupplierRow(session.access_token, currentStoreId, id)
         .catch((error) => {
           console.error('No se pudo eliminar proveedor en Supabase', error);
@@ -2217,7 +2554,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       const purchaseItems = items.map((item) => {
         const product = products.find(p => p.id === item.productId);
         const unitsPerPurchase = Number(product?.unitsPerPurchase ?? 1) || 1;
@@ -2260,7 +2597,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     };
     setRecharges([...recharges, newRecharge]);
 
-    if (session?.access_token && currentStoreId) {
+    if (isConnectedToSupabase && session && currentStoreId) {
       void createRechargeRow(session.access_token, currentStoreId, {
         type: recharge.type,
         provider: recharge.provider,
@@ -2281,7 +2618,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const merged = { ...storeConfig, ...config };
     setStoreConfig(merged);
 
-    if (!session?.access_token) {
+    if (!canReachSupabase) {
+      return true;
+    }
+
+    if (!session) {
       return true;
     }
 
@@ -2329,9 +2670,16 @@ export function POSProvider({ children }: { children: ReactNode }) {
     <POSContext.Provider value={{
       isAuthenticated,
       isAuthReady,
+      isOfflineMode,
+      offlinePinConfigured,
+      offlineDefaultRole,
+      hasPendingSync,
       currentUser,
       login,
+      loginOffline,
       logout,
+      setOfflinePin,
+      setOfflineDefaultRole,
       createStore,
       syncWithSupabase,
       uploadLocalBackupToSupabase,

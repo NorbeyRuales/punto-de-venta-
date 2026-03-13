@@ -19,6 +19,11 @@ export function Configuration() {
     storeConfig,
     updateStoreConfig,
     currentUser,
+    offlinePinConfigured,
+    offlineDefaultRole,
+    hasPendingSync,
+    setOfflinePin,
+    setOfflineDefaultRole,
     products,
     categories,
     addCategory,
@@ -41,6 +46,10 @@ export function Configuration() {
   const [isUploading, setIsUploading] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRegisteringStore, setIsRegisteringStore] = useState(false);
+  const [offlinePin, setOfflinePinInput] = useState('');
+  const [offlinePinConfirm, setOfflinePinConfirm] = useState('');
+  const [isSavingOfflinePin, setIsSavingOfflinePin] = useState(false);
+  const [offlineRoleSelection, setOfflineRoleSelection] = useState<'admin' | 'cashier'>(offlineDefaultRole);
 
   // Lee el tab desde querystring (?tab=categories, etc).
   useEffect(() => {
@@ -57,10 +66,15 @@ export function Configuration() {
     setConfig(storeConfig);
   }, [storeConfig]);
 
+  useEffect(() => {
+    setOfflineRoleSelection(offlineDefaultRole);
+  }, [offlineDefaultRole]);
+
   const hasConfigChanges = useMemo(
     () => JSON.stringify(config) !== JSON.stringify(storeConfig),
     [config, storeConfig]
   );
+  const isAdmin = currentUser?.role === 'admin';
 
   // Guarda configuración local y en Supabase.
   const handleSave = async () => {
@@ -190,6 +204,10 @@ export function Configuration() {
   // Forzar sincronización con Supabase.
   const handleManualSync = async () => {
     if (isSyncing) return;
+    if (hasPendingSync) {
+      const confirmed = confirm('Hay cambios offline pendientes. Descargar desde Supabase reemplazará lo local. ¿Continuar?');
+      if (!confirmed) return;
+    }
     setIsSyncing(true);
     try {
       await syncWithSupabase();
@@ -222,12 +240,43 @@ export function Configuration() {
   // Sube datos actuales desde localStorage a Supabase.
   const handleUploadLocalData = async () => {
     if (isUploading) return;
+    const confirmed = confirm('Esto reemplazará los datos remotos por los locales. ¿Deseas continuar?');
+    if (!confirmed) return;
     setIsUploading(true);
     try {
-      await uploadLocalBackupToSupabase(false);
+      await uploadLocalBackupToSupabase(true);
     } finally {
       setIsUploading(false);
     }
+  };
+
+  const handleOfflinePinSave = async () => {
+    if (isSavingOfflinePin) return;
+    if (!offlinePin || !offlinePinConfirm) {
+      toast.error('Completa ambos campos de PIN.');
+      return;
+    }
+    if (offlinePin !== offlinePinConfirm) {
+      toast.error('El PIN no coincide.');
+      return;
+    }
+    setIsSavingOfflinePin(true);
+    try {
+      const ok = await setOfflinePin(offlinePin);
+      if (ok) {
+        toast.success('PIN offline actualizado.');
+        setOfflinePinInput('');
+        setOfflinePinConfirm('');
+      }
+    } finally {
+      setIsSavingOfflinePin(false);
+    }
+  };
+
+  const handleOfflineRoleChange = (role: 'admin' | 'cashier') => {
+    setOfflineRoleSelection(role);
+    setOfflineDefaultRole(role);
+    toast.success('Rol offline actualizado.');
   };
 
   const handlePrinterTest = () => {
@@ -638,6 +687,61 @@ export function Configuration() {
               </div>
             </div>
 
+            <div className="p-4 border rounded-lg space-y-4">
+              <div>
+                <h3 className="font-semibold">Modo Offline</h3>
+                <p className="text-sm text-gray-600">
+                  PIN configurado: {offlinePinConfigured ? 'Sí' : 'No'}
+                </p>
+              </div>
+
+              <div>
+                <Label>Rol que opera en offline</Label>
+                <Select value={offlineRoleSelection} onValueChange={(value: 'admin' | 'cashier') => handleOfflineRoleChange(value)}>
+                  <SelectTrigger className="h-12">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Administrador</SelectItem>
+                    <SelectItem value="cashier">Cajero</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Nuevo PIN (4 dígitos)</Label>
+                  <Input
+                    value={offlinePin}
+                    onChange={(e) => setOfflinePinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    inputMode="numeric"
+                    maxLength={4}
+                    type="password"
+                    className={inputClass}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Confirmar PIN</Label>
+                  <Input
+                    value={offlinePinConfirm}
+                    onChange={(e) => setOfflinePinConfirm(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    inputMode="numeric"
+                    maxLength={4}
+                    type="password"
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+
+              <Button
+                onClick={handleOfflinePinSave}
+                className="h-12 bg-[#2ECC71] hover:bg-[#27AE60]"
+                disabled={isSavingOfflinePin}
+              >
+                {isSavingOfflinePin ? 'Guardando PIN...' : 'Guardar PIN Offline'}
+              </Button>
+            </div>
+
             <div className="p-4 bg-blue-50 rounded-lg">
               <p className="text-sm text-gray-700">
                 <strong>Nota:</strong> Los usuarios se administran desde Supabase Auth (Dashboard).
@@ -659,6 +763,15 @@ export function Configuration() {
                 Los datos se guardan automáticamente en el navegador. Se recomienda hacer backups periódicos.
               </p>
             </div>
+
+            {hasPendingSync && (
+              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p className="font-semibold mb-2 text-yellow-800">Cambios offline pendientes</p>
+                <p className="text-sm text-yellow-700">
+                  Sube los datos locales cuando haya conexión para sincronizar con Supabase.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-3">
               {!hasConnectedStore && (
@@ -685,17 +798,22 @@ export function Configuration() {
                 onClick={handleManualSync}
                 disabled={isSyncing}
               >
-                {isSyncing ? 'Sincronizando...' : 'Re-sincronizar datos con Supabase'}
+                {isSyncing ? 'Sincronizando...' : 'Descargar datos de Supabase (reemplaza local)'}
               </Button>
 
               <Button
                 variant="outline"
                 className="w-full h-12"
                 onClick={handleUploadLocalData}
-                disabled={isUploading}
+                disabled={isUploading || !isAdmin}
               >
-                {isUploading ? 'Subiendo datos...' : 'Subir datos actuales (localStorage) a Supabase'}
+                {isUploading ? 'Subiendo datos...' : 'Subir datos locales y reemplazar Supabase'}
               </Button>
+              {!isAdmin && (
+                <p className="text-xs text-gray-500 text-center">
+                  Solo un administrador puede subir y reemplazar datos en Supabase.
+                </p>
+              )}
 
               <Button
                 variant="outline"
@@ -709,7 +827,7 @@ export function Configuration() {
             <div className="p-4 bg-blue-50 rounded-lg">
               <p className="font-semibold mb-2">Modo Offline</p>
               <p className="text-sm text-gray-600">
-                El sistema funciona sin conexión a internet. Los datos se sincronizan automáticamente cuando hay conexión.
+                El sistema funciona sin conexión a internet. Cuando vuelva la conexión, usa esta sección para sincronizar manualmente.
               </p>
             </div>
 

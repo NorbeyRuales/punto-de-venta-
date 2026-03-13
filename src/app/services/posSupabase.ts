@@ -432,6 +432,22 @@ export async function importLocalBackup(
   );
 }
 
+// Reemplaza el contenido remoto por el backup local (borra datos existentes).
+export async function replaceLocalBackup(
+  token: string,
+  storeId: string,
+  backup: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  return rpc<Record<string, unknown>>(
+    'replace_local_pos_backup',
+    {
+      p_store_id: storeId,
+      p_backup: backup,
+    },
+    token,
+  );
+}
+
 // Actualiza la configuración principal de la tienda.
 export async function updateStoreDetails(
   token: string,
