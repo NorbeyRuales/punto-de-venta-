@@ -57,6 +57,7 @@ const OFFLINE_DIRTY_KEY = 'pos_offline_dirty';
 const OFFLINE_INVOICE_KEY = 'pos_offline_invoice_seq';
 const OFFLINE_DRAFTS_KEY = 'pos_sale_drafts';
 const OFFLINE_ACTIVE_DRAFT_KEY = 'pos_active_draft_id';
+const OFFLINE_BACKUP_KEY = 'pos_offline_backup';
 
 const toNumber = (value: unknown, fallback = 0): number => {
   const num = typeof value === 'number' ? value : Number(value);
@@ -595,6 +596,30 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   }, [storeConfig.name, storeConfig.logo]);
 
+  const buildLocalBackupPayload = () => ({
+    products: localStorage.getItem('pos_products'),
+    sales: localStorage.getItem('pos_sales'),
+    customers: localStorage.getItem('pos_customers'),
+    suppliers: localStorage.getItem('pos_suppliers'),
+    kardex: localStorage.getItem('pos_kardex'),
+    recharges: localStorage.getItem('pos_recharges'),
+    cash_sessions: localStorage.getItem('pos_cash_sessions'),
+    cash_movements: localStorage.getItem('pos_cash_movements'),
+    config: localStorage.getItem('pos_config'),
+  });
+
+  const buildStateBackupPayload = () => ({
+    products: JSON.stringify(products),
+    sales: JSON.stringify(sales),
+    customers: JSON.stringify(customers),
+    suppliers: JSON.stringify(suppliers),
+    kardex: JSON.stringify(kardexMovements),
+    recharges: JSON.stringify(recharges),
+    cash_sessions: JSON.stringify(cashSessions),
+    cash_movements: JSON.stringify(cashMovements),
+    config: JSON.stringify(storeConfig),
+  });
+
   // Sincroniza datos remotos (catálogo + operaciones) desde Supabase.
   const syncFromSupabase = async (nextSession: SupabaseSession, storeId: string): Promise<boolean> => {
     try {
@@ -859,8 +884,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
 
       setIsOfflineMode(false);
-      setHasPendingSync(false);
-      localStorage.removeItem(OFFLINE_DIRTY_KEY);
+      const hasOfflineBackup = Boolean(localStorage.getItem(OFFLINE_BACKUP_KEY));
+      if (hasOfflineBackup) {
+        setHasPendingSync(true);
+        localStorage.setItem(OFFLINE_DIRTY_KEY, 'true');
+      } else {
+        setHasPendingSync(false);
+        localStorage.removeItem(OFFLINE_DIRTY_KEY);
+      }
 
       return true;
     } catch (error) {
@@ -1040,8 +1071,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           role: membership.role,
         });
         if (pendingSync === 'true') {
-          toast.info('Hay cambios offline pendientes. Sincroniza manualmente antes de descargar datos.');
-          return undefined;
+          toast.info('Hay cambios offline pendientes. Puedes subirlos manualmente si deseas.');
         }
         return syncFromSupabase(storedSession, membership.store_id);
       })
@@ -1151,6 +1181,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     setHasPendingSync(true);
     localStorage.setItem(OFFLINE_DIRTY_KEY, 'true');
+    localStorage.setItem(OFFLINE_BACKUP_KEY, JSON.stringify(buildStateBackupPayload()));
   }, [
     products,
     categories,
@@ -1188,12 +1219,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
         const pendingSync = localStorage.getItem(OFFLINE_DIRTY_KEY) === 'true';
         if (pendingSync) {
           setHasPendingSync(true);
-          toast.info('Hay cambios offline pendientes. Sincroniza manualmente antes de descargar datos.');
-        } else {
-          const synced = await syncFromSupabase(nextSession, membership.store_id);
-          if (!synced) {
-            toast.error('Sesión iniciada, pero falló la sincronización de datos');
-          }
+          toast.info('Hay cambios offline pendientes. Puedes subirlos manualmente si deseas.');
+        }
+        const synced = await syncFromSupabase(nextSession, membership.store_id);
+        if (!synced) {
+          toast.error('Sesión iniciada, pero falló la sincronización de datos');
         }
       } else {
         setCurrentStoreId(null);
@@ -1323,17 +1353,15 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
-    const backupPayload = {
-      products: localStorage.getItem('pos_products'),
-      sales: localStorage.getItem('pos_sales'),
-      customers: localStorage.getItem('pos_customers'),
-      suppliers: localStorage.getItem('pos_suppliers'),
-      kardex: localStorage.getItem('pos_kardex'),
-      recharges: localStorage.getItem('pos_recharges'),
-      cash_sessions: localStorage.getItem('pos_cash_sessions'),
-      cash_movements: localStorage.getItem('pos_cash_movements'),
-      config: localStorage.getItem('pos_config'),
-    };
+    let backupPayload = buildLocalBackupPayload();
+    const offlineBackupRaw = localStorage.getItem(OFFLINE_BACKUP_KEY);
+    if (offlineBackupRaw) {
+      try {
+        backupPayload = JSON.parse(offlineBackupRaw) as Record<string, unknown>;
+      } catch {
+        // Si el backup offline está corrupto, usamos el estado local actual.
+      }
+    }
 
     try {
       if (clearExisting) {
@@ -1347,6 +1375,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       } else {
         setHasPendingSync(false);
         localStorage.removeItem(OFFLINE_DIRTY_KEY);
+        localStorage.removeItem(OFFLINE_BACKUP_KEY);
         toast.success('Datos locales importados a Supabase correctamente.');
       }
       return true;
