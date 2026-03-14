@@ -265,7 +265,7 @@ export function POS() {
       <Card className="p-3 border border-violet-200 bg-gradient-to-r from-violet-50 via-indigo-50 to-fuchsia-50">
         <div className="flex items-center gap-3">
           <div className="flex-1 overflow-x-auto">
-            <div className="flex items-center gap-2 min-w-max pr-2">
+            <div className="flex items-center gap-2 min-w-max pr-2 py-1">
               {saleDrafts.map((draft, index) => {
                 const customerName = draft.customerId
                   ? customers.find((customer) => customer.id === draft.customerId)?.name
@@ -276,10 +276,10 @@ export function POS() {
                 return (
                   <div
                     key={draft.id}
-                    className={`group inline-flex items-center rounded-full border transition-all ${
+                    className={`group inline-flex items-center rounded-xl border px-1 py-0.5 transition-all duration-200 shadow-sm ${
                       isActive
-                        ? 'border-violet-600 bg-violet-600 text-white shadow-sm'
-                        : 'border-violet-200 bg-white/80 text-violet-900 hover:border-violet-300 hover:bg-white'
+                        ? 'border-violet-500/80 bg-gradient-to-r from-violet-600 via-violet-600 to-fuchsia-600 text-white shadow-md'
+                        : 'border-violet-200/70 bg-white/80 text-violet-900 hover:border-violet-300 hover:bg-white hover:shadow'
                     }`}
                   >
                     <button
@@ -287,10 +287,10 @@ export function POS() {
                       onClick={() => switchSaleDraft(draft.id)}
                       aria-current={isActive ? 'page' : undefined}
                       title={customerName ? `${label} · ${customerName}` : label}
-                      className="flex items-center gap-2 px-4 py-2 text-left"
+                      className="flex items-center gap-2 px-3 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-violet-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
                     >
-                      <div className="flex flex-col leading-tight">
-                        <span className="text-sm font-semibold">{label}</span>
+                      <div className="flex flex-col justify-center leading-[1.1]">
+                        <span className="text-sm font-semibold tracking-tight">{label}</span>
                         {customerName && (
                           <span className={`text-xs ${isActive ? 'text-white/80' : 'text-violet-600'} max-w-[140px] truncate`}>
                             {customerName}
@@ -299,8 +299,8 @@ export function POS() {
                       </div>
                       {count > 0 && (
                         <span
-                          className={`min-w-[1.5rem] rounded-full px-2 py-0.5 text-xs font-semibold ${
-                            isActive ? 'bg-white/20 text-white' : 'bg-violet-100 text-violet-700'
+                          className={`min-w-[1.5rem] rounded-full px-2 py-0.5 text-xs font-semibold ring-1 self-center ${
+                            isActive ? 'bg-white/15 text-white ring-white/20' : 'bg-violet-50 text-violet-700 ring-violet-200'
                           }`}
                         >
                           {count}
@@ -312,9 +312,9 @@ export function POS() {
                         type="button"
                         onClick={() => discardSaleDraft(draft.id)}
                         aria-label={`Cerrar ${label}`}
-                        className={`mr-2 h-7 w-7 rounded-full grid place-items-center transition ${
+                        className={`mr-1 h-7 w-7 rounded-full grid place-items-center transition outline-none focus-visible:ring-2 focus-visible:ring-violet-300/80 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent ${
                           isActive
-                            ? 'text-white/70 hover:text-white hover:bg-white/10'
+                            ? 'text-white/70 hover:text-white hover:bg-white/15'
                             : 'text-violet-500 hover:text-violet-700 hover:bg-violet-100'
                         }`}
                       >
@@ -330,7 +330,7 @@ export function POS() {
             type="button"
             size="sm"
             onClick={() => void createSaleDraft()}
-            className="h-10 rounded-full bg-violet-600 text-white hover:bg-violet-700 shadow-sm"
+            className="h-10 rounded-xl bg-gradient-to-r from-violet-600 via-violet-600 to-fuchsia-600 text-white hover:from-violet-700 hover:via-violet-700 hover:to-fuchsia-700 shadow-md"
           >
             <Plus className="w-4 h-4 mr-2" />
             Nueva venta
