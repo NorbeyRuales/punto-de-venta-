@@ -415,6 +415,12 @@ export function Inventory() {
     return Number(product.unitPrice ?? product.salePrice);
   };
 
+  const getRoundedSalePrice = (product: Product): number => {
+    const salePrice = getUnitSalePrice(product);
+    if (!Number.isFinite(salePrice)) return 0;
+    return Math.round(salePrice / 100) * 100;
+  };
+
   const handleEditCostWithIvaChange = (value: string) => {
     const nextCostWithIva = parseFloat(value);
     if (Number.isNaN(nextCostWithIva)) {
@@ -669,7 +675,7 @@ return (
                       ${getUnitCost(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                     </td>
                     <td className="p-4 text-right font-semibold text-[#2ECC71]">
-                      ${getUnitSalePrice(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                      ${getRoundedSalePrice(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                     </td>
                     <td className="p-4 text-right">
                       <span className="font-semibold text-[#8E44AD]">

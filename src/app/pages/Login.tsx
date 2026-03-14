@@ -6,7 +6,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { User, Lock, AlertCircle } from 'lucide-react';
+import { User, Lock, AlertCircle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
 
@@ -22,6 +22,7 @@ export function Login() {
   const [showOfflinePanel, setShowOfflinePanel] = useState(false);
   const [isSettingPin, setIsSettingPin] = useState(false);
   const [isOfflineSubmitting, setIsOfflineSubmitting] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCreateStore, setShowCreateStore] = useState(false);
   const [error, setError] = useState('');
   const [storeName, setStoreName] = useState('');
@@ -86,21 +87,26 @@ export function Login() {
   // Maneja autenticación contra Supabase.
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setError('');
-    
-    const success = await login(username, password);
-    if (success) {
-      toast.success('¡Bienvenido!');
-      navigate('/dashboard');
-    } else {
-      const reachable = await checkSupabaseReachable();
-      if (!reachable) {
-        setShowOfflinePanel(true);
-        setError('');
-        toast.info('Sin internet. Usa el PIN para ingresar en modo offline.');
+    setIsSubmitting(true);
+    try {
+      const success = await login(username, password);
+      if (success) {
+        toast.success('¡Bienvenido!');
+        navigate('/dashboard');
       } else {
-        setError('Email o contraseña incorrectos');
+        const reachable = await checkSupabaseReachable();
+        if (!reachable) {
+          setShowOfflinePanel(true);
+          setError('');
+          toast.info('Sin internet. Usa el PIN para ingresar en modo offline.');
+        } else {
+          setError('Email o contraseña incorrectos');
+        }
       }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -327,8 +333,12 @@ export function Login() {
             <Button
               type="submit"
               className="w-full h-14 text-lg bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-foreground)] font-semibold shadow-[0_8px_24px_rgba(128,168,255,0.28)] transition-transform hover:-translate-y-[1px]"
+              disabled={isSubmitting}
             >
-              Iniciar Sesión
+              <span className="inline-flex items-center justify-center gap-2">
+                {isSubmitting && <Loader2 className="h-5 w-5 animate-spin" />}
+                {isSubmitting ? 'Iniciando...' : 'Iniciar Sesión'}
+              </span>
             </Button>
             
             {showRegisterButton && (

@@ -77,6 +77,11 @@ export function Reports() {
   );
 
   const formatCurrency = (value: number) => `$${Math.round(value).toLocaleString('es-CO')}`;
+  const roundToHundred = (value: number) => {
+    if (!Number.isFinite(value)) return 0;
+    return Math.round(value / 100) * 100;
+  };
+  const formatRoundedCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
 
   const buildWhatsappMessage = (sale: Sale) => {
     const customer = sale.customerId ? customers.find(c => c.id === sale.customerId) : undefined;
@@ -92,15 +97,14 @@ export function Reports() {
         const subtotalItem = unitPrice * item.quantity;
         const totalItem = subtotalItem - ((subtotalItem * item.discount) / 100);
         const discountLabel = item.discount > 0 ? ` (-${item.discount}%)` : '';
-        return `• ${item.product.name} x${item.quantity} = ${formatCurrency(totalItem)}${discountLabel}`;
+        return `• ${item.product.name} x${item.quantity} = ${formatRoundedCurrency(totalItem)}${discountLabel}`;
       }),
-      `Subtotal: ${formatCurrency(sale.subtotal)}`,
-      sale.discount > 0 ? `Descuento: -${formatCurrency(sale.discount)}` : null,
-      `IVA: ${formatCurrency(sale.iva)}`,
-      `Total: ${formatCurrency(sale.total)}`,
+      `Subtotal: ${formatRoundedCurrency(sale.subtotal)}`,
+      sale.discount > 0 ? `Descuento: -${formatRoundedCurrency(sale.discount)}` : null,
+      `Total: ${formatRoundedCurrency(sale.total)}`,
       `Pago: ${sale.paymentMethod}`,
       sale.paymentMethod === 'efectivo'
-        ? `Efectivo: ${formatCurrency(sale.cashReceived)} | Cambio: ${formatCurrency(sale.change)}`
+        ? `Efectivo: ${formatRoundedCurrency(sale.cashReceived)} | Cambio: ${formatRoundedCurrency(sale.change)}`
         : null,
       storeConfig?.phone ? `Contacto: ${storeConfig.phone}` : null,
       '',
@@ -262,7 +266,7 @@ export function Reports() {
                     <td className="p-3">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</td>
                     <td className="p-3">{sale.invoiceNumber}</td>
                     <td className="p-3 capitalize">{sale.paymentMethod}</td>
-                    <td className="p-3 text-right font-bold text-[#2ECC71]">${sale.total.toLocaleString('es-CO')}</td>
+                    <td className="p-3 text-right font-bold text-[#2ECC71]">{formatRoundedCurrency(sale.total)}</td>
                     <td className="p-3 text-right">
                       <div className="flex flex-wrap justify-end gap-2">
                         <Button
@@ -365,9 +369,9 @@ export function Reports() {
                           <tr key={`${item.product.id}-${index}`} className="border-b">
                             <td className="p-3">{item.product.name}</td>
                             <td className="p-3 text-center">{item.quantity}</td>
-                            <td className="p-3 text-right">{formatCurrency(item.product.salePrice)}</td>
+                            <td className="p-3 text-right">{formatRoundedCurrency(item.product.salePrice)}</td>
                             <td className="p-3 text-right">{item.discount > 0 ? `${item.discount}%` : '-'}</td>
-                            <td className="p-3 text-right font-semibold">{formatCurrency(totalItem)}</td>
+                            <td className="p-3 text-right font-semibold">{formatRoundedCurrency(totalItem)}</td>
                           </tr>
                         );
                       })}
@@ -385,21 +389,21 @@ export function Reports() {
                   <div className="w-full md:w-72 space-y-2 text-sm">
                     <div className="flex justify-between">
                       <span>Subtotal:</span>
-                      <span>{formatCurrency(selectedSale.subtotal)}</span>
+                      <span>{formatRoundedCurrency(selectedSale.subtotal)}</span>
                     </div>
                     {selectedSale.discount > 0 && (
                       <div className="flex justify-between text-red-600">
                         <span>Descuento:</span>
-                        <span>-{formatCurrency(selectedSale.discount)}</span>
+                        <span>-{formatRoundedCurrency(selectedSale.discount)}</span>
                       </div>
                     )}
                     <div className="flex justify-between">
                       <span>IVA:</span>
-                      <span>{formatCurrency(selectedSale.iva)}</span>
+                      <span>{formatRoundedCurrency(selectedSale.iva)}</span>
                     </div>
                     <div className="flex justify-between font-bold text-lg border-t pt-2">
                       <span>Total:</span>
-                      <span className="text-[#2ECC71]">{formatCurrency(selectedSale.total)}</span>
+                      <span className="text-[#2ECC71]">{formatRoundedCurrency(selectedSale.total)}</span>
                     </div>
                   </div>
                 </div>

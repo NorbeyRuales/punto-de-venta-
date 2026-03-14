@@ -73,7 +73,18 @@ export function POS() {
     setCompletedSale(null);
   }, [activeDraftId]);
 
-  const formatCurrency = (value: number) => `$${Math.round(value).toLocaleString('es-CO')}`;
+  const roundToHundred = (value: number) => {
+    if (!Number.isFinite(value)) return 0;
+    return Math.round(value / 100) * 100;
+  };
+  const formatSalePrice = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
+  const formatRoundedCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
+  const formatInputCurrency = (value: string) => {
+    if (!value) return '';
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '';
+    return `$${numeric.toLocaleString('es-CO')}`;
+  };
 
   const normalizeText = (value: string) =>
     value
@@ -95,15 +106,14 @@ export function POS() {
         const subtotalItem = unitPrice * item.quantity;
         const totalItem = subtotalItem - ((subtotalItem * item.discount) / 100);
         const discountLabel = item.discount > 0 ? ` (-${item.discount}%)` : '';
-        return `• ${item.product.name} x${item.quantity} = ${formatCurrency(totalItem)}${discountLabel}`;
+        return `• ${item.product.name} x${item.quantity} = ${formatRoundedCurrency(totalItem)}${discountLabel}`;
       }),
-      `Subtotal: ${formatCurrency(sale.subtotal)}`,
-      sale.discount > 0 ? `Descuento: -${formatCurrency(sale.discount)}` : null,
-      `IVA: ${formatCurrency(sale.iva)}`,
-      `Total: ${formatCurrency(sale.total)}`,
+      `Subtotal: ${formatRoundedCurrency(sale.subtotal)}`,
+      sale.discount > 0 ? `Descuento: -${formatRoundedCurrency(sale.discount)}` : null,
+      `Total: ${formatRoundedCurrency(sale.total)}`,
       `Pago: ${sale.paymentMethod}`,
       sale.paymentMethod === 'efectivo'
-        ? `Efectivo: ${formatCurrency(sale.cashReceived)} | Cambio: ${formatCurrency(sale.change)}`
+        ? `Efectivo: ${formatRoundedCurrency(sale.cashReceived)} | Cambio: ${formatRoundedCurrency(sale.change)}`
         : null,
       '',
       '¡Gracias por tu compra!',
@@ -225,7 +235,7 @@ export function POS() {
     const itemPrice = item.product.salePrice * item.quantity;
     return sum + ((itemPrice * item.discount) / 100);
   }, 0);
-  const cashValue = parseFloat(cashReceived) || 0;
+  const cashValue = Number(cashReceived) || 0;
   const isCashInsufficient = paymentMethod === 'efectivo' && cashReceived !== '' && cashValue < cartTotal;
   const change = paymentMethod === 'efectivo' 
     ? Math.max(0, cashValue - cartTotal)
@@ -364,7 +374,7 @@ export function POS() {
                     </div>
                     <div className="text-right">
                       <p className="font-bold text-lg text-[#2ECC71]">
-                        ${product.salePrice.toLocaleString('es-CO')}
+                        {formatSalePrice(product.salePrice)}
                       </p>
                     </div>
                   </button>
@@ -431,7 +441,7 @@ export function POS() {
                     <div className="flex-1">
                       <p className="font-semibold text-sm">{item.product.name}</p>
                       <p className="text-sm text-gray-600">
-                        ${item.product.salePrice.toLocaleString('es-CO')} c/u
+                        {formatSalePrice(item.product.salePrice)} c/u
                       </p>
                     </div>
                     <button
@@ -474,7 +484,7 @@ export function POS() {
                         <p className="text-xs text-red-600">-{item.discount}%</p>
                       )}
                       <p className="font-bold">
-                        ${((item.product.salePrice * item.quantity) * (1 - item.discount / 100)).toLocaleString('es-CO')}
+                        {formatRoundedCurrency((item.product.salePrice * item.quantity) * (1 - item.discount / 100))}
                       </p>
                     </div>
                   </div>
@@ -498,7 +508,7 @@ export function POS() {
             <div className="p-4 border-t border-border space-y-2">
               <div className="flex justify-between text-sm">
                 <span>Subtotal:</span>
-                <span>${subtotal.toLocaleString('es-CO')}</span>
+                <span>{formatRoundedCurrency(subtotal)}</span>
               </div>
               {totalDiscount > 0 && (
                 <div className="flex justify-between text-sm text-red-600">
@@ -508,7 +518,7 @@ export function POS() {
               )}
               <div className="flex justify-between text-xl font-bold pt-2 border-t">
                 <span>Total:</span>
-                <span className="text-[#2ECC71]">${cartTotal.toLocaleString('es-CO')}</span>
+                <span className="text-[#2ECC71]">{formatRoundedCurrency(cartTotal)}</span>
               </div>
             </div>
           )}
@@ -582,7 +592,7 @@ export function POS() {
             <div className="bg-secondary p-4 rounded-lg">
               <p className="text-sm text-gray-600 mb-1">{completedSale ? 'Total Pagado' : 'Total a Pagar'}</p>
               <p className="text-3xl font-bold text-[#2ECC71]">
-                ${(completedSale ? completedSale.total : cartTotal).toLocaleString('es-CO')}
+                {formatRoundedCurrency(completedSale ? completedSale.total : cartTotal)}
               </p>
             </div>
 
@@ -623,10 +633,14 @@ export function POS() {
                   <div>
                     <Label>Efectivo Recibido</Label>
                     <Input
-                      type="number"
-                      value={cashReceived}
-                      onChange={(e) => setCashReceived(e.target.value)}
-                      placeholder="0"
+                      type="text"
+                      inputMode="numeric"
+                      value={formatInputCurrency(cashReceived)}
+                      onChange={(e) => {
+                        const digits = e.target.value.replace(/\D/g, '');
+                        setCashReceived(digits);
+                      }}
+                      placeholder="$0"
                       className={`h-12 text-lg ${isCashInsufficient ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
                       autoFocus
                       aria-invalid={isCashInsufficient}
@@ -645,7 +659,7 @@ export function POS() {
                       <div className="mt-2 p-3 bg-blue-50 rounded-lg">
                         <p className="text-sm text-gray-600">Cambio a Devolver</p>
                         <p className="text-xl font-bold text-blue-600">
-                          ${change.toLocaleString('es-CO')}
+                          {formatRoundedCurrency(change)}
                         </p>
                       </div>
                     )}
