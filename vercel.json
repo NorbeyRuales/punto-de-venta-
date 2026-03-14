@@ -8,6 +8,13 @@
       "dest": "/assets/$1"
     },
     {
+      "src": "/branding/(.*)",
+      "headers": {
+        "cache-control": "no-store"
+      },
+      "dest": "/branding/$1"
+    },
+    {
       "src": "/(.*)",
       "headers": {
         "cache-control": "no-store"
