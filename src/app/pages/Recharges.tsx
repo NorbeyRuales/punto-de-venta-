@@ -94,10 +94,10 @@ export function Recharges() {
       {/* Formulario de recarga */}
       <Card className="p-6">
         <Tabs value={rechargeType} onValueChange={setRechargeType}>
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="mobile">Recargas Móviles</TabsTrigger>
-            <TabsTrigger value="service">Servicios Públicos</TabsTrigger>
-            <TabsTrigger value="pin">Pines</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3 h-auto gap-2">
+            <TabsTrigger value="mobile" className="text-xs sm:text-sm py-2">Recargas Móviles</TabsTrigger>
+            <TabsTrigger value="service" className="text-xs sm:text-sm py-2">Servicios Públicos</TabsTrigger>
+            <TabsTrigger value="pin" className="text-xs sm:text-sm py-2">Pines</TabsTrigger>
           </TabsList>
 
           <TabsContent value="mobile" className="space-y-4 mt-6">
@@ -238,27 +238,55 @@ export function Recharges() {
       {/* Historial */}
       <Card className="p-6">
         <h3 className="text-lg font-bold mb-4">Historial de Recargas</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full">
+        <div className="md:hidden space-y-3">
+          {recharges.slice(-20).reverse().map(recharge => (
+            <div key={recharge.id} className="rounded-lg border border-border bg-white p-3 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="font-semibold capitalize">{recharge.type}</p>
+                  <p className="text-xs text-gray-600">{recharge.provider}</p>
+                  <p className="text-xs text-gray-500">{recharge.phoneNumber || '-'}</p>
+                </div>
+                <span className="font-bold">${recharge.total.toLocaleString('es-CO')}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+                <div>
+                  <p>Monto</p>
+                  <p className="font-semibold text-gray-900">${recharge.amount.toLocaleString('es-CO')}</p>
+                </div>
+                <div>
+                  <p>Comisión</p>
+                  <p className="font-semibold text-[var(--primary)]">${recharge.commission.toLocaleString('es-CO')}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+          {recharges.length === 0 && (
+            <div className="text-center py-8 text-gray-500">No hay recargas registradas</div>
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full min-w-[760px]">
             <thead className="bg-secondary border-b">
               <tr>
-                <th className="text-left p-3">Tipo</th>
-                <th className="text-left p-3">Proveedor</th>
-                <th className="text-left p-3">Teléfono</th>
-                <th className="text-right p-3">Monto</th>
-                <th className="text-right p-3">Comisión</th>
-                <th className="text-right p-3">Total</th>
+                <th className="text-left p-2 sm:p-3">Tipo</th>
+                <th className="text-left p-2 sm:p-3">Proveedor</th>
+                <th className="text-left p-2 sm:p-3">Teléfono</th>
+                <th className="text-right p-2 sm:p-3">Monto</th>
+                <th className="text-right p-2 sm:p-3">Comisión</th>
+                <th className="text-right p-2 sm:p-3">Total</th>
               </tr>
             </thead>
             <tbody>
               {recharges.slice(-20).reverse().map(recharge => (
                 <tr key={recharge.id} className="border-b">
-                  <td className="p-3 capitalize">{recharge.type}</td>
-                  <td className="p-3">{recharge.provider}</td>
-                  <td className="p-3">{recharge.phoneNumber || '-'}</td>
-                  <td className="p-3 text-right">${recharge.amount.toLocaleString('es-CO')}</td>
-                  <td className="p-3 text-right text-[var(--primary)]">${recharge.commission.toLocaleString('es-CO')}</td>
-                  <td className="p-3 text-right font-bold">${recharge.total.toLocaleString('es-CO')}</td>
+                  <td className="p-2 sm:p-3 capitalize">{recharge.type}</td>
+                  <td className="p-2 sm:p-3">{recharge.provider}</td>
+                  <td className="p-2 sm:p-3">{recharge.phoneNumber || '-'}</td>
+                  <td className="p-2 sm:p-3 text-right">${recharge.amount.toLocaleString('es-CO')}</td>
+                  <td className="p-2 sm:p-3 text-right text-[var(--primary)]">${recharge.commission.toLocaleString('es-CO')}</td>
+                  <td className="p-2 sm:p-3 text-right font-bold">${recharge.total.toLocaleString('es-CO')}</td>
                 </tr>
               ))}
             </tbody>

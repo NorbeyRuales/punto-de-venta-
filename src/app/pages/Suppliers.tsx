@@ -162,9 +162,9 @@ export function Suppliers() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-3xl font-bold">Proveedores</h1>
-        <Button onClick={() => setShowAddDialog(true)} className="bg-[var(--primary)] hover:bg-[var(--primary-hover)]">
+        <Button onClick={() => setShowAddDialog(true)} className="w-full sm:w-auto bg-[var(--primary)] hover:bg-[var(--primary-hover)]">
           <Plus className="w-5 h-5 mr-2" />
           Agregar Proveedor
         </Button>

@@ -325,12 +325,12 @@ export function Configuration() {
       <h1 className="text-3xl font-bold">Configuración</h1>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-5 rounded-2xl shadow-[0_10px_30px_rgba(67,91,154,0.12)]">
-          <TabsTrigger value="store">Tienda</TabsTrigger>
-          <TabsTrigger value="categories">Categorías</TabsTrigger>
-          <TabsTrigger value="printer">Impresora</TabsTrigger>
-          <TabsTrigger value="roles">Roles</TabsTrigger>
-          <TabsTrigger value="backup">Backup</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 h-auto rounded-2xl shadow-[0_10px_30px_rgba(67,91,154,0.12)]">
+          <TabsTrigger value="store" className="text-xs sm:text-sm py-2">Tienda</TabsTrigger>
+          <TabsTrigger value="categories" className="text-xs sm:text-sm py-2">Categorías</TabsTrigger>
+          <TabsTrigger value="printer" className="text-xs sm:text-sm py-2">Impresora</TabsTrigger>
+          <TabsTrigger value="roles" className="text-xs sm:text-sm py-2">Roles</TabsTrigger>
+          <TabsTrigger value="backup" className="text-xs sm:text-sm py-2">Backup</TabsTrigger>
         </TabsList>
 
         <TabsContent value="categories">

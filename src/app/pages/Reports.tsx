@@ -75,6 +75,7 @@ export function Reports() {
       .map(movement => movement.reference)
       .filter(Boolean)
   );
+  const latestSales = periodSales.slice(-20).reverse();
 
   const formatCurrency = (value: number) => `$${Math.round(value).toLocaleString('es-CO')}`;
   const roundToHundred = (value: number) => {
@@ -145,11 +146,11 @@ export function Reports() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-3xl font-bold">Reportes</h1>
-        <div className="flex gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
           <Select value={period} onValueChange={setPeriod}>
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-full sm:w-40">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -158,7 +159,7 @@ export function Reports() {
               <SelectItem value="month">Último Mes</SelectItem>
             </SelectContent>
           </Select>
-          <Button variant="outline" onClick={exportToExcel}>
+          <Button variant="outline" onClick={exportToExcel} className="w-full sm:w-auto">
             <Download className="w-5 h-5 mr-2" />
             Exportar Excel
           </Button>
@@ -212,7 +213,7 @@ export function Reports() {
         {/* Productos más vendidos */}
         <Card className="p-6">
           <h3 className="text-lg font-bold mb-4">Top 10 Productos</h3>
-          <div className="h-80">
+          <div className="h-64 sm:h-80">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={topProducts} layout="vertical">
                 <CartesianGrid strokeDasharray="3 3" />
@@ -228,7 +229,7 @@ export function Reports() {
         {/* Ventas por categoría */}
         <Card className="p-6">
           <h3 className="text-lg font-bold mb-4">Ventas por Categoría</h3>
-          <div className="h-80">
+          <div className="h-64 sm:h-80">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie data={categoryData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} label>
@@ -246,7 +247,58 @@ export function Reports() {
       {/* Listado de ventas */}
       <Card className="p-6">
         <h3 className="text-lg font-bold mb-4">Últimas Transacciones</h3>
-        <div className="overflow-x-auto">
+        <div className="md:hidden space-y-3">
+          {latestSales.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No hay transacciones</div>
+          ) : (
+            latestSales.map(sale => {
+              const returnRef = `DEV-${sale.id}`;
+              const isReturned = returnedReferences.has(returnRef);
+              return (
+                <div key={sale.id} className="rounded-lg border border-border bg-white p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm text-gray-600">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</p>
+                      <p className="font-semibold">{sale.invoiceNumber || sale.id}</p>
+                      <p className="text-xs text-gray-500 capitalize">{sale.paymentMethod}</p>
+                    </div>
+                    <span className="font-bold text-[#2ECC71]">{formatRoundedCurrency(sale.total)}</span>
+                  </div>
+
+                  <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => openSaleDetail(sale)}
+                    >
+                      <Eye className="w-4 h-4 mr-1" />
+                      Detalle
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
+                      onClick={() => handleShareWhatsapp(sale)}
+                    >
+                      <Share2 className="w-4 h-4 mr-1" />
+                      WhatsApp
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={isReturned}
+                      onClick={() => handleReturnSale(sale.id, sale.invoiceNumber)}
+                    >
+                      {isReturned ? 'Devuelto' : 'Devolver'}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full">
             <thead className="bg-secondary border-b">
               <tr>
@@ -258,7 +310,7 @@ export function Reports() {
               </tr>
             </thead>
             <tbody>
-              {periodSales.slice(-20).reverse().map(sale => {
+              {latestSales.map(sale => {
                 const returnRef = `DEV-${sale.id}`;
                 const isReturned = returnedReferences.has(returnRef);
                 return (

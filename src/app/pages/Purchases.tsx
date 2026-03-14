@@ -149,7 +149,7 @@ export function Purchases() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Compras</h1>
           <p className="text-gray-600">Registro de entradas a inventario con política automática de precio</p>
@@ -233,8 +233,8 @@ export function Purchases() {
           </div>
         </div>
 
-        <div className="flex justify-end">
-          <Button onClick={addItemToPurchase} variant="outline">
+        <div className="flex flex-col sm:flex-row sm:justify-end">
+          <Button onClick={addItemToPurchase} variant="outline" className="w-full sm:w-auto">
             <Plus className="w-4 h-4 mr-2" />
             Agregar a compra
           </Button>
@@ -242,17 +242,110 @@ export function Purchases() {
       </Card>
 
       <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
+        <div className="md:hidden p-4 space-y-3">
+          {items.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No hay productos en la compra</div>
+          ) : (
+            items.map(item => {
+              const product = productById.get(item.productId);
+              const unitsPerPurchase = Number(product?.unitsPerPurchase ?? 1) || 1;
+              const isEditing = editingProductId === item.productId;
+              const quantityForCalc = isEditing ? (parseFloat(editDraft.quantityPackages) || 0) : item.quantity;
+              const costForCalc = isEditing ? (parseFloat(editDraft.packageCost) || 0) : item.cost;
+              const enteredUnits = quantityForCalc * unitsPerPurchase;
+              const subtotal = quantityForCalc * costForCalc;
+
+              return (
+                <div key={item.productId} className="rounded-lg border border-border bg-white p-3 space-y-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-semibold">{product?.name || 'Producto'}</p>
+                      <p className="text-xs text-gray-600">Unid/paq: {unitsPerPurchase}</p>
+                    </div>
+                    <span className="text-sm font-semibold text-[#2ECC71]">+{enteredUnits} unid</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <p className="text-xs text-gray-500">Paquetes</p>
+                      {isEditing ? (
+                        <Input
+                          type="number"
+                          min="1"
+                          value={editDraft.quantityPackages}
+                          onChange={(e) => setEditDraft(prev => ({ ...prev, quantityPackages: e.target.value }))}
+                          className="h-9 text-right"
+                        />
+                      ) : (
+                        <p className="font-semibold">{item.quantity}</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500">Costo paquete</p>
+                      {isEditing ? (
+                        <Input
+                          type="number"
+                          min="0"
+                          value={editDraft.packageCost}
+                          onChange={(e) => setEditDraft(prev => ({ ...prev, packageCost: e.target.value }))}
+                          className="h-9 text-right"
+                        />
+                      ) : (
+                        <p className="font-semibold">${item.cost.toLocaleString('es-CO')}</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500">Subtotal</p>
+                      <p className="font-semibold">${subtotal.toLocaleString('es-CO')}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-500">Unidades entrada</p>
+                      <p className="font-semibold text-[#2ECC71]">+{enteredUnits}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {isEditing ? (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-[#2ECC71] hover:text-[#27AE60]"
+                          onClick={() => saveEditItem(item.productId)}
+                        >
+                          <Check className="w-4 h-4" />
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={cancelEditItem}>
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => startEditItem(item.productId)}>
+                        <Pencil className="w-4 h-4" />
+                      </Button>
+                    )}
+
+                    <Button size="sm" variant="outline" className="text-red-600 hover:text-red-700" onClick={() => removeItem(item.productId)}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full min-w-[900px]">
             <thead className="bg-secondary border-b">
               <tr>
-                <th className="text-left p-4 font-semibold">Producto</th>
-                <th className="text-right p-4 font-semibold">Unid por paquete</th>
-                <th className="text-right p-4 font-semibold">Paquetes</th>
-                <th className="text-right p-4 font-semibold">Unidades entrada</th>
-                <th className="text-right p-4 font-semibold">Costo paquete</th>
-                <th className="text-right p-4 font-semibold">Subtotal</th>
-                <th className="text-center p-4 font-semibold">Acciones</th>
+                <th className="text-left p-3 sm:p-4 font-semibold">Producto</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Unid por paquete</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Paquetes</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Unidades entrada</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Costo paquete</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Subtotal</th>
+                <th className="text-center p-3 sm:p-4 font-semibold">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -272,9 +365,9 @@ export function Purchases() {
 
                   return (
                     <tr key={item.productId} className="border-b">
-                      <td className="p-4">{product?.name || 'Producto'}</td>
-                      <td className="p-4 text-right">{unitsPerPurchase}</td>
-                      <td className="p-4 text-right">
+                      <td className="p-3 sm:p-4">{product?.name || 'Producto'}</td>
+                      <td className="p-3 sm:p-4 text-right">{unitsPerPurchase}</td>
+                      <td className="p-3 sm:p-4 text-right">
                         {isEditing ? (
                           <Input
                             type="number"
@@ -285,8 +378,8 @@ export function Purchases() {
                           />
                         ) : item.quantity}
                       </td>
-                      <td className="p-4 text-right font-semibold text-[#2ECC71]">+{enteredUnits}</td>
-                      <td className="p-4 text-right">
+                      <td className="p-3 sm:p-4 text-right font-semibold text-[#2ECC71]">+{enteredUnits}</td>
+                      <td className="p-3 sm:p-4 text-right">
                         {isEditing ? (
                           <Input
                             type="number"
@@ -297,9 +390,9 @@ export function Purchases() {
                           />
                         ) : `$${item.cost.toLocaleString('es-CO')}`}
                       </td>
-                      <td className="p-4 text-right font-semibold">${subtotal.toLocaleString('es-CO')}</td>
-                      <td className="p-4 text-center">
-                        <div className="flex items-center justify-center gap-2">
+                      <td className="p-3 sm:p-4 text-right font-semibold">${subtotal.toLocaleString('es-CO')}</td>
+                      <td className="p-3 sm:p-4 text-center">
+                        <div className="flex items-center justify-center gap-1 sm:gap-2">
                           {isEditing ? (
                             <>
                               <Button
@@ -346,7 +439,7 @@ export function Purchases() {
             </p>
           </div>
           <Button
-            className="h-12 px-6 bg-[#2ECC71] hover:bg-[#27AE60]"
+            className="w-full md:w-auto h-12 px-6 bg-[#2ECC71] hover:bg-[#27AE60]"
             onClick={handleRegisterPurchase}
             disabled={!supplierId || items.length === 0}
           >
@@ -364,7 +457,7 @@ export function Purchases() {
           ) : (
             <div className="space-y-2">
               {selectedSupplier.purchases.slice(-8).reverse().map(purchase => (
-                <div key={purchase.id} className="flex items-center justify-between text-sm border-b pb-2">
+                <div key={purchase.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-sm border-b pb-2">
                   <span>{new Date(purchase.date).toLocaleString('es-CO')}</span>
                   <span>{purchase.items.length} ítems</span>
                   <span className="font-semibold">${purchase.total.toLocaleString('es-CO')}</span>

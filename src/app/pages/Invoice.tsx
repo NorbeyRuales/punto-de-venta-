@@ -28,8 +28,8 @@ export function Invoice() {
 
       <Card className="p-8">
         <div className="border-b pb-6 mb-6">
-          <div className="flex items-start justify-between">
-            <div className="flex gap-4 items-start">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div className="flex flex-col sm:flex-row gap-4 items-start">
               <div className="w-16 h-16 rounded-lg border border-border bg-white overflow-hidden flex items-center justify-center">
                 <img
                   src={logoSrc}
@@ -50,7 +50,7 @@ export function Invoice() {
                 <p className="text-sm">{storeConfig.email}</p>
               </div>
             </div>
-            <div className="text-right">
+            <div className="text-left md:text-right">
               <h3 className="text-2xl font-bold">FACTURA</h3>
               <p className="text-sm mt-2">No. {invoice.number}</p>
               <p className="text-sm">{format(invoice.date, "d 'de' MMMM 'de' yyyy", { locale: es })}</p>
@@ -64,29 +64,31 @@ export function Invoice() {
           <p className="text-sm">NIT: {invoice.customer.nit}</p>
         </div>
 
-        <table className="w-full mb-6">
-          <thead className="bg-secondary border-b-2">
-            <tr>
-              <th className="text-left p-3">Producto</th>
-              <th className="text-center p-3">Cantidad</th>
-              <th className="text-right p-3">Precio</th>
-              <th className="text-right p-3">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {invoice.items.map((item, index) => (
-              <tr key={index} className="border-b">
-                <td className="p-3">{item.name}</td>
-                <td className="text-center p-3">{item.quantity}</td>
-                <td className="text-right p-3">${item.price.toLocaleString('es-CO')}</td>
-                <td className="text-right p-3">${(item.price * item.quantity).toLocaleString('es-CO')}</td>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[520px] mb-6">
+            <thead className="bg-secondary border-b-2">
+              <tr>
+                <th className="text-left p-3">Producto</th>
+                <th className="text-center p-3">Cantidad</th>
+                <th className="text-right p-3">Precio</th>
+                <th className="text-right p-3">Total</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {invoice.items.map((item, index) => (
+                <tr key={index} className="border-b">
+                  <td className="p-3">{item.name}</td>
+                  <td className="text-center p-3">{item.quantity}</td>
+                  <td className="text-right p-3">${item.price.toLocaleString('es-CO')}</td>
+                  <td className="text-right p-3">${(item.price * item.quantity).toLocaleString('es-CO')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
         <div className="flex justify-end">
-          <div className="w-64">
+          <div className="w-full sm:w-64">
             <div className="flex justify-between py-2">
               <span>Subtotal:</span>
               <span>${invoice.subtotal.toLocaleString('es-CO')}</span>

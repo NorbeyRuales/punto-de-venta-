@@ -543,21 +543,22 @@ export function Inventory() {
   }, [formData.barcode, showAddDialog]);
 return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Inventario</h1>
           <p className="text-gray-600">{products.length} productos registrados</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
           <Button
             variant="outline"
             onClick={() => navigate('/configuration?tab=categories')}
+            className="w-full sm:w-auto"
           >
             Gestionar Categorías
           </Button>
           <Button
             onClick={() => handleAddDialogChange(true)}
-            className="bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
+            className="w-full sm:w-auto bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
           >
             <Plus className="w-5 h-5 mr-2" />
             Agregar Producto
@@ -620,7 +621,7 @@ return (
           <Button
             variant="outline"
             onClick={exportToCSV}
-            className="h-12"
+            className="h-12 w-full md:w-auto"
             disabled={isExporting}
           >
             <Download className="w-5 h-5 mr-2" />
@@ -635,18 +636,104 @@ return (
 
       {/* Tabla de productos */}
       <Card className="overflow-hidden rounded-2xl bg-[var(--card)] border-[var(--border)] shadow-[0_14px_34px_rgba(67,91,154,0.16)]">
-        <div className="overflow-x-auto">
-          <table className="w-full">
+        <div className="md:hidden p-4 space-y-3">
+          {filteredProducts.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <Package className="w-10 h-10 mx-auto mb-3 opacity-50" />
+              <p>No se encontraron productos</p>
+            </div>
+          ) : (
+            filteredProducts.map(product => (
+              <div key={product.id} className="rounded-lg border border-border bg-white p-3 space-y-2">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold">{product.name}</p>
+                    <p className="text-xs text-gray-600">
+                      {product.category}
+                      {product.supplierName ? ` · ${product.supplierName}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-sm font-semibold text-[#2ECC71]">
+                    ${getRoundedSalePrice(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+                  <div>
+                    <p>Stock</p>
+                    <p className={`font-semibold ${
+                      product.stock <= product.minStock ? 'text-red-600' : 'text-gray-900'
+                    }`}>
+                      {product.stock} {product.unit}
+                    </p>
+                  </div>
+                  <div>
+                    <p>Utilidad</p>
+                    <p className="font-semibold text-[#8E44AD]">
+                      {calculateProfitMargin(getUnitCost(product), getUnitSalePrice(product)).toFixed(2)}%
+                    </p>
+                  </div>
+                  <div>
+                    <p>Precio c/IVA</p>
+                    <p className="font-semibold text-gray-900">
+                      ${getCostWithIva(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                    </p>
+                  </div>
+                  <div>
+                    <p>Costo uni</p>
+                    <p className="font-semibold text-gray-900">
+                      ${getUnitCost(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => openKardexDialog(product)}
+                    aria-label="Ver kardex"
+                    title="Ver kardex"
+                  >
+                    <History className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => openEditDialog(product)}
+                    aria-label="Editar producto"
+                    title="Editar producto"
+                  >
+                    <Edit className="w-4 h-4" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-red-600 hover:text-red-700"
+                    onClick={() => handleDeleteProduct(product)}
+                    aria-label="Eliminar producto"
+                    title="Eliminar producto"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full min-w-[980px]">
             <thead className="bg-[var(--secondary-soft)] border-b border-[var(--border)]">
               <tr>
-                <th className="text-left p-4 font-semibold">Detalle</th>
-                <th className="text-center p-4 font-semibold">Unid</th>
-                <th className="text-right p-4 font-semibold">Precio con IVA</th>
-                <th className="text-right p-4 font-semibold">Precio costo uni</th>
-                <th className="text-right p-4 font-semibold">Precio venta</th>
-                <th className="text-right p-4 font-semibold">Utilidad (%)</th>
-                <th className="text-center p-4 font-semibold">Stock</th>
-                <th className="text-center p-4 font-semibold">Acciones</th>
+                <th className="text-left p-3 sm:p-4 font-semibold">Detalle</th>
+                <th className="text-center p-3 sm:p-4 font-semibold">Unid</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Precio con IVA</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Precio costo uni</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Precio venta</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Utilidad (%)</th>
+                <th className="text-center p-3 sm:p-4 font-semibold">Stock</th>
+                <th className="text-center p-3 sm:p-4 font-semibold">Acciones</th>
                 </tr>
                 </thead>
             <tbody>
@@ -659,30 +746,30 @@ return (
                 </tr>
               ) : (
                 filteredProducts.map(product => (
-                  <tr key={product.id} className="border-b border-[var(--border)] even:bg-[rgba(206,181,255,0.12)] hover:bg-[rgba(206,181,255,0.22)] transition-colors">
-                    <td className="p-4">
+                    <tr key={product.id} className="border-b border-[var(--border)] even:bg-[rgba(206,181,255,0.12)] hover:bg-[rgba(206,181,255,0.22)] transition-colors">
+                    <td className="p-3 sm:p-4">
                       <p className="font-semibold">{product.name}</p>
                       <p className="text-sm text-gray-600">
                         {product.category}
                         {product.supplierName ? ` · ${product.supplierName}` : ''}
                       </p>
                     </td>
-                    <td className="p-4 text-center font-medium">{getUnitsPerPurchase(product)}</td>
-                    <td className="p-4 text-right">
+                    <td className="p-3 sm:p-4 text-center font-medium">{getUnitsPerPurchase(product)}</td>
+                    <td className="p-3 sm:p-4 text-right">
                       ${getCostWithIva(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                     </td>
-                    <td className="p-4 text-right">
+                    <td className="p-3 sm:p-4 text-right">
                       ${getUnitCost(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                     </td>
-                    <td className="p-4 text-right font-semibold text-[#2ECC71]">
+                    <td className="p-3 sm:p-4 text-right font-semibold text-[#2ECC71]">
                       ${getRoundedSalePrice(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                     </td>
-                    <td className="p-4 text-right">
+                    <td className="p-3 sm:p-4 text-right">
                       <span className="font-semibold text-[#8E44AD]">
                         {calculateProfitMargin(getUnitCost(product), getUnitSalePrice(product)).toFixed(2)}%
                       </span>
                     </td>
-                    <td className="p-4 text-center">
+                    <td className="p-3 sm:p-4 text-center">
                       <span className={`font-semibold ${
                         product.stock <= product.minStock
                           ? 'text-red-600'
@@ -694,8 +781,8 @@ return (
                         <p className="text-xs text-red-600">¡Stock bajo!</p>
                       )}
                     </td>
-                    <td className="p-4"> {/* Acciones */}
-                      <div className="flex items-center justify-center gap-2">
+                    <td className="p-3 sm:p-4"> {/* Acciones */}
+                      <div className="flex items-center justify-center gap-1 sm:gap-2">
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button

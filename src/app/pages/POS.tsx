@@ -263,7 +263,7 @@ export function POS() {
       )}
 
       <Card className="p-3 border border-violet-200 bg-gradient-to-r from-violet-50 via-indigo-50 to-fuchsia-50">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex-1 overflow-x-auto">
             <div className="flex items-center gap-2 min-w-max pr-2 py-1">
               {saleDrafts.map((draft, index) => {
@@ -330,7 +330,7 @@ export function POS() {
             type="button"
             size="sm"
             onClick={() => void createSaleDraft()}
-            className="h-10 rounded-xl bg-gradient-to-r from-violet-600 via-violet-600 to-fuchsia-600 text-white hover:from-violet-700 hover:via-violet-700 hover:to-fuchsia-700 shadow-md"
+            className="h-10 w-full sm:w-auto sm:shrink-0 rounded-xl bg-gradient-to-r from-violet-600 via-violet-600 to-fuchsia-600 text-white hover:from-violet-700 hover:via-violet-700 hover:to-fuchsia-700 shadow-md"
           >
             <Plus className="w-4 h-4 mr-2" />
             Nueva venta
@@ -338,7 +338,7 @@ export function POS() {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)]">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:h-[calc(100vh-8rem)]">
       {/* Panel de productos */}
       <div className="lg:col-span-2 flex flex-col gap-4">
         <Card className="p-4">
@@ -364,7 +364,7 @@ export function POS() {
                   <button
                     key={product.id}
                     onClick={() => handleAddToCart(product.id)}
-                    className="w-full flex items-center justify-between p-4 bg-secondary hover:bg-gray-200 rounded-lg transition-colors text-left"
+                    className="w-full flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 bg-secondary hover:bg-gray-200 rounded-lg transition-colors text-left"
                   >
                     <div className="flex-1">
                       <p className="font-semibold">{product.name}</p>
@@ -372,7 +372,7 @@ export function POS() {
                         {product.category} - Stock: {product.stock} {product.unit}
                       </p>
                     </div>
-                    <div className="text-right">
+                    <div className="w-full sm:w-auto text-left sm:text-right">
                       <p className="font-bold text-lg text-[#2ECC71]">
                         {formatSalePrice(product.salePrice)}
                       </p>
@@ -411,7 +411,7 @@ export function POS() {
       <div className="flex flex-col gap-4">
         <Card className="flex-1 flex flex-col">
           <div className="p-4 border-b border-border">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-2">
               <h2 className="text-xl font-bold">Carrito</h2>
               {cart.length > 0 && (
                 <Button
@@ -437,7 +437,7 @@ export function POS() {
             ) : (
               cart.map(item => (
                 <div key={item.product.id} className="bg-secondary p-3 rounded-lg">
-                  <div className="flex items-start justify-between mb-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-2">
                     <div className="flex-1">
                       <p className="font-semibold text-sm">{item.product.name}</p>
                       <p className="text-sm text-gray-600">
@@ -446,7 +446,7 @@ export function POS() {
                     </div>
                     <button
                       onClick={() => removeFromCart(item.product.id)}
-                      className="text-red-600 hover:text-red-700"
+                      className="text-red-600 hover:text-red-700 self-start"
                       aria-label="Eliminar del carrito"
                       title="Eliminar del carrito"
                     >
@@ -454,7 +454,7 @@ export function POS() {
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center gap-2">
                       <Button
                         size="sm"
@@ -479,7 +479,7 @@ export function POS() {
                       </Button>
                     </div>
 
-                    <div className="text-right">
+                    <div className="text-left sm:text-right">
                       {item.discount > 0 && (
                         <p className="text-xs text-red-600">-{item.discount}%</p>
                       )}
