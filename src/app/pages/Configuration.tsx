@@ -760,7 +760,7 @@ export function Configuration() {
             <div className="p-4 bg-secondary rounded-lg">
               <p className="font-semibold mb-2">Almacenamiento Local</p>
               <p className="text-sm text-gray-600">
-                Los datos se guardan automáticamente en el navegador. Se recomienda hacer backups periódicos.
+                Los datos se guardan automáticamente en el navegador y se sincronizan con Supabase cuando hay conexión.
               </p>
             </div>
 
@@ -768,7 +768,7 @@ export function Configuration() {
               <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
                 <p className="font-semibold mb-2 text-yellow-800">Cambios offline pendientes</p>
                 <p className="text-sm text-yellow-700">
-                  Sube los datos locales cuando haya conexión para sincronizar con Supabase.
+                  El sistema intentará sincronizar automáticamente al recuperar conexión. También puedes forzar la sincronización manualmente.
                 </p>
               </div>
             )}
@@ -827,7 +827,7 @@ export function Configuration() {
             <div className="p-4 bg-blue-50 rounded-lg">
               <p className="font-semibold mb-2">Modo Offline</p>
               <p className="text-sm text-gray-600">
-                El sistema funciona sin conexión a internet. Cuando vuelva la conexión, usa esta sección para sincronizar manualmente.
+                El sistema funciona sin conexión a internet y sincroniza automáticamente al volver la conexión.
               </p>
             </div>
 

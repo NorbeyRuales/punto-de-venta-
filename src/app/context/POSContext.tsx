@@ -554,6 +554,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const draftSyncTimers = useRef<Record<string, number>>({});
   const isHydratingRef = useRef(true);
   const offlineSnapshotRef = useRef<string | null>(null);
+  const isAutoSyncingRef = useRef(false);
+  const autoSyncTimerRef = useRef<number | null>(null);
   const offlinePinConfigured = Boolean(offlinePinHash);
   const canReachSupabase = Boolean(session?.access_token && isBrowserOnline && !isOfflineMode);
   const isConnectedToSupabase = Boolean(canReachSupabase && currentStoreId);
@@ -623,6 +625,18 @@ export function POSProvider({ children }: { children: ReactNode }) {
     cash_movements: JSON.stringify(cashMovements),
     config: JSON.stringify(storeConfig),
   });
+
+  const markPendingSync = () => {
+    setHasPendingSync(true);
+    localStorage.setItem(OFFLINE_DIRTY_KEY, 'true');
+    localStorage.setItem(OFFLINE_BACKUP_KEY, JSON.stringify(buildStateBackupPayload()));
+  };
+
+  const clearPendingSync = () => {
+    setHasPendingSync(false);
+    localStorage.removeItem(OFFLINE_DIRTY_KEY);
+    localStorage.removeItem(OFFLINE_BACKUP_KEY);
+  };
 
   // Sincroniza datos remotos (catálogo + operaciones) desde Supabase.
   const syncFromSupabase = async (nextSession: SupabaseSession, storeId: string): Promise<boolean> => {
@@ -892,11 +906,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
       setIsOfflineMode(false);
       const hasOfflineBackup = Boolean(localStorage.getItem(OFFLINE_BACKUP_KEY));
       if (hasOfflineBackup) {
-        setHasPendingSync(true);
-        localStorage.setItem(OFFLINE_DIRTY_KEY, 'true');
+        markPendingSync();
       } else {
-        setHasPendingSync(false);
-        localStorage.removeItem(OFFLINE_DIRTY_KEY);
+        clearPendingSync();
       }
 
       return true;
@@ -1185,9 +1197,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     if (isConnectedToSupabase) return;
 
-    setHasPendingSync(true);
-    localStorage.setItem(OFFLINE_DIRTY_KEY, 'true');
-    localStorage.setItem(OFFLINE_BACKUP_KEY, JSON.stringify(buildStateBackupPayload()));
+    markPendingSync();
   }, [
     products,
     categories,
@@ -1377,20 +1387,58 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
       const synced = await syncFromSupabase(session, currentStoreId);
       if (!synced) {
-        toast.error('Importación finalizada, pero falló la actualización de datos en pantalla.');
+        if (!isAutoSyncingRef.current) {
+          toast.error('Importación finalizada, pero falló la actualización de datos en pantalla.');
+        }
       } else {
-        setHasPendingSync(false);
-        localStorage.removeItem(OFFLINE_DIRTY_KEY);
-        localStorage.removeItem(OFFLINE_BACKUP_KEY);
-        toast.success('Datos locales importados a Supabase correctamente.');
+        clearPendingSync();
+        if (!isAutoSyncingRef.current) {
+          toast.success('Datos locales importados a Supabase correctamente.');
+        }
       }
       return true;
     } catch (error) {
       console.error('No se pudo importar el backup local en Supabase', error);
-      toast.error('Falló la importación a Supabase. Verifica permisos/RLS y sesión.');
+      markPendingSync();
+      if (!isAutoSyncingRef.current) {
+        toast.error('Falló la importación a Supabase. Verifica permisos/RLS y sesión.');
+      }
       return false;
     }
   };
+
+  // Auto-sync: cuando vuelve conexión/sesión, subir cambios locales pendientes sin intervención manual.
+  useEffect(() => {
+    if (!hasPendingSync || !canReachSupabase || !session || !currentStoreId) {
+      if (autoSyncTimerRef.current) {
+        window.clearTimeout(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (isAutoSyncingRef.current || autoSyncTimerRef.current) {
+      return;
+    }
+
+    autoSyncTimerRef.current = window.setTimeout(() => {
+      autoSyncTimerRef.current = null;
+      if (isAutoSyncingRef.current) return;
+
+      isAutoSyncingRef.current = true;
+      void uploadLocalBackupToSupabase(false)
+        .finally(() => {
+          isAutoSyncingRef.current = false;
+        });
+    }, 1200);
+
+    return () => {
+      if (autoSyncTimerRef.current) {
+        window.clearTimeout(autoSyncTimerRef.current);
+        autoSyncTimerRef.current = null;
+      }
+    };
+  }, [hasPendingSync, canReachSupabase, session, currentStoreId]);
 
   // Funciones de productos
   const addProduct = (product: Omit<Product, 'id'>) => {
@@ -1405,6 +1453,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         })
         .catch((error) => {
           console.error('No se pudo crear producto en Supabase', error);
+          markPendingSync();
           toast.error('Producto guardado localmente, pero falló el guardado en Supabase.');
         });
     }
@@ -1432,6 +1481,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       void patchProduct(session.access_token, currentStoreId, id, updatedProduct)
         .catch((error) => {
           console.error('No se pudo actualizar producto en Supabase', error);
+          markPendingSync();
           toast.error('Producto actualizado localmente, pero falló la sincronización en Supabase.');
       });
     }
@@ -1498,6 +1548,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       void removeProduct(session.access_token, currentStoreId, id)
         .catch((error) => {
           console.error('No se pudo eliminar producto en Supabase', error);
+          markPendingSync();
           toast.error('Producto eliminado localmente, pero falló en Supabase.');
         });
     }
@@ -1528,6 +1579,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       void createCategory(session.access_token, currentStoreId, normalizedName)
         .catch((error) => {
           console.error('No se pudo crear categoría en Supabase', error);
+          markPendingSync();
           toast.error('Categoría creada localmente, pero falló en Supabase.');
         });
     }
@@ -1567,6 +1619,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         })
         .catch((error) => {
           console.error('No se pudo editar categoría en Supabase', error);
+          markPendingSync();
           toast.error('Categoría actualizada localmente, pero falló en Supabase.');
         });
     }
@@ -1606,6 +1659,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       void removeCategory(session.access_token, currentStoreId, name)
         .catch((error) => {
           console.error('No se pudo eliminar categoría en Supabase', error);
+          markPendingSync();
           toast.error('Categoría eliminada localmente, pero falló en Supabase.');
         });
     }
@@ -1642,6 +1696,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       persistDraftSnapshot(draft)
         .catch((error) => {
           console.error('No se pudo sincronizar borrador en Supabase', error);
+          markPendingSync();
           toast.error('No se pudo sincronizar el borrador con Supabase.');
         })
         .finally(() => {
@@ -1708,6 +1763,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return draft;
     } catch (error) {
       console.error('No se pudo crear borrador en Supabase', error);
+      markPendingSync();
       if (isMissingTableError(error, 'sale_drafts')) {
         toast.error('Faltan tablas de borradores en Supabase. Aplica la migración de ventas múltiples.');
       } else {
@@ -1742,6 +1798,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         await deleteSaleDraftRow(session.access_token, currentStoreId, draftId);
       } catch (error) {
         console.error('No se pudo eliminar borrador en Supabase', error);
+        markPendingSync();
         toast.error('No se pudo eliminar el borrador en Supabase.');
       }
     }
@@ -1859,6 +1916,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         createdAt: nextMovement.date,
       }).catch((error) => {
         console.error('No se pudo guardar movimiento kardex en Supabase', error);
+        markPendingSync();
       });
     }
   };
@@ -1952,6 +2010,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         }
       } catch (error) {
         console.error('No se pudo abrir caja en Supabase', error);
+        markPendingSync();
         toast.error('Caja abierta localmente, pero falló en Supabase.');
       }
     }
@@ -2004,6 +2063,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         }
       } catch (error) {
         console.error('No se pudo guardar movimiento de caja en Supabase', error);
+        markPendingSync();
         toast.error('Movimiento guardado localmente, pero falló en Supabase.');
       }
     }
@@ -2057,6 +2117,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         });
       } catch (error) {
         console.error('No se pudo cerrar caja en Supabase', error);
+        markPendingSync();
         toast.error('Caja cerrada localmente, pero falló en Supabase.');
       }
     }
@@ -2280,6 +2341,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return newSale;
     } catch (error) {
       console.error('No se pudo registrar venta en Supabase', error);
+      markPendingSync();
       toast.error(error instanceof Error ? error.message : 'No se pudo registrar la venta.');
       return null;
     }
@@ -2354,6 +2416,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         returnedAt,
       }).catch((error) => {
         console.error('No se pudo registrar devolución en Supabase', error);
+        markPendingSync();
         toast.error('Devolución registrada localmente, pero falló en Supabase.');
       });
     }
@@ -2406,6 +2469,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         setCustomers(prev => prev.map(c => c.id === newCustomer.id ? { ...c, id: remoteId } : c));
       }).catch((error) => {
         console.error('No se pudo guardar cliente en Supabase', error);
+        markPendingSync();
         toast.error('Cliente guardado localmente, pero falló en Supabase.');
       });
     }
@@ -2425,6 +2489,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         debt: updatedCustomer.debt,
       }).catch((error) => {
         console.error('No se pudo actualizar cliente en Supabase', error);
+        markPendingSync();
         toast.error('Cliente actualizado localmente, pero falló en Supabase.');
       });
     }
@@ -2457,6 +2522,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           createdAt: transaction.date,
         }).catch((error) => {
           console.error('No se pudo guardar movimiento de deuda en Supabase', error);
+          markPendingSync();
           toast.error('Movimiento de deuda guardado localmente, pero falló en Supabase.');
         });
       }
@@ -2490,6 +2556,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           createdAt: transaction.date,
         }).catch((error) => {
           console.error('No se pudo guardar pago de deuda en Supabase', error);
+          markPendingSync();
           toast.error('Pago guardado localmente, pero falló en Supabase.');
         });
       }
@@ -2525,6 +2592,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         setSuppliers(prev => prev.map(s => s.id === newSupplier.id ? { ...s, id: remoteId } : s));
       }).catch((error) => {
         console.error('No se pudo guardar proveedor en Supabase', error);
+        markPendingSync();
         toast.error('Proveedor guardado localmente, pero falló en Supabase.');
       });
     }
@@ -2544,6 +2612,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         debt: updatedSupplier.debt,
       }).catch((error) => {
         console.error('No se pudo actualizar proveedor en Supabase', error);
+        markPendingSync();
         toast.error('Proveedor actualizado localmente, pero falló en Supabase.');
       });
     }
@@ -2556,6 +2625,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       void deleteSupplierRow(session.access_token, currentStoreId, id)
         .catch((error) => {
           console.error('No se pudo eliminar proveedor en Supabase', error);
+          markPendingSync();
           toast.error('Proveedor eliminado localmente, pero falló en Supabase.');
         });
     }
@@ -2669,6 +2739,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         items: purchaseItems,
       }).catch((error) => {
         console.error('No se pudo guardar compra en Supabase', error);
+        markPendingSync();
         toast.error('Compra guardada localmente, pero falló en Supabase.');
       });
     }
@@ -2694,6 +2765,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         createdAt: newRecharge.date,
       }).catch((error) => {
         console.error('No se pudo guardar recarga en Supabase', error);
+        markPendingSync();
         toast.error('Recarga guardada localmente, pero falló en Supabase.');
       });
     }
@@ -2747,6 +2819,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return true;
     } catch (error) {
       console.error('No se pudo guardar configuración de tienda en Supabase', error);
+      markPendingSync();
       toast.error('Guardado local OK, pero falló guardar configuración en Supabase.');
       return false;
     }
