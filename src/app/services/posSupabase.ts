@@ -104,6 +104,7 @@ type SaleItemRow = {
 type SaleRow = {
   id: string;
   created_at: string;
+  returned_at: string | null;
   subtotal: number;
   discount: number;
   iva: number;
@@ -694,6 +695,21 @@ export async function updateSaleDraftRow(
   await updateRows('sale_drafts', `store_id=eq.${storeId}&id=eq.${draftId}`, dbPatch, token);
 }
 
+export async function updateSaleRow(
+  token: string,
+  storeId: string,
+  saleId: string,
+  patch: {
+    returnedAt?: string | null;
+  },
+): Promise<void> {
+  if (!uuidLike(saleId)) return;
+  const dbPatch: Record<string, unknown> = {};
+  if (patch.returnedAt !== undefined) dbPatch.returned_at = patch.returnedAt;
+  if (Object.keys(dbPatch).length === 0) return;
+  await updateRows('sales', `store_id=eq.${storeId}&id=eq.${saleId}`, dbPatch, token);
+}
+
 export async function deleteSaleDraftRow(
   token: string,
   storeId: string,
@@ -982,7 +998,7 @@ export async function loadSuppliersWithPurchases(token: string, storeId: string)
 export async function loadSalesWithItems(token: string, storeId: string): Promise<SaleRow[]> {
   return selectRows<SaleRow>(
     'sales',
-    'select=id,created_at,subtotal,discount,iva,total,payment_method,cash_received,change_value,customer_id,invoice_number,cash_session_id,'
+    'select=id,created_at,returned_at,subtotal,discount,iva,total,payment_method,cash_received,change_value,customer_id,invoice_number,cash_session_id,'
       + 'sale_items(id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at)'
       + `&store_id=eq.${storeId}&order=created_at.asc`,
     token,

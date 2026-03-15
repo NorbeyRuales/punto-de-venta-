@@ -43,6 +43,7 @@ import {
   removeProduct,
   renameCategory,
   updateCashSession,
+  updateSaleRow,
   updateSaleDraftRow,
   updateCustomerRow,
   updateSupplierRow,
@@ -149,6 +150,7 @@ export interface Sale {
   customerId?: string;
   invoiceNumber?: string;
   cashSessionId?: string;
+  returnedAt?: string | null;
 }
 
 export interface Customer {
@@ -248,10 +250,12 @@ export interface CashMovement {
 
 export interface CashSessionReport {
   salesTotal: number;
+  salesReturnedTotal: number;
   salesByMethod: Record<string, number>;
   cashSalesTotal: number;
   cashInTotal: number;
   cashOutTotal: number;
+  cashReturnTotal: number;
   expectedCash: number;
 }
 
@@ -707,6 +711,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           customerId: sale.customer_id ?? undefined,
           invoiceNumber: sale.invoice_number ?? undefined,
           cashSessionId: sale.cash_session_id ?? undefined,
+          returnedAt: sale.returned_at ?? undefined,
         };
       });
 
@@ -764,6 +769,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
       const salesByCustomerId = new Map<string, Sale[]>();
       sales.forEach((sale) => {
+        if (sale.returnedAt) return;
         if (!sale.customerId) return;
         const current = salesByCustomerId.get(sale.customerId) ?? [];
         current.push(sale);
@@ -1872,19 +1878,23 @@ export function POSProvider({ children }: { children: ReactNode }) {
     if (!session) {
       return {
         salesTotal: 0,
+        salesReturnedTotal: 0,
         salesByMethod: {},
         cashSalesTotal: 0,
         cashInTotal: 0,
         cashOutTotal: 0,
+        cashReturnTotal: 0,
         expectedCash: 0,
       };
     }
 
     const sessionSales = sales.filter(sale => sale.cashSessionId === sessionId);
+    const returnedSales = sessionSales.filter((sale) => Boolean(sale.returnedAt));
+    const netSales = sessionSales.filter((sale) => !sale.returnedAt);
     const salesByMethod: Record<string, number> = {};
     let salesTotal = 0;
 
-    sessionSales.forEach((sale) => {
+    netSales.forEach((sale) => {
       salesTotal += sale.total;
       const method = sale.paymentMethod || 'otro';
       salesByMethod[method] = (salesByMethod[method] || 0) + sale.total;
@@ -1892,21 +1902,29 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     const cashSalesTotal = salesByMethod['efectivo'] || 0;
     const sessionMovements = cashMovements.filter(movement => movement.cashSessionId === sessionId);
+    const isReturnMovement = (movement: CashMovement) =>
+      movement.type === 'cash_out' && movement.reason?.startsWith('Devolución venta ');
+    const salesReturnedTotal = returnedSales.reduce((sum, sale) => sum + sale.total, 0);
+    const cashReturnTotal = sessionMovements
+      .filter((movement) => isReturnMovement(movement))
+      .reduce((sum, movement) => sum + movement.amount, 0);
     const cashInTotal = sessionMovements
       .filter(movement => movement.type === 'cash_in')
       .reduce((sum, movement) => sum + movement.amount, 0);
     const cashOutTotal = sessionMovements
-      .filter(movement => movement.type === 'cash_out')
+      .filter(movement => movement.type === 'cash_out' && !isReturnMovement(movement))
       .reduce((sum, movement) => sum + movement.amount, 0);
 
-    const expectedCash = session.openingCash + cashSalesTotal + cashInTotal - cashOutTotal;
+    const expectedCash = session.openingCash + cashSalesTotal + cashInTotal - cashOutTotal - cashReturnTotal;
 
     return {
       salesTotal,
+      salesReturnedTotal,
       salesByMethod,
       cashSalesTotal,
       cashInTotal,
       cashOutTotal,
+      cashReturnTotal,
       expectedCash,
     };
   };
@@ -2110,6 +2128,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         customerId: activeDraft.customerId,
         invoiceNumber,
         cashSessionId: currentCashSession.id,
+        returnedAt: null,
       };
 
       setSales(prev => [...prev, newSale]);
@@ -2200,6 +2219,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         customerId: saleRow.customer_id ?? activeDraft.customerId,
         invoiceNumber: saleRow.invoice_number ?? undefined,
         cashSessionId: saleRow.cash_session_id ?? currentCashSession.id,
+        returnedAt: saleRow.returned_at ?? null,
       };
 
       setSales(prev => [...prev, newSale]);
@@ -2273,11 +2293,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
 
     const reference = `DEV-${sale.id}`;
-    const alreadyReturned = kardexMovements.some(movement => movement.reference === reference);
+    const alreadyReturned = Boolean(sale.returnedAt)
+      || kardexMovements.some(movement => movement.reference === reference);
     if (alreadyReturned) {
       toast.info('Esta venta ya tiene una devolución registrada.');
       return false;
     }
+
+    const returnedAt = new Date().toISOString();
 
     sale.items.forEach(item => {
       const product = products.find(p => p.id === item.product.id) ?? item.product;
@@ -2300,6 +2323,40 @@ export function POSProvider({ children }: { children: ReactNode }) {
         totalCost: unitCost * item.quantity,
       });
     });
+
+    setSales(prev => prev.map((item) => (
+      item.id === sale.id ? { ...item, returnedAt } : item
+    )));
+
+    if (sale.customerId) {
+      const points = Math.floor(sale.total / 1000);
+      const customer = customers.find(c => c.id === sale.customerId);
+      if (customer) {
+        const nextPoints = Math.max(0, customer.points - points);
+        const nextPurchases = customer.purchases.filter(purchase => purchase.id !== sale.id);
+        updateCustomer(customer.id, {
+          points: nextPoints,
+          purchases: nextPurchases,
+        });
+      }
+    }
+
+    if (sale.paymentMethod === 'efectivo') {
+      void addCashMovement(
+        'cash_out',
+        sale.total,
+        `Devolución venta ${sale.invoiceNumber || sale.id}`,
+      );
+    }
+
+    if (isConnectedToSupabase && session && currentStoreId) {
+      void updateSaleRow(session.access_token, currentStoreId, sale.id, {
+        returnedAt,
+      }).catch((error) => {
+        console.error('No se pudo registrar devolución en Supabase', error);
+        toast.error('Devolución registrada localmente, pero falló en Supabase.');
+      });
+    }
 
     toast.success('Devolución registrada en Kardex.');
     return true;

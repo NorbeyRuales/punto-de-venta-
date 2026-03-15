@@ -497,7 +497,8 @@ begin
       payment_method,
       cash_received,
       change_value,
-      created_at
+      created_at,
+      returned_at
     ) values (
       p_store_id,
       v_customer_id,
@@ -511,7 +512,8 @@ begin
       v_payment_method,
       coalesce(nullif(rec->>'cashReceived', '')::numeric, 0),
       coalesce(nullif(rec->>'change', '')::numeric, 0),
-      coalesce(nullif(rec->>'date', '')::timestamptz, now())
+      coalesce(nullif(rec->>'date', '')::timestamptz, now()),
+      nullif(rec->>'returnedAt', '')::timestamptz
     ) returning id into v_sale_id;
 
     cnt_sales := cnt_sales + 1;

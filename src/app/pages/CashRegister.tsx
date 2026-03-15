@@ -147,18 +147,23 @@ export function CashRegister() {
                 <p className="text-sm text-gray-600">Efectivo: {formatCurrency(activeReport.cashSalesTotal)}</p>
               </div>
               <div className="p-4 rounded-lg bg-secondary">
+                <p className="text-xs text-gray-600">Devoluciones (efectivo)</p>
+                <p className="text-lg font-semibold text-red-600">{formatCurrency(activeReport.cashReturnTotal)}</p>
+              </div>
+              <div className="p-4 rounded-lg bg-secondary">
                 <p className="text-xs text-gray-600">Ingresos de caja</p>
                 <p className="text-lg font-semibold">{formatCurrency(activeReport.cashInTotal)}</p>
               </div>
               <div className="p-4 rounded-lg bg-secondary">
                 <p className="text-xs text-gray-600">Retiros de caja</p>
                 <p className="text-lg font-semibold text-red-600">{formatCurrency(activeReport.cashOutTotal)}</p>
+                <p className="text-xs text-gray-500">No incluye devoluciones</p>
               </div>
               <div className="p-4 rounded-lg bg-secondary md:col-span-2">
                 <p className="text-xs text-gray-600">Dinero esperado</p>
                 <p className="text-2xl font-bold text-[var(--primary)]">{formatCurrency(activeReport.expectedCash)}</p>
                 <p className="text-xs text-gray-500">
-                  Base inicial + ventas en efectivo + ingresos - retiros
+                  Base inicial + ventas en efectivo - devoluciones + ingresos - retiros
                 </p>
               </div>
             </div>

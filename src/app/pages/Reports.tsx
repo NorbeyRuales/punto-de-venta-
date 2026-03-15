@@ -31,18 +31,26 @@ export function Reports() {
 
   const { start, end } = getDateRange();
   const periodSales = getSalesInRange(start, end);
+  const returnedReferences = new Set(
+    kardexMovements
+      .map(movement => movement.reference)
+      .filter(Boolean)
+  );
+  const isSaleReturned = (sale: Sale) =>
+    Boolean(sale.returnedAt) || returnedReferences.has(`DEV-${sale.id}`);
+  const netSales = periodSales.filter((sale) => !isSaleReturned(sale));
   
   // Métricas agregadas del periodo.
-  const totalSales = periodSales.reduce((sum, s) => sum + s.total, 0);
-  const totalCost = periodSales.reduce((sum, sale) => {
+  const totalSales = netSales.reduce((sum, s) => sum + s.total, 0);
+  const totalCost = netSales.reduce((sum, sale) => {
     return sum + sale.items.reduce((itemSum, item) => itemSum + (item.product.costPrice * item.quantity), 0);
   }, 0);
   const profit = totalSales - totalCost;
-  const transactions = periodSales.length;
+  const transactions = netSales.length;
 
   // Productos más vendidos
   const productSales = new Map<string, { name: string; quantity: number; revenue: number }>();
-  periodSales.forEach(sale => {
+  netSales.forEach(sale => {
     sale.items.forEach(item => {
       const current = productSales.get(item.product.id);
       const revenue = item.product.salePrice * item.quantity;
@@ -61,7 +69,7 @@ export function Reports() {
 
   // Ventas por categoría
   const categorySales = new Map<string, number>();
-  periodSales.forEach(sale => {
+  netSales.forEach(sale => {
     sale.items.forEach(item => {
       const current = categorySales.get(item.product.category) || 0;
       categorySales.set(item.product.category, current + (item.product.salePrice * item.quantity));
@@ -70,11 +78,6 @@ export function Reports() {
 
   const categoryData = Array.from(categorySales.entries()).map(([name, value]) => ({ name, value }));
   const COLORS = ['#15D9E6', '#E6C915', '#E61595', '#8BE9FD', '#FFD27F', '#2ECC71'];
-  const returnedReferences = new Set(
-    kardexMovements
-      .map(movement => movement.reference)
-      .filter(Boolean)
-  );
   const latestSales = periodSales.slice(-20).reverse();
 
   const formatCurrency = (value: number) => `$${Math.round(value).toLocaleString('es-CO')}`;
@@ -128,7 +131,9 @@ export function Reports() {
 
   const handleReturnSale = (saleId: string, invoiceNumber?: string) => {
     const reference = `DEV-${saleId}`;
-    if (returnedReferences.has(reference)) {
+    const sale = periodSales.find(item => item.id === saleId);
+    const alreadyReturned = sale ? isSaleReturned(sale) : returnedReferences.has(reference);
+    if (alreadyReturned) {
       toast.info('Esta venta ya tiene una devolución registrada.');
       return;
     }
@@ -252,8 +257,7 @@ export function Reports() {
             <div className="text-center py-8 text-gray-500">No hay transacciones</div>
           ) : (
             latestSales.map(sale => {
-              const returnRef = `DEV-${sale.id}`;
-              const isReturned = returnedReferences.has(returnRef);
+              const isReturned = isSaleReturned(sale);
               return (
                 <div key={sale.id} className="rounded-lg border border-border bg-white p-3 space-y-2">
                   <div className="flex items-start justify-between gap-2">
@@ -311,8 +315,7 @@ export function Reports() {
             </thead>
             <tbody>
               {latestSales.map(sale => {
-                const returnRef = `DEV-${sale.id}`;
-                const isReturned = returnedReferences.has(returnRef);
+                const isReturned = isSaleReturned(sale);
                 return (
                   <tr key={sale.id} className="border-b">
                     <td className="p-3">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</td>
@@ -372,7 +375,7 @@ export function Reports() {
             const customer = selectedSale.customerId
               ? customers.find(c => c.id === selectedSale.customerId)
               : undefined;
-            const isReturned = returnedReferences.has(`DEV-${selectedSale.id}`);
+            const isReturned = isSaleReturned(selectedSale);
 
             return (
               <div className="space-y-6">

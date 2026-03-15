@@ -18,17 +18,25 @@ import { format, subDays, startOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 export function Dashboard() {
-  const { getSalesToday, products, sales, customers } = usePOS();
+  const { getSalesToday, products, sales, customers, kardexMovements } = usePOS();
   const navigate = useNavigate();
 
   // KPIs principales del día.
+  const returnedReferences = new Set(
+    kardexMovements
+      .map(movement => movement.reference)
+      .filter(Boolean)
+  );
+  const isReturned = (sale: { id: string; returnedAt?: string | null }) =>
+    Boolean(sale.returnedAt) || returnedReferences.has(`DEV-${sale.id}`);
   const todaySales = getSalesToday();
-  const totalToday = todaySales.reduce((sum, sale) => sum + sale.total, 0);
-  const transactionsToday = todaySales.length;
+  const netTodaySales = todaySales.filter((sale) => !isReturned(sale));
+  const totalToday = netTodaySales.reduce((sum, sale) => sum + sale.total, 0);
+  const transactionsToday = netTodaySales.length;
 
   // Productos más vendidos hoy
   const productSales = new Map<string, { name: string; quantity: number }>();
-  todaySales.forEach(sale => {
+  netTodaySales.forEach(sale => {
     sale.items.forEach(item => {
       const current = productSales.get(item.product.id);
       if (current) {
@@ -55,7 +63,7 @@ export function Dashboard() {
     const dateStr = format(startOfDay(date), 'yyyy-MM-dd');
     const daySales = sales.filter(sale => {
       const saleDate = format(startOfDay(new Date(sale.date)), 'yyyy-MM-dd');
-      return saleDate === dateStr;
+      return saleDate === dateStr && !isReturned(sale);
     });
     const total = daySales.reduce((sum, sale) => sum + sale.total, 0);
     
