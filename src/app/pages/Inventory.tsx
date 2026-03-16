@@ -21,6 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
 import { toast } from 'sonner';
 import type { Product } from '../context/POSContext';
+import { supabaseAnonKey, supabaseUrl } from '../../lib/supabaseClient';
 
 type BarcodeLookupResponse = {
   found: boolean;
@@ -33,7 +34,7 @@ type BarcodeLookupResponse = {
 
 // Endpoint de Edge Function para buscar info por código de barras.
 const barcodeLookupUrl = (barcode: string) =>
-  `https://wujuzvjilkfrddmofyxa.supabase.co/functions/v1/make-server-cf6a4e6a/barcode-scrape/${barcode}`;
+  `${supabaseUrl}/functions/v1/make-server-cf6a4e6a/barcode-scrape/${barcode}`;
 
 export function Inventory() {
   const { products, addProduct, updateProduct, deleteProduct, categories, suppliers, getKardexByProduct, adjustStock } = usePOS();
@@ -485,7 +486,12 @@ export function Inventory() {
     setBarcodeLookupStatus('searching');
 
     try {
-      const response = await fetch(barcodeLookupUrl(barcode));
+      const response = await fetch(barcodeLookupUrl(barcode), {
+        headers: {
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+        },
+      });
       if (!response.ok) {
         throw new Error('Error de red');
       }
