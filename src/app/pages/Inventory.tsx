@@ -51,6 +51,8 @@ export function Inventory() {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showKardexDialog, setShowKardexDialog] = useState(false);
   const [selectedKardexProduct, setSelectedKardexProduct] = useState<Product | null>(null);
+  const [isTopAddButtonVisible, setIsTopAddButtonVisible] = useState(true);
+  const topAddButtonRef = useRef<HTMLDivElement>(null);
   // Formularios y valores derivados.
   const defaultCategory = categories[0] || 'General';
   const buildEmptyForm = (category: string) => ({
@@ -547,6 +549,21 @@ export function Inventory() {
 
     return () => window.clearTimeout(timeoutId);
   }, [formData.barcode, showAddDialog]);
+
+  useEffect(() => {
+    const topButtonNode = topAddButtonRef.current;
+    if (!topButtonNode) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsTopAddButtonVisible(entry.isIntersecting);
+      },
+      { threshold: 0.15 }
+    );
+
+    observer.observe(topButtonNode);
+    return () => observer.disconnect();
+  }, []);
 return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -562,13 +579,15 @@ return (
           >
             Gestionar Categorías
           </Button>
-          <Button
-            onClick={() => handleAddDialogChange(true)}
-            className="w-full sm:w-auto bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
-          >
-            <Plus className="w-5 h-5 mr-2" />
-            Agregar Producto
-          </Button>
+          <div ref={topAddButtonRef}>
+            <Button
+              onClick={() => handleAddDialogChange(true)}
+              className="w-full sm:w-auto bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
+            >
+              <Plus className="w-5 h-5 mr-2" />
+              Agregar Producto
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -843,6 +862,18 @@ return (
           </table>
         </div>
       </Card>
+
+      {!isTopAddButtonVisible && !showAddDialog && (
+        <Button
+          onClick={() => handleAddDialogChange(true)}
+          className="fixed bottom-6 right-6 z-30 h-12 rounded-full px-5 bg-[var(--primary)] shadow-lg hover:bg-[var(--primary-hover)]"
+          aria-label="Agregar Producto"
+        >
+          <Plus className="mr-2 h-5 w-5" />
+          <span className="hidden sm:inline">Agregar Producto</span>
+          <span className="sm:hidden">Agregar</span>
+        </Button>
+      )}
 
       {/* Dialog Agregar Producto */}
       <Dialog open={showAddDialog} onOpenChange={handleAddDialogChange}>
