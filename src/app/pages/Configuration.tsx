@@ -12,7 +12,7 @@ import { Switch } from '../components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
-import { Printer, Shield, Database, Tag, Edit, Trash2, Check, X, ClipboardList } from 'lucide-react';
+import { Printer, Shield, Database, Tag, Edit, Trash2, Check, X, ClipboardList, Download, CloudDownload, CloudUpload, RotateCcw } from 'lucide-react';
 import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
 
 type PendingSyncSummary = {
@@ -154,7 +154,7 @@ export function Configuration() {
   );
   const isAdmin = currentUser?.role === 'admin';
 
-  // Guarda configuración local y en Supabase.
+  // Guarda configuración local y en base de datos.
   const handleSave = async () => {
     if (isSaving) return;
     setIsSaving(true);
@@ -169,7 +169,7 @@ export function Configuration() {
         });
 
         if (!created) {
-          toast.error('No se pudo registrar la tienda en Supabase.');
+          toast.error('No se pudo registrar la tienda en la base de datos.');
           return;
         }
       }
@@ -177,7 +177,7 @@ export function Configuration() {
       const saved = await updateStoreConfig(config);
       if (!saved) return;
 
-      toast.success('Configuración guardada en Supabase y local.');
+      toast.success('Configuración guardada en base de datos y local.');
     } finally {
       setIsSaving(false);
     }
@@ -289,11 +289,11 @@ export function Configuration() {
   };
 
 
-  // Forzar sincronización con Supabase.
+  // Forzar sincronización con base de datos.
   const handleManualSync = async () => {
     if (isSyncing) return;
     if (hasPendingSync) {
-      const confirmed = confirm('Hay cambios offline pendientes. Descargar desde Supabase reemplazará lo local. ¿Continuar?');
+      const confirmed = confirm('Hay cambios offline pendientes. Descargar desde la base de datos reemplazará lo local. ¿Continuar?');
       if (!confirmed) return;
     }
     setIsSyncing(true);
@@ -304,7 +304,7 @@ export function Configuration() {
     }
   };
 
-  // Registra la tienda actual en Supabase si aún no existe.
+  // Registra la tienda actual en base de datos si aún no existe.
   const handleCreateStore = async () => {
     if (isRegisteringStore) return;
     setIsRegisteringStore(true);
@@ -325,7 +325,7 @@ export function Configuration() {
     }
   };
 
-  // Sube datos actuales desde localStorage a Supabase.
+  // Sube datos actuales desde localStorage a base de datos.
   const handleUploadLocalData = async () => {
     if (isUploading) return;
     const confirmed = confirm('Esto reemplazará los datos remotos por los locales. ¿Deseas continuar?');
@@ -356,7 +356,7 @@ export function Configuration() {
       const preview = await getPendingProductSyncPreview();
       setProductDiff(preview);
       if (!preview.canCompare) {
-        toast.info(preview.reason || 'No fue posible comparar pendientes con Supabase.');
+        toast.info(preview.reason || 'No fue posible comparar pendientes con la base de datos.');
       }
     } finally {
       setIsLoadingProductDiff(false);
@@ -712,7 +712,7 @@ export function Configuration() {
                 className="w-full h-12"
                 disabled={isRegisteringStore}
               >
-                {isRegisteringStore ? 'Registrando...' : 'Registrar tienda en Supabase'}
+                {isRegisteringStore ? 'Registrando...' : 'Registrar tienda en base de datos'}
               </Button>
             )}
           </Card>
@@ -867,7 +867,7 @@ export function Configuration() {
 
             <div className="p-4 bg-blue-50 rounded-lg">
               <p className="text-sm text-gray-700">
-                <strong>Nota:</strong> Los usuarios se administran desde Supabase Auth (Dashboard).
+                <strong>Nota:</strong> Los usuarios se administran desde el modulo de autenticacion de la base de datos (Dashboard).
               </p>
             </div>
           </Card>
@@ -883,7 +883,7 @@ export function Configuration() {
             <div className="p-4 bg-secondary rounded-lg">
               <p className="font-semibold mb-2">Almacenamiento Local</p>
               <p className="text-sm text-gray-600">
-                Los datos se guardan automáticamente en el navegador y se sincronizan con Supabase cuando hay conexión.
+                Los datos se guardan automáticamente en el navegador y se sincronizan con la base de datos cuando hay conexión.
               </p>
             </div>
 
@@ -904,7 +904,14 @@ export function Configuration() {
               </div>
             )}
 
-            <div className="space-y-3">
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <p className="font-semibold text-blue-900">Guia rapida</p>
+              <p className="text-sm text-blue-800 mt-1">
+                Aqui existen dos lugares de datos: <strong>este equipo</strong> (local) y <strong>base de datos</strong> (nube). Cada boton indica claramente hacia donde se mueve la informacion.
+              </p>
+            </div>
+
+            <div className="space-y-4">
               {!hasConnectedStore && (
                 <Button
                   onClick={handleCreateStore}
@@ -915,44 +922,106 @@ export function Configuration() {
                 </Button>
               )}
 
-              <Button
-                onClick={handleBackup}
-                className="w-full h-12 bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
-                disabled={isBackingUp}
-              >
-                {isBackingUp ? 'Generando backup...' : 'Descargar Backup Completo'}
-              </Button>
+              <div className="rounded-xl border p-4 bg-white space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 p-2 rounded-lg bg-blue-100 text-blue-700">
+                    <Download className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-semibold">Guardar copia en este equipo</p>
+                    <p className="text-sm text-gray-600">
+                      Crea un archivo de respaldo con tus datos actuales. Usalo antes de cambios importantes.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  onClick={handleBackup}
+                  className="w-full h-12 bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
+                  disabled={isBackingUp}
+                  title="Descarga un archivo con todos tus datos locales para guardarlo como respaldo."
+                >
+                  {isBackingUp ? 'Generando copia...' : 'Descargar copia de seguridad'}
+                </Button>
+              </div>
 
-              <Button
-                variant="outline"
-                className="w-full h-12"
-                onClick={handleManualSync}
-                disabled={isSyncing}
-              >
-                {isSyncing ? 'Sincronizando...' : 'Descargar datos de Supabase (reemplaza local)'}
-              </Button>
+              <div className="rounded-xl border p-4 bg-white space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 p-2 rounded-lg bg-amber-100 text-amber-700">
+                    <CloudDownload className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-semibold">Traer datos de la nube a este equipo</p>
+                    <p className="text-sm text-gray-600">
+                      Reemplaza lo que tienes guardado aqui por lo que existe en la base de datos.
+                    </p>
+                  </div>
+                </div>
+                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                  Atencion: esta accion sobrescribe datos locales.
+                </div>
+                <Button
+                  variant="outline"
+                  className="w-full h-12"
+                  onClick={handleManualSync}
+                  disabled={isSyncing}
+                  title="Trae la información de la base de datos y reemplaza los datos guardados en este dispositivo."
+                >
+                  {isSyncing ? 'Trayendo datos...' : 'Traer datos de la base de datos a este equipo'}
+                </Button>
+              </div>
 
-              <Button
-                variant="outline"
-                className="w-full h-12"
-                onClick={handleUploadLocalData}
-                disabled={isUploading || !isAdmin}
-              >
-                {isUploading ? 'Subiendo datos...' : 'Subir datos locales y reemplazar Supabase'}
-              </Button>
-              {!isAdmin && (
-                <p className="text-xs text-gray-500 text-center">
-                  Solo un administrador puede subir y reemplazar datos en Supabase.
-                </p>
-              )}
+              <div className="rounded-xl border p-4 bg-white space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 p-2 rounded-lg bg-rose-100 text-rose-700">
+                    <CloudUpload className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-semibold">Enviar datos de este equipo a la nube</p>
+                    <p className="text-sm text-gray-600">
+                      Sube tu informacion local y reemplaza lo que esta actualmente en la base de datos.
+                    </p>
+                  </div>
+                </div>
+                <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-800">
+                  Atencion: esta accion sobrescribe datos en la nube.
+                </div>
+                <Button
+                  variant="outline"
+                  className="w-full h-12"
+                  onClick={handleUploadLocalData}
+                  disabled={isUploading || !isAdmin}
+                  title="Sube tus datos locales a la base de datos y sustituye la información remota actual."
+                >
+                  {isUploading ? 'Enviando datos...' : 'Enviar datos locales a la base de datos'}
+                </Button>
+                {!isAdmin && (
+                  <p className="text-xs text-gray-500 text-center">
+                    Solo un administrador puede usar esta accion.
+                  </p>
+                )}
+              </div>
 
-              <Button
-                variant="outline"
-                className="w-full h-12"
-                onClick={() => toast.info('Funcionalidad de restauración en preparación')}
-              >
-                Restaurar desde Backup
-              </Button>
+              <div className="rounded-xl border p-4 bg-white space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 p-2 rounded-lg bg-emerald-100 text-emerald-700">
+                    <RotateCcw className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-semibold">Recuperar datos desde un archivo de backup</p>
+                    <p className="text-sm text-gray-600">
+                      Te permite cargar una copia guardada para restaurar informacion anterior.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  className="w-full h-12"
+                  onClick={() => toast.info('Funcionalidad de restauración en preparación')}
+                  title="Permitirá cargar un backup guardado para recuperar la información del sistema."
+                >
+                  Restaurar desde backup (proximamente)
+                </Button>
+              </div>
             </div>
 
             <div className="p-4 bg-blue-50 rounded-lg">
@@ -1023,7 +1092,7 @@ export function Configuration() {
                 </div>
 
                 <p className="text-xs text-gray-500">
-                  Este modal muestra un resumen de registros locales pendientes. No reemplaza la validación final en Supabase.
+                  Este modal muestra un resumen de registros locales pendientes. No reemplaza la validación final en la base de datos.
                 </p>
 
                 <div className="pt-1">
@@ -1033,7 +1102,7 @@ export function Configuration() {
                     onClick={handleLoadProductDiff}
                     disabled={isLoadingProductDiff}
                   >
-                    {isLoadingProductDiff ? 'Comparando con Supabase...' : 'Comparar productos pendientes con Supabase'}
+                    {isLoadingProductDiff ? 'Comparando con base de datos...' : 'Comparar productos pendientes con base de datos'}
                   </Button>
                 </div>
 
