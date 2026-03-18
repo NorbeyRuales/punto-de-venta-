@@ -1,5 +1,5 @@
 // Punto de venta: búsqueda, carrito, descuentos y cobro.
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import { usePOS } from '../context/POSContext';
 import type { Sale } from '../context/POSContext';
@@ -37,6 +37,7 @@ export function POS() {
     discardSaleDraft,
     setActiveDraftCustomerId,
     cart,
+    sales,
     addToCart,
     removeFromCart,
     updateCartQuantity,
@@ -133,9 +134,48 @@ export function POS() {
       )
     : [];
 
-  const quickCategories = categories.length > 0
-    ? categories
-    : ['Lácteos', 'Bebidas', 'Aseo', 'Snacks', 'Granos', 'Carnes Frías'];
+  const quickCategories = useMemo(() => {
+    const fallbackCategories = categories.length > 0
+      ? categories
+      : ['Lácteos', 'Bebidas', 'Aseo', 'Snacks', 'Granos', 'Carnes Frías'];
+
+    if (sales.length === 0) {
+      return fallbackCategories;
+    }
+
+    const normalizedCategoryByName = new Map<string, string>();
+    fallbackCategories.forEach((category) => {
+      normalizedCategoryByName.set(normalizeText(category), category);
+    });
+
+    const soldCountByCategory = new Map<string, number>();
+
+    sales.forEach((sale) => {
+      if (sale.returnedAt) return;
+
+      sale.items.forEach((item) => {
+        const rawCategory = item.product.category?.trim();
+        if (!rawCategory) return;
+
+        const normalized = normalizeText(rawCategory);
+        const categoryName = normalizedCategoryByName.get(normalized) ?? rawCategory;
+        const currentCount = soldCountByCategory.get(categoryName) ?? 0;
+        soldCountByCategory.set(categoryName, currentCount + item.quantity);
+      });
+    });
+
+    const salesAwareCategories = Array.from(new Set([
+      ...fallbackCategories,
+      ...soldCountByCategory.keys(),
+    ]));
+
+    return salesAwareCategories.sort((a, b) => {
+      const soldA = soldCountByCategory.get(a) ?? 0;
+      const soldB = soldCountByCategory.get(b) ?? 0;
+      if (soldB !== soldA) return soldB - soldA;
+      return a.localeCompare(b, 'es');
+    });
+  }, [categories, sales]);
 
   // Agrega un producto al carrito validando stock.
   const handleAddToCart = (productId: string) => {
