@@ -124,6 +124,18 @@ export function Inventory() {
 
   const validateForm = () => {
     const errors: Record<string, string> = {};
+    const currentEditingId = selectedProduct?.id;
+    const normalizedSku = formData.sku.trim().toLowerCase();
+
+    if (normalizedSku) {
+      const duplicatedSku = products.some((product) =>
+        product.id !== currentEditingId && (product.sku || '').trim().toLowerCase() === normalizedSku
+      );
+      if (duplicatedSku) {
+        errors.sku = 'Este SKU ya existe. Usa uno distinto para la presentación.';
+      }
+    }
+
     if (!formData.name.trim()) {
       errors.name = 'Nombre requerido';
     }
@@ -143,6 +155,15 @@ export function Inventory() {
     }
     return errors;
   };
+
+  const hasSharedBarcode = (() => {
+    const normalizedBarcode = formData.barcode.trim();
+    if (!normalizedBarcode) return false;
+    const currentEditingId = selectedProduct?.id;
+    return products.some((product) =>
+      product.id !== currentEditingId && (product.barcode || '').trim() === normalizedBarcode
+    );
+  })();
 
   // Mantiene filtros válidos cuando cambia catálogo.
   useEffect(() => {
@@ -970,10 +991,19 @@ return (
               <Label>SKU</Label>
               <Input
                 value={formData.sku}
-                onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, sku: e.target.value });
+                  clearFormError('sku');
+                }}
                 placeholder="Auto-generado"
+                aria-invalid={!!formErrors.sku}
+                className={errorClass('sku')}
               />
-              <p className="text-xs text-gray-500 mt-1"></p>
+              {formErrors.sku ? (
+                <p className="text-xs text-red-600 mt-1">{formErrors.sku}</p>
+              ) : (
+                <p className="text-xs text-gray-500 mt-1">Usa SKU distinto para paquete y unidad del mismo producto.</p>
+              )}
             </div>
 
             <div>
@@ -983,6 +1013,7 @@ return (
                 onChange={(e) => {
                   const nextBarcode = e.target.value;
                   setFormData({ ...formData, barcode: nextBarcode });
+                  clearFormError('barcode');
                   if (!nextBarcode.trim()) {
                     setBarcodeLookupStatus('idle');
                   }
@@ -998,9 +1029,22 @@ return (
                 }}
                 placeholder={isSearchingBarcode ? 'Buscando producto...' : 'Escanear o ingresar'}
                 aria-describedby="inventory-barcode-help inventory-barcode-status"
+                aria-invalid={!!formErrors.barcode}
+                className={errorClass('barcode')}
               />
               <p id="inventory-barcode-help" className="text-xs text-gray-500 mt-1">
                 Formato válido: 8 a 14 dígitos. Presiona Enter para buscar.
+              </p>
+              {formErrors.barcode && (
+                <p className="text-xs text-red-600 mt-1">{formErrors.barcode}</p>
+              )}
+              {hasSharedBarcode && (
+                <p className="text-xs text-amber-700 mt-1">
+                  Este código ya está en otra presentación. Es válido para paquete/unidad si el SKU es diferente.
+                </p>
+              )}
+              <p className="text-xs text-gray-500 mt-1">
+                Recomendado: código de barras para paquete; para unidad usa SKU propio.
               </p>
               {barcodeLookupStatus === 'searching' && (
                 <p id="inventory-barcode-status" className="text-xs text-gray-500 mt-1" role="status" aria-live="polite">
@@ -1283,20 +1327,45 @@ return (
               <Label>SKU</Label>
               <Input
                 value={formData.sku}
-                onChange={(e) => setFormData({ ...formData, sku: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, sku: e.target.value });
+                  clearFormError('sku');
+                }}
+                aria-invalid={!!formErrors.sku}
+                className={errorClass('sku')}
               />
-              <p className="text-xs text-gray-500 mt-1">Puedes editarlo si cambia el código interno.</p>
+              {formErrors.sku ? (
+                <p className="text-xs text-red-600 mt-1">{formErrors.sku}</p>
+              ) : (
+                <p className="text-xs text-gray-500 mt-1">Usa SKU distinto para paquete y unidad del mismo producto.</p>
+              )}
             </div>
 
             <div>
               <Label>Código de Barras</Label>
               <Input
                 value={formData.barcode}
-                onChange={(e) => setFormData({ ...formData, barcode: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, barcode: e.target.value });
+                  clearFormError('barcode');
+                }}
                 aria-describedby="inventory-barcode-help"
+                aria-invalid={!!formErrors.barcode}
+                className={errorClass('barcode')}
               />
               <p id="inventory-barcode-help" className="text-xs text-gray-500 mt-1">
                 Formato válido: 8 a 14 dígitos.
+              </p>
+              {formErrors.barcode && (
+                <p className="text-xs text-red-600 mt-1">{formErrors.barcode}</p>
+              )}
+              {hasSharedBarcode && (
+                <p className="text-xs text-amber-700 mt-1">
+                  Este código ya está en otra presentación. Es válido para paquete/unidad si el SKU es diferente.
+                </p>
+              )}
+              <p className="text-xs text-gray-500 mt-1">
+                Recomendado: código de barras para paquete; para unidad usa SKU propio.
               </p>
             </div>
 

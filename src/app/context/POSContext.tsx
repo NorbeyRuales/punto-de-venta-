@@ -116,7 +116,7 @@ const resolveProductWriteErrorMessage = (error: unknown): string => {
       return 'No se pudo guardar: el SKU ya existe en la base de datos para esta tienda.';
     }
     if (normalized.includes('barcode') || normalized.includes('codigo') || normalized.includes('código')) {
-      return 'No se pudo guardar: el código de barras ya existe en la base de datos para esta tienda.';
+      return 'No se pudo guardar: el código de barras está restringido como único en la base de datos. Si usarás el mismo código para paquete y unidad, aplica la migración de códigos compartidos.';
     }
     return 'No se pudo guardar: hay un valor único duplicado (SKU o código de barras).';
   }
@@ -1543,13 +1543,17 @@ export function POSProvider({ children }: { children: ReactNode }) {
       const remoteCatalog = await loadCategoriesAndProducts(session.access_token, currentStoreId);
       const remoteProducts = remoteCatalog.products;
       const remoteBySku = new Map<string, Product>();
-      const remoteByBarcode = new Map<string, Product>();
+      const remoteByBarcode = new Map<string, Product[]>();
 
       remoteProducts.forEach((product) => {
         const skuKey = (product.sku || '').trim().toLowerCase();
         const barcodeKey = (product.barcode || '').trim();
         if (skuKey && !remoteBySku.has(skuKey)) remoteBySku.set(skuKey, product);
-        if (barcodeKey && !remoteByBarcode.has(barcodeKey)) remoteByBarcode.set(barcodeKey, product);
+        if (barcodeKey) {
+          const current = remoteByBarcode.get(barcodeKey) ?? [];
+          current.push(product);
+          remoteByBarcode.set(barcodeKey, current);
+        }
       });
 
       const seenSku = new Set<string>();
@@ -1585,12 +1589,23 @@ export function POSProvider({ children }: { children: ReactNode }) {
         }
 
         const remoteBySkuMatch = skuKey ? remoteBySku.get(skuKey) : undefined;
-        const remoteByBarcodeMatch = barcodeKey ? remoteByBarcode.get(barcodeKey) : undefined;
+        const remoteBarcodeCandidates = barcodeKey ? (remoteByBarcode.get(barcodeKey) ?? []) : [];
+        const remoteByBarcodeMatch = remoteBarcodeCandidates.length === 1
+          ? remoteBarcodeCandidates[0]
+          : undefined;
 
-        if (remoteBySkuMatch && remoteByBarcodeMatch && remoteBySkuMatch.id !== remoteByBarcodeMatch.id) {
+        if (remoteBySkuMatch && remoteBarcodeCandidates.length > 0 && !remoteBarcodeCandidates.some((candidate) => candidate.id === remoteBySkuMatch.id)) {
           conflicts += 1;
           if (sampleConflicts.length < 8) {
             sampleConflicts.push(`${localProduct.name}: SKU y código apuntan a productos remotos distintos`);
+          }
+          return;
+        }
+
+        if (!remoteBySkuMatch && remoteBarcodeCandidates.length > 1) {
+          conflicts += 1;
+          if (sampleConflicts.length < 8) {
+            sampleConflicts.push(`${localProduct.name}: código de barras compartido con múltiples productos remotos, usa SKU para decidir actualización`);
           }
           return;
         }
