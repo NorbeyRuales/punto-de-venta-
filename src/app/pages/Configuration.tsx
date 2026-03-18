@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router';
 import { usePOS } from '../context/POSContext';
+import type { PendingProductSyncPreview } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -9,9 +10,81 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Switch } from '../components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
-import { Printer, Shield, Database, Tag, Edit, Trash2, Check, X } from 'lucide-react';
+import { Printer, Shield, Database, Tag, Edit, Trash2, Check, X, ClipboardList } from 'lucide-react';
 import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
+
+type PendingSyncSummary = {
+  products: number;
+  sales: number;
+  customers: number;
+  suppliers: number;
+  kardex: number;
+  recharges: number;
+  cashSessions: number;
+  cashMovements: number;
+  hasConfig: boolean;
+  source: 'offline-backup' | 'live-local';
+};
+
+const OFFLINE_BACKUP_STORAGE_KEY = 'pos_offline_backup';
+
+const parseJsonArrayLength = (raw: string | null): number => {
+  if (!raw) return 0;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
+};
+
+const parseConfigExists = (raw: string | null): boolean => {
+  if (!raw) return false;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Boolean(parsed && typeof parsed === 'object');
+  } catch {
+    return false;
+  }
+};
+
+const readPendingSyncSummary = (): PendingSyncSummary => {
+  const backupRaw = localStorage.getItem(OFFLINE_BACKUP_STORAGE_KEY);
+  if (backupRaw) {
+    try {
+      const parsed = JSON.parse(backupRaw) as Record<string, string | null>;
+      return {
+        products: parseJsonArrayLength(parsed.products ?? null),
+        sales: parseJsonArrayLength(parsed.sales ?? null),
+        customers: parseJsonArrayLength(parsed.customers ?? null),
+        suppliers: parseJsonArrayLength(parsed.suppliers ?? null),
+        kardex: parseJsonArrayLength(parsed.kardex ?? null),
+        recharges: parseJsonArrayLength(parsed.recharges ?? null),
+        cashSessions: parseJsonArrayLength(parsed.cash_sessions ?? null),
+        cashMovements: parseJsonArrayLength(parsed.cash_movements ?? null),
+        hasConfig: parseConfigExists(parsed.config ?? null),
+        source: 'offline-backup',
+      };
+    } catch {
+      // Si el snapshot está corrupto, caemos al estado local actual.
+    }
+  }
+
+  return {
+    products: parseJsonArrayLength(localStorage.getItem('pos_products')),
+    sales: parseJsonArrayLength(localStorage.getItem('pos_sales')),
+    customers: parseJsonArrayLength(localStorage.getItem('pos_customers')),
+    suppliers: parseJsonArrayLength(localStorage.getItem('pos_suppliers')),
+    kardex: parseJsonArrayLength(localStorage.getItem('pos_kardex')),
+    recharges: parseJsonArrayLength(localStorage.getItem('pos_recharges')),
+    cashSessions: parseJsonArrayLength(localStorage.getItem('pos_cash_sessions')),
+    cashMovements: parseJsonArrayLength(localStorage.getItem('pos_cash_movements')),
+    hasConfig: parseConfigExists(localStorage.getItem('pos_config')),
+    source: 'live-local',
+  };
+};
 
 export function Configuration() {
   const inputClass = "h-12 bg-[var(--input-background)] border border-[var(--border)] focus-visible:ring-2 focus-visible:ring-[var(--ring)]";
@@ -32,7 +105,8 @@ export function Configuration() {
     syncWithSupabase,
     createStore,
     hasConnectedStore,
-    uploadLocalBackupToSupabase
+    uploadLocalBackupToSupabase,
+    getPendingProductSyncPreview
   } = usePOS();
   const location = useLocation();
   // Estado de pestañas y formularios.
@@ -46,6 +120,10 @@ export function Configuration() {
   const [isUploading, setIsUploading] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRegisteringStore, setIsRegisteringStore] = useState(false);
+  const [showPendingModal, setShowPendingModal] = useState(false);
+  const [pendingSummary, setPendingSummary] = useState<PendingSyncSummary>(() => readPendingSyncSummary());
+  const [isLoadingProductDiff, setIsLoadingProductDiff] = useState(false);
+  const [productDiff, setProductDiff] = useState<PendingProductSyncPreview | null>(null);
   const [offlinePin, setOfflinePinInput] = useState('');
   const [offlinePinConfirm, setOfflinePinConfirm] = useState('');
   const [isSavingOfflinePin, setIsSavingOfflinePin] = useState(false);
@@ -133,15 +211,20 @@ export function Configuration() {
   };
 
   // Alta de categorías.
-  const handleAddCategory = () => {
-    const created = addCategory(newCategory);
-    if (!created) {
+  const handleAddCategory = async () => {
+    const created = await addCategory(newCategory);
+    if (created === 'invalid') {
       toast.error('No se pudo crear la categoría (vacía o duplicada)');
       return;
     }
+    if (created === 'failed') return;
 
     setNewCategory('');
-    toast.success('Categoría creada');
+    if (created === 'remote-synced') {
+      toast.success('Categoría creada en la base de datos.');
+    } else {
+      toast.info('Categoría creada localmente. Quedó pendiente de sincronización manual.');
+    }
   };
 
   const startEditCategory = (category: string) => {
@@ -187,17 +270,22 @@ export function Configuration() {
     setEditingValue('');
   };
 
-  const handleSaveCategory = () => {
+  const handleSaveCategory = async () => {
     if (!editingCategory) return;
 
-    const updated = updateCategory(editingCategory, editingValue);
-    if (!updated) {
+    const updated = await updateCategory(editingCategory, editingValue);
+    if (updated === 'invalid') {
       toast.error('No se pudo actualizar la categoría (vacía o duplicada)');
       return;
     }
+    if (updated === 'failed') return;
 
     cancelEditCategory();
-    toast.success('Categoría actualizada');
+    if (updated === 'remote-synced') {
+      toast.success('Categoría actualizada en la base de datos.');
+    } else {
+      toast.info('Categoría actualizada localmente. Quedó pendiente de sincronización manual.');
+    }
   };
 
 
@@ -255,6 +343,26 @@ export function Configuration() {
     }
   };
 
+  const handleOpenPendingModal = () => {
+    setPendingSummary(readPendingSyncSummary());
+    setProductDiff(null);
+    setShowPendingModal(true);
+  };
+
+  const handleLoadProductDiff = async () => {
+    if (isLoadingProductDiff) return;
+    setIsLoadingProductDiff(true);
+    try {
+      const preview = await getPendingProductSyncPreview();
+      setProductDiff(preview);
+      if (!preview.canCompare) {
+        toast.info(preview.reason || 'No fue posible comparar pendientes con Supabase.');
+      }
+    } finally {
+      setIsLoadingProductDiff(false);
+    }
+  };
+
   const handleOfflinePinSave = async () => {
     if (isSavingOfflinePin) return;
     if (!offlinePin || !offlinePinConfirm) {
@@ -289,20 +397,25 @@ export function Configuration() {
   };
 
   // Eliminación de categorías con reasignación opcional.
-  const handleDeleteCategory = (category: string) => {
+  const handleDeleteCategory = async (category: string) => {
     const inUse = products.some(product => product.category === category);
 
     if (!inUse) {
       const confirmed = confirm(`¿Eliminar la categoría "${category}"?`);
       if (!confirmed) return;
 
-      const deleted = deleteCategory(category);
-      if (!deleted) {
+      const deleted = await deleteCategory(category);
+      if (deleted === 'invalid') {
         toast.error('No se pudo eliminar la categoría');
         return;
       }
+      if (deleted === 'failed') return;
 
-      toast.success('Categoría eliminada');
+      if (deleted === 'remote-synced') {
+        toast.success('Categoría eliminada en la base de datos.');
+      } else {
+        toast.info('Categoría eliminada localmente. Quedó pendiente de sincronización manual.');
+      }
       return;
     }
 
@@ -316,13 +429,18 @@ export function Configuration() {
       return;
     }
 
-    const deletedWithReplacement = deleteCategory(category, replacement);
-    if (!deletedWithReplacement) {
+    const deletedWithReplacement = await deleteCategory(category, replacement);
+    if (deletedWithReplacement === 'invalid') {
       toast.error('No se pudo eliminar. Verifique la categoría de reemplazo.');
       return;
     }
+    if (deletedWithReplacement === 'failed') return;
 
-    toast.success('Categoría eliminada y productos reasignados');
+    if (deletedWithReplacement === 'remote-synced') {
+      toast.success('Categoría eliminada y productos reasignados en la base de datos.');
+    } else {
+      toast.info('Categoría eliminada/reasignada localmente. Quedó pendiente de sincronización manual.');
+    }
   };
 
   return (
@@ -775,6 +893,14 @@ export function Configuration() {
                 <p className="text-sm text-yellow-700">
                   El sistema intentará sincronizar automáticamente al recuperar conexión. También puedes forzar la sincronización manualmente.
                 </p>
+                <Button
+                  variant="outline"
+                  className="mt-3 h-10 border-yellow-300 bg-white text-yellow-900 hover:bg-yellow-100"
+                  onClick={handleOpenPendingModal}
+                >
+                  <ClipboardList className="w-4 h-4 mr-2" />
+                  Ver detalle de pendientes
+                </Button>
               </div>
             )}
 
@@ -843,6 +969,132 @@ export function Configuration() {
               </p>
             </div>
           </Card>
+
+          <Dialog open={showPendingModal} onOpenChange={setShowPendingModal}>
+            <DialogContent className="max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Pendientes locales por sincronizar</DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-3">
+                <p className="text-sm text-gray-600">
+                  Fuente del cálculo: {pendingSummary.source === 'offline-backup' ? 'snapshot pendiente (pos_offline_backup)' : 'estado local actual'}.
+                </p>
+
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-gray-500">Productos</p>
+                    <p className="text-lg font-semibold">{pendingSummary.products}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-gray-500">Ventas</p>
+                    <p className="text-lg font-semibold">{pendingSummary.sales}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-gray-500">Clientes</p>
+                    <p className="text-lg font-semibold">{pendingSummary.customers}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-gray-500">Proveedores</p>
+                    <p className="text-lg font-semibold">{pendingSummary.suppliers}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-gray-500">Kardex</p>
+                    <p className="text-lg font-semibold">{pendingSummary.kardex}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-gray-500">Recargas</p>
+                    <p className="text-lg font-semibold">{pendingSummary.recharges}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-gray-500">Sesiones de caja</p>
+                    <p className="text-lg font-semibold">{pendingSummary.cashSessions}</p>
+                  </div>
+                  <div className="rounded-lg border p-3">
+                    <p className="text-gray-500">Movimientos de caja</p>
+                    <p className="text-lg font-semibold">{pendingSummary.cashMovements}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border bg-secondary p-3 text-sm">
+                  <p>
+                    Configuración de tienda pendiente: <strong>{pendingSummary.hasConfig ? 'Sí' : 'No'}</strong>
+                  </p>
+                </div>
+
+                <p className="text-xs text-gray-500">
+                  Este modal muestra un resumen de registros locales pendientes. No reemplaza la validación final en Supabase.
+                </p>
+
+                <div className="pt-1">
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={handleLoadProductDiff}
+                    disabled={isLoadingProductDiff}
+                  >
+                    {isLoadingProductDiff ? 'Comparando con Supabase...' : 'Comparar productos pendientes con Supabase'}
+                  </Button>
+                </div>
+
+                {productDiff && (
+                  <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                    <p className="text-sm font-semibold text-blue-900">Resultado de comparación de productos</p>
+                    {!productDiff.canCompare && (
+                      <p className="text-sm text-blue-800">{productDiff.reason || 'No se pudo realizar la comparación.'}</p>
+                    )}
+                    {productDiff.canCompare && (
+                      <>
+                        <div className="grid grid-cols-2 gap-2 text-sm">
+                          <div className="rounded border bg-white p-2">
+                            <p className="text-gray-500">Locales</p>
+                            <p className="font-semibold">{productDiff.localTotal}</p>
+                          </div>
+                          <div className="rounded border bg-white p-2">
+                            <p className="text-gray-500">Remotos</p>
+                            <p className="font-semibold">{productDiff.remoteTotal}</p>
+                          </div>
+                          <div className="rounded border bg-white p-2">
+                            <p className="text-gray-500">Se crearían</p>
+                            <p className="font-semibold text-emerald-700">{productDiff.toCreate}</p>
+                          </div>
+                          <div className="rounded border bg-white p-2">
+                            <p className="text-gray-500">Se actualizarían</p>
+                            <p className="font-semibold text-blue-700">{productDiff.toUpdate}</p>
+                          </div>
+                          <div className="rounded border bg-white p-2">
+                            <p className="text-gray-500">Conflictos</p>
+                            <p className="font-semibold text-amber-700">{productDiff.conflicts}</p>
+                          </div>
+                          <div className="rounded border bg-white p-2">
+                            <p className="text-gray-500">Sin identificadores</p>
+                            <p className="font-semibold text-rose-700">{productDiff.missingIdentifiers}</p>
+                          </div>
+                        </div>
+
+                        {productDiff.duplicateLocalIdentifiers > 0 && (
+                          <p className="text-xs text-amber-800">
+                            Duplicados locales por SKU/código detectados: {productDiff.duplicateLocalIdentifiers}
+                          </p>
+                        )}
+
+                        {productDiff.sampleConflicts.length > 0 && (
+                          <div className="rounded border bg-white p-2">
+                            <p className="text-xs font-semibold text-amber-800 mb-1">Ejemplos de conflicto</p>
+                            <ul className="text-xs text-gray-700 space-y-1">
+                              {productDiff.sampleConflicts.map((item) => (
+                                <li key={item}>- {item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
       </Tabs>
     </div>

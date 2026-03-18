@@ -103,6 +103,35 @@ const roundMoney = (value: number): number => {
 const uuidLike = (value?: string | null): boolean =>
   !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
+const resolveProductWriteErrorMessage = (error: unknown): string => {
+  if (!(error instanceof Error)) {
+    return 'No se pudo guardar el producto en Supabase. No se aplicaron cambios locales.';
+  }
+
+  const raw = error.message || '';
+  const normalized = raw.toLowerCase();
+
+  if (normalized.includes('duplicate key') || normalized.includes('already exists') || normalized.includes('unique')) {
+    if (normalized.includes('sku')) {
+      return 'No se pudo guardar: el SKU ya existe en la base de datos para esta tienda.';
+    }
+    if (normalized.includes('barcode') || normalized.includes('codigo') || normalized.includes('código')) {
+      return 'No se pudo guardar: el código de barras ya existe en la base de datos para esta tienda.';
+    }
+    return 'No se pudo guardar: hay un valor único duplicado (SKU o código de barras).';
+  }
+
+  if (normalized.includes('permission') || normalized.includes('rls') || normalized.includes('not allowed')) {
+    return 'No se pudo guardar por permisos de acceso (RLS). Verifica sesión y tienda activa.';
+  }
+
+  if (normalized.includes('jwt') || normalized.includes('token') || normalized.includes('auth')) {
+    return 'No se pudo guardar por sesión expirada. Cierra sesión e inicia nuevamente.';
+  }
+
+  return `No se pudo guardar el producto en Supabase: ${raw}`;
+};
+
 const isMissingTableError = (error: unknown, tableName: string): boolean => {
   if (!(error instanceof Error)) return false;
   const message = error.message.toLowerCase();
@@ -309,6 +338,22 @@ export interface StoreConfig {
   userRole: 'admin' | 'cashier';
 }
 
+export interface PendingProductSyncPreview {
+  canCompare: boolean;
+  reason?: string;
+  localTotal: number;
+  remoteTotal: number;
+  toCreate: number;
+  toUpdate: number;
+  conflicts: number;
+  missingIdentifiers: number;
+  duplicateLocalIdentifiers: number;
+  sampleConflicts: string[];
+}
+
+export type ProductWriteStatus = 'remote-synced' | 'local-pending' | 'failed';
+export type CategoryWriteStatus = ProductWriteStatus | 'invalid';
+
 // Contrato público del contexto (estado + acciones expuestas a la UI).
 interface POSContextType {
   // Autenticación
@@ -327,18 +372,19 @@ interface POSContextType {
   createStore: (store: { name: string; nit?: string; address?: string; phone?: string; email?: string }) => Promise<boolean>;
   syncWithSupabase: () => Promise<boolean>;
   uploadLocalBackupToSupabase: (clearExisting?: boolean) => Promise<boolean>;
+  getPendingProductSyncPreview: () => Promise<PendingProductSyncPreview>;
   hasConnectedStore: boolean;
   
   // Productos
   products: Product[];
-  addProduct: (product: Omit<Product, 'id'>) => void;
-  updateProduct: (id: string, product: Partial<Product>) => void;
-  deleteProduct: (id: string) => void;
+  addProduct: (product: Omit<Product, 'id'>) => Promise<ProductWriteStatus>;
+  updateProduct: (id: string, product: Partial<Product>) => Promise<ProductWriteStatus>;
+  deleteProduct: (id: string) => Promise<ProductWriteStatus>;
   searchProducts: (query: string) => Product[];
   categories: string[];
-  addCategory: (name: string) => boolean;
-  updateCategory: (oldName: string, newName: string) => boolean;
-  deleteCategory: (name: string, replacementCategory?: string) => boolean;
+  addCategory: (name: string) => Promise<CategoryWriteStatus>;
+  updateCategory: (oldName: string, newName: string) => Promise<CategoryWriteStatus>;
+  deleteCategory: (name: string, replacementCategory?: string) => Promise<CategoryWriteStatus>;
   adjustStock: (
     productId: string,
     nextStock: number,
@@ -351,7 +397,7 @@ interface POSContextType {
       nextUnitsPerPurchase?: number;
       productName?: string;
     }
-  ) => void;
+  ) => Promise<boolean>;
   
   // Ventas en curso (borradores)
   saleDrafts: SaleDraft[];
@@ -393,16 +439,16 @@ interface POSContextType {
   
   // Clientes
   customers: Customer[];
-  addCustomer: (customer: Omit<Customer, 'id' | 'points' | 'debt' | 'purchases' | 'debtHistory'>) => void;
-  updateCustomer: (id: string, customer: Partial<Customer>) => void;
+  addCustomer: (customer: Omit<Customer, 'id' | 'points' | 'debt' | 'purchases' | 'debtHistory'>) => Promise<ProductWriteStatus>;
+  updateCustomer: (id: string, customer: Partial<Customer>) => Promise<ProductWriteStatus>;
   addDebtToCustomer: (customerId: string, amount: number, description: string) => void;
   addPaymentToCustomer: (customerId: string, amount: number, description: string) => void;
   
   // Proveedores
   suppliers: Supplier[];
-  addSupplier: (supplier: Omit<Supplier, 'id' | 'debt' | 'purchases'>) => void;
-  updateSupplier: (id: string, supplier: Partial<Supplier>) => void;
-  deleteSupplier: (id: string) => void;
+  addSupplier: (supplier: Omit<Supplier, 'id' | 'debt' | 'purchases'>) => Promise<ProductWriteStatus>;
+  updateSupplier: (id: string, supplier: Partial<Supplier>) => Promise<ProductWriteStatus>;
+  deleteSupplier: (id: string) => Promise<ProductWriteStatus>;
   registerPurchase: (
     supplierId: string,
     items: { productId: string; quantity: number; cost: number }[],
@@ -1449,6 +1495,135 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const getPendingProductSyncPreview = async (): Promise<PendingProductSyncPreview> => {
+    const emptyPreview: PendingProductSyncPreview = {
+      canCompare: false,
+      reason: 'No hay conexión o tienda vinculada en Supabase.',
+      localTotal: 0,
+      remoteTotal: 0,
+      toCreate: 0,
+      toUpdate: 0,
+      conflicts: 0,
+      missingIdentifiers: 0,
+      duplicateLocalIdentifiers: 0,
+      sampleConflicts: [],
+    };
+
+    const offlineBackupRaw = localStorage.getItem(OFFLINE_BACKUP_KEY);
+    let localProductsRaw = localStorage.getItem('pos_products');
+
+    if (offlineBackupRaw) {
+      try {
+        const parsedBackup: unknown = JSON.parse(offlineBackupRaw);
+        if (isLocalBackupPayload(parsedBackup) && typeof parsedBackup.products === 'string') {
+          localProductsRaw = parsedBackup.products;
+        }
+      } catch {
+        // Ignorar backup corrupto y usar estado local actual.
+      }
+    }
+
+    const localProducts: Product[] = (() => {
+      try {
+        const parsed = localProductsRaw ? JSON.parse(localProductsRaw) : [];
+        return Array.isArray(parsed) ? parsed as Product[] : [];
+      } catch {
+        return [];
+      }
+    })();
+
+    if (!canReachSupabase || !session || !currentStoreId) {
+      return {
+        ...emptyPreview,
+        localTotal: localProducts.length,
+      };
+    }
+
+    try {
+      const remoteCatalog = await loadCategoriesAndProducts(session.access_token, currentStoreId);
+      const remoteProducts = remoteCatalog.products;
+      const remoteBySku = new Map<string, Product>();
+      const remoteByBarcode = new Map<string, Product>();
+
+      remoteProducts.forEach((product) => {
+        const skuKey = (product.sku || '').trim().toLowerCase();
+        const barcodeKey = (product.barcode || '').trim();
+        if (skuKey && !remoteBySku.has(skuKey)) remoteBySku.set(skuKey, product);
+        if (barcodeKey && !remoteByBarcode.has(barcodeKey)) remoteByBarcode.set(barcodeKey, product);
+      });
+
+      const seenSku = new Set<string>();
+      const seenBarcode = new Set<string>();
+
+      let toCreate = 0;
+      let toUpdate = 0;
+      let conflicts = 0;
+      let missingIdentifiers = 0;
+      let duplicateLocalIdentifiers = 0;
+      const sampleConflicts: string[] = [];
+
+      localProducts.forEach((localProduct) => {
+        const skuKey = (localProduct.sku || '').trim().toLowerCase();
+        const barcodeKey = (localProduct.barcode || '').trim();
+
+        if (!skuKey && !barcodeKey) {
+          missingIdentifiers += 1;
+          if (sampleConflicts.length < 8) {
+            sampleConflicts.push(`${localProduct.name}: sin SKU ni código de barras`);
+          }
+          return;
+        }
+
+        if (skuKey) {
+          if (seenSku.has(skuKey)) duplicateLocalIdentifiers += 1;
+          seenSku.add(skuKey);
+        }
+
+        if (barcodeKey) {
+          if (seenBarcode.has(barcodeKey)) duplicateLocalIdentifiers += 1;
+          seenBarcode.add(barcodeKey);
+        }
+
+        const remoteBySkuMatch = skuKey ? remoteBySku.get(skuKey) : undefined;
+        const remoteByBarcodeMatch = barcodeKey ? remoteByBarcode.get(barcodeKey) : undefined;
+
+        if (remoteBySkuMatch && remoteByBarcodeMatch && remoteBySkuMatch.id !== remoteByBarcodeMatch.id) {
+          conflicts += 1;
+          if (sampleConflicts.length < 8) {
+            sampleConflicts.push(`${localProduct.name}: SKU y código apuntan a productos remotos distintos`);
+          }
+          return;
+        }
+
+        if (remoteBySkuMatch || remoteByBarcodeMatch) {
+          toUpdate += 1;
+          return;
+        }
+
+        toCreate += 1;
+      });
+
+      return {
+        canCompare: true,
+        localTotal: localProducts.length,
+        remoteTotal: remoteProducts.length,
+        toCreate,
+        toUpdate,
+        conflicts,
+        missingIdentifiers,
+        duplicateLocalIdentifiers,
+        sampleConflicts,
+      };
+    } catch (error) {
+      console.error('No se pudo comparar pendientes locales con Supabase', error);
+      return {
+        ...emptyPreview,
+        reason: 'No se pudo consultar Supabase para comparar pendientes.',
+        localTotal: localProducts.length,
+      };
+    }
+  };
+
   // Auto-sync: deshabilitado por seguridad para evitar reimportaciones locales accidentales.
   useEffect(() => {
     if (!hasPendingSync || !canReachSupabase || !session || !currentStoreId) {
@@ -1492,24 +1667,47 @@ export function POSProvider({ children }: { children: ReactNode }) {
   }, [hasPendingSync, canReachSupabase, session, currentStoreId]);
 
   // Funciones de productos
-  const addProduct = (product: Omit<Product, 'id'>) => {
-    const newProduct = { ...product, id: Date.now().toString() };
-    setProducts([...products, newProduct]);
-
+  const addProduct = async (product: Omit<Product, 'id'>): Promise<ProductWriteStatus> => {
     if (isConnectedToSupabase && session && currentStoreId) {
-      void createProduct(session.access_token, currentStoreId, product)
-        .then((created) => {
-          if (!created) return;
-          setProducts(prev => prev.map(p => p.id === newProduct.id ? created : p));
-        })
-        .catch((error) => {
-          console.error('No se pudo crear producto en Supabase', error);
-          markPendingSync();
-          toast.error('Producto guardado localmente, pero falló el guardado en Supabase.');
-        });
+      try {
+        const created = await createProduct(session.access_token, currentStoreId, product);
+        if (!created) {
+          toast.error('Supabase no devolvió el producto creado.');
+          return 'failed';
+        }
+
+        setProducts(prev => [...prev, created]);
+
+        if (created.stock > 0) {
+          const unitCost = buildUnitCostWithIva(created);
+          appendKardexMovement({
+            productId: created.id,
+            productName: created.name,
+            type: 'entry',
+            reference: `INI-${created.id}`,
+            quantity: created.stock,
+            stockBefore: 0,
+            stockAfter: created.stock,
+            unitCost,
+            unitSalePrice: created.salePrice,
+            totalCost: unitCost * created.stock,
+          });
+        }
+
+        return 'remote-synced';
+      } catch (error) {
+        console.error('No se pudo crear producto en Supabase', error);
+        toast.error(resolveProductWriteErrorMessage(error));
+        return 'failed';
+      }
     }
 
+    const newProduct = { ...product, id: Date.now().toString() };
+    setProducts(prev => [...prev, newProduct]);
+    markPendingSync();
+
     if (newProduct.stock > 0) {
+      const unitCost = buildUnitCostWithIva(newProduct);
       appendKardexMovement({
         productId: newProduct.id,
         productName: newProduct.name,
@@ -1518,27 +1716,34 @@ export function POSProvider({ children }: { children: ReactNode }) {
         quantity: newProduct.stock,
         stockBefore: 0,
         stockAfter: newProduct.stock,
-        unitCost: buildUnitCostWithIva(newProduct),
+        unitCost,
         unitSalePrice: newProduct.salePrice,
-        totalCost: buildUnitCostWithIva(newProduct) * newProduct.stock
+        totalCost: unitCost * newProduct.stock,
       });
     }
+
+    return 'local-pending';
   };
 
-  const updateProduct = (id: string, updatedProduct: Partial<Product>) => {
-    setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedProduct } : p));
-
+  const updateProduct = async (id: string, updatedProduct: Partial<Product>): Promise<ProductWriteStatus> => {
     if (isConnectedToSupabase && session && currentStoreId) {
-      void patchProduct(session.access_token, currentStoreId, id, updatedProduct)
-        .catch((error) => {
-          console.error('No se pudo actualizar producto en Supabase', error);
-          markPendingSync();
-          toast.error('Producto actualizado localmente, pero falló la sincronización en Supabase.');
-      });
+      try {
+        await patchProduct(session.access_token, currentStoreId, id, updatedProduct);
+        setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedProduct } : p));
+        return 'remote-synced';
+      } catch (error) {
+        console.error('No se pudo actualizar producto en Supabase', error);
+        toast.error(resolveProductWriteErrorMessage(error));
+        return 'failed';
+      }
     }
+
+    setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedProduct } : p));
+    markPendingSync();
+    return 'local-pending';
   };
 
-  const adjustStock = (
+  const adjustStock = async (
     productId: string,
     nextStock: number,
     options?: {
@@ -1550,15 +1755,16 @@ export function POSProvider({ children }: { children: ReactNode }) {
       nextUnitsPerPurchase?: number;
       productName?: string;
     }
-  ) => {
+  ): Promise<boolean> => {
     const product = products.find(p => p.id === productId);
-    if (!product) return;
+    if (!product) return false;
 
     const stockAfter = Number.isFinite(nextStock) ? nextStock : product.stock;
     const stockBefore = product.stock;
-    if (stockAfter === stockBefore) return;
+    if (stockAfter === stockBefore) return true;
 
-    updateProduct(productId, { stock: stockAfter });
+    const status = await updateProduct(productId, { stock: stockAfter });
+    if (status === 'failed') return false;
 
     const effectiveCostPrice = typeof options?.nextCostPrice === 'number' ? options.nextCostPrice : product.costPrice;
     const effectiveIva = typeof options?.nextIva === 'number' ? options.nextIva : product.iva;
@@ -1590,19 +1796,26 @@ export function POSProvider({ children }: { children: ReactNode }) {
       unitSalePrice,
       totalCost: Math.abs(delta) * unitCost,
     });
+    return true;
   };
 
-  const deleteProduct = (id: string) => {
-    setProducts(products.filter(p => p.id !== id));
-
+  const deleteProduct = async (id: string): Promise<ProductWriteStatus> => {
     if (isConnectedToSupabase && session && currentStoreId) {
-      void removeProduct(session.access_token, currentStoreId, id)
-        .catch((error) => {
-          console.error('No se pudo eliminar producto en Supabase', error);
-          markPendingSync();
-          toast.error('Producto eliminado localmente, pero falló en Supabase.');
-        });
+      try {
+        await removeProduct(session.access_token, currentStoreId, id);
+        setProducts(prev => prev.filter(p => p.id !== id));
+        return 'remote-synced';
+      } catch (error) {
+        console.error('No se pudo eliminar producto en Supabase', error);
+        const message = error instanceof Error ? error.message : '';
+        toast.error(message ? `No se pudo eliminar en Supabase: ${message}` : 'No se pudo eliminar en Supabase. No se aplicaron cambios locales.');
+        return 'failed';
+      }
     }
+
+    setProducts(prev => prev.filter(p => p.id !== id));
+    markPendingSync();
+    return 'local-pending';
   };
 
   const searchProducts = (query: string): Product[] => {
@@ -1615,107 +1828,130 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   // Funciones de categorías
-  const addCategory = (name: string): boolean => {
+  const addCategory = async (name: string): Promise<CategoryWriteStatus> => {
     const normalizedName = name.trim();
-    if (!normalizedName) return false;
+    if (!normalizedName) return 'invalid';
 
     const alreadyExists = categories.some(
       category => category.toLowerCase() === normalizedName.toLowerCase()
     );
-    if (alreadyExists) return false;
-
-    setCategories([...categories, normalizedName]);
+    if (alreadyExists) return 'invalid';
 
     if (isConnectedToSupabase && session && currentStoreId) {
-      void createCategory(session.access_token, currentStoreId, normalizedName)
-        .catch((error) => {
-          console.error('No se pudo crear categoría en Supabase', error);
-          markPendingSync();
-          toast.error('Categoría creada localmente, pero falló en Supabase.');
-        });
+      try {
+        await createCategory(session.access_token, currentStoreId, normalizedName);
+        setCategories(prev => [...prev, normalizedName]);
+        return 'remote-synced';
+      } catch (error) {
+        console.error('No se pudo crear categoría en Supabase', error);
+        toast.error('No se pudo crear la categoría en Supabase.');
+        return 'failed';
+      }
     }
 
-    return true;
+    setCategories(prev => [...prev, normalizedName]);
+    markPendingSync();
+    return 'local-pending';
   };
 
-  const updateCategory = (oldName: string, newName: string): boolean => {
+  const updateCategory = async (oldName: string, newName: string): Promise<CategoryWriteStatus> => {
     const normalizedNewName = newName.trim();
-    if (!normalizedNewName) return false;
-    if (oldName === normalizedNewName) return true;
+    if (!normalizedNewName) return 'invalid';
+    if (oldName === normalizedNewName) return 'remote-synced';
 
     const oldCategoryExists = categories.includes(oldName);
-    if (!oldCategoryExists) return false;
+    if (!oldCategoryExists) return 'invalid';
 
     const duplicate = categories.some(
       category => category.toLowerCase() === normalizedNewName.toLowerCase() && category !== oldName
     );
-    if (duplicate) return false;
+    if (duplicate) return 'invalid';
 
-    setCategories(categories.map(category => category === oldName ? normalizedNewName : category));
-    setProducts(products.map(product =>
+    const productsToMove = products
+      .filter(product => product.category === oldName)
+      .map(product => product.id);
+
+    if (isConnectedToSupabase && session && currentStoreId) {
+      try {
+        await renameCategory(session.access_token, currentStoreId, oldName, normalizedNewName);
+        await Promise.all(productsToMove.map((productId) =>
+          patchProduct(session.access_token, currentStoreId, productId, { category: normalizedNewName })
+        ));
+
+        setCategories(prev => prev.map(category => category === oldName ? normalizedNewName : category));
+        setProducts(prev => prev.map(product =>
+          product.category === oldName
+            ? { ...product, category: normalizedNewName }
+            : product
+        ));
+        return 'remote-synced';
+      } catch (error) {
+        console.error('No se pudo editar categoría en Supabase', error);
+        toast.error('No se pudo actualizar la categoría en Supabase.');
+        return 'failed';
+      }
+    }
+
+    setCategories(prev => prev.map(category => category === oldName ? normalizedNewName : category));
+    setProducts(prev => prev.map(product =>
       product.category === oldName
         ? { ...product, category: normalizedNewName }
         : product
     ));
-
-    if (isConnectedToSupabase && session && currentStoreId) {
-      void renameCategory(session.access_token, currentStoreId, oldName, normalizedNewName)
-        .then(() => {
-          const productIds = products
-            .filter(product => product.category === oldName)
-            .map(product => product.id);
-          productIds.forEach((productId) => {
-            void patchProduct(session.access_token, currentStoreId, productId, { category: normalizedNewName });
-          });
-        })
-        .catch((error) => {
-          console.error('No se pudo editar categoría en Supabase', error);
-          markPendingSync();
-          toast.error('Categoría actualizada localmente, pero falló en Supabase.');
-        });
-    }
-
-    return true;
+    markPendingSync();
+    return 'local-pending';
   };
 
-  const deleteCategory = (name: string, replacementCategory?: string): boolean => {
-    if (!categories.includes(name)) return false;
+  const deleteCategory = async (name: string, replacementCategory?: string): Promise<CategoryWriteStatus> => {
+    if (!categories.includes(name)) return 'invalid';
 
     const hasProductsInCategory = products.some(product => product.category === name);
+    const replacement = replacementCategory?.trim();
 
     if (hasProductsInCategory) {
-      const replacement = replacementCategory?.trim();
       if (!replacement || replacement === name || !categories.includes(replacement)) {
-        return false;
+        return 'invalid';
       }
+    }
 
-      setProducts(products.map(product =>
+    const productsToMove = products.filter(product => product.category === name);
+
+    if (isConnectedToSupabase && session && currentStoreId) {
+      try {
+        if (productsToMove.length > 0 && replacement) {
+          await Promise.all(productsToMove.map((product) =>
+            patchProduct(session.access_token, currentStoreId, product.id, { category: replacement })
+          ));
+        }
+
+        await removeCategory(session.access_token, currentStoreId, name);
+
+        if (productsToMove.length > 0 && replacement) {
+          setProducts(prev => prev.map(product =>
+            product.category === name
+              ? { ...product, category: replacement }
+              : product
+          ));
+        }
+        setCategories(prev => prev.filter(category => category !== name));
+        return 'remote-synced';
+      } catch (error) {
+        console.error('No se pudo eliminar categoría en Supabase', error);
+        toast.error('No se pudo eliminar la categoría en Supabase.');
+        return 'failed';
+      }
+    }
+
+    if (productsToMove.length > 0 && replacement) {
+      setProducts(prev => prev.map(product =>
         product.category === name
           ? { ...product, category: replacement }
           : product
       ));
     }
-
-    setCategories(categories.filter(category => category !== name));
-
-    if (isConnectedToSupabase && session && currentStoreId) {
-      const productsToMove = products.filter(product => product.category === name);
-
-      if (productsToMove.length > 0 && replacementCategory) {
-        productsToMove.forEach((product) => {
-          void patchProduct(session.access_token, currentStoreId, product.id, { category: replacementCategory });
-        });
-      }
-
-      void removeCategory(session.access_token, currentStoreId, name)
-        .catch((error) => {
-          console.error('No se pudo eliminar categoría en Supabase', error);
-          markPendingSync();
-          toast.error('Categoría eliminada localmente, pero falló en Supabase.');
-        });
-    }
-
-    return true;
+    setCategories(prev => prev.filter(category => category !== name));
+    markPendingSync();
+    return 'local-pending';
   };
 
   // Borradores de venta (multi-ventas).
@@ -2503,7 +2739,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   // Funciones de clientes
-  const addCustomer = (customer: Omit<Customer, 'id' | 'points' | 'debt' | 'purchases' | 'debtHistory'>) => {
+  const addCustomer = async (customer: Omit<Customer, 'id' | 'points' | 'debt' | 'purchases' | 'debtHistory'>): Promise<ProductWriteStatus> => {
     const newCustomer: Customer = {
       ...customer,
       id: Date.now().toString(),
@@ -2512,46 +2748,62 @@ export function POSProvider({ children }: { children: ReactNode }) {
       purchases: [],
       debtHistory: []
     };
-    setCustomers([...customers, newCustomer]);
 
     if (isConnectedToSupabase && session && currentStoreId) {
-      void createCustomer(session.access_token, currentStoreId, {
-        name: newCustomer.name,
-        phone: newCustomer.phone,
-        address: newCustomer.address,
-        email: newCustomer.email,
-        nit: newCustomer.nit,
-        points: newCustomer.points,
-        debt: newCustomer.debt,
-      }).then((remoteId) => {
-        if (!remoteId) return;
-        setCustomers(prev => prev.map(c => c.id === newCustomer.id ? { ...c, id: remoteId } : c));
-      }).catch((error) => {
+      try {
+        const remoteId = await createCustomer(session.access_token, currentStoreId, {
+          name: newCustomer.name,
+          phone: newCustomer.phone,
+          address: newCustomer.address,
+          email: newCustomer.email,
+          nit: newCustomer.nit,
+          points: newCustomer.points,
+          debt: newCustomer.debt,
+        });
+
+        if (!remoteId) {
+          toast.error('Supabase no devolvió el cliente creado.');
+          return 'failed';
+        }
+
+        setCustomers(prev => [...prev, { ...newCustomer, id: remoteId }]);
+        return 'remote-synced';
+      } catch (error) {
         console.error('No se pudo guardar cliente en Supabase', error);
-        markPendingSync();
-        toast.error('Cliente guardado localmente, pero falló en Supabase.');
-      });
+        toast.error('No se pudo guardar el cliente en Supabase.');
+        return 'failed';
+      }
     }
+
+    setCustomers(prev => [...prev, newCustomer]);
+    markPendingSync();
+    return 'local-pending';
   };
 
-  const updateCustomer = (id: string, updatedCustomer: Partial<Customer>) => {
-    setCustomers(customers.map(c => c.id === id ? { ...c, ...updatedCustomer } : c));
-
+  const updateCustomer = async (id: string, updatedCustomer: Partial<Customer>): Promise<ProductWriteStatus> => {
     if (isConnectedToSupabase && session && currentStoreId) {
-      void updateCustomerRow(session.access_token, currentStoreId, id, {
-        name: updatedCustomer.name,
-        phone: updatedCustomer.phone,
-        address: updatedCustomer.address,
-        email: updatedCustomer.email,
-        nit: updatedCustomer.nit,
-        points: updatedCustomer.points,
-        debt: updatedCustomer.debt,
-      }).catch((error) => {
+      try {
+        await updateCustomerRow(session.access_token, currentStoreId, id, {
+          name: updatedCustomer.name,
+          phone: updatedCustomer.phone,
+          address: updatedCustomer.address,
+          email: updatedCustomer.email,
+          nit: updatedCustomer.nit,
+          points: updatedCustomer.points,
+          debt: updatedCustomer.debt,
+        });
+        setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updatedCustomer } : c));
+        return 'remote-synced';
+      } catch (error) {
         console.error('No se pudo actualizar cliente en Supabase', error);
-        markPendingSync();
-        toast.error('Cliente actualizado localmente, pero falló en Supabase.');
-      });
+        toast.error('No se pudo actualizar el cliente en Supabase.');
+        return 'failed';
+      }
     }
+
+    setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updatedCustomer } : c));
+    markPendingSync();
+    return 'local-pending';
   };
 
   const addDebtToCustomer = (customerId: string, amount: number, description: string) => {
@@ -2628,7 +2880,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   // Funciones de proveedores
-  const addSupplier = (supplier: Omit<Supplier, 'id' | 'debt' | 'purchases'>) => {
+  const addSupplier = async (supplier: Omit<Supplier, 'id' | 'debt' | 'purchases'>): Promise<ProductWriteStatus> => {
     const normalizedAccounts = (supplier.bankAccounts || [])
       .map(account => account.trim())
       .filter(account => account.length > 0);
@@ -2640,59 +2892,80 @@ export function POSProvider({ children }: { children: ReactNode }) {
       debt: 0,
       purchases: []
     };
-    setSuppliers([...suppliers, newSupplier]);
 
     if (isConnectedToSupabase && session && currentStoreId) {
-      void createSupplierRow(session.access_token, currentStoreId, {
-        name: newSupplier.name,
-        nit: newSupplier.nit,
-        phone: newSupplier.phone,
-        email: newSupplier.email,
-        address: newSupplier.address,
-        bankAccounts: newSupplier.bankAccounts,
-        debt: newSupplier.debt,
-      }).then((remoteId) => {
-        if (!remoteId) return;
-        setSuppliers(prev => prev.map(s => s.id === newSupplier.id ? { ...s, id: remoteId } : s));
-      }).catch((error) => {
-        console.error('No se pudo guardar proveedor en Supabase', error);
-        markPendingSync();
-        toast.error('Proveedor guardado localmente, pero falló en Supabase.');
-      });
-    }
-  };
-
-  const updateSupplier = (id: string, updatedSupplier: Partial<Supplier>) => {
-    setSuppliers(suppliers.map(s => s.id === id ? { ...s, ...updatedSupplier } : s));
-
-    if (isConnectedToSupabase && session && currentStoreId) {
-      void updateSupplierRow(session.access_token, currentStoreId, id, {
-        name: updatedSupplier.name,
-        nit: updatedSupplier.nit,
-        phone: updatedSupplier.phone,
-        email: updatedSupplier.email,
-        address: updatedSupplier.address,
-        bankAccounts: updatedSupplier.bankAccounts,
-        debt: updatedSupplier.debt,
-      }).catch((error) => {
-        console.error('No se pudo actualizar proveedor en Supabase', error);
-        markPendingSync();
-        toast.error('Proveedor actualizado localmente, pero falló en Supabase.');
-      });
-    }
-  };
-
-  const deleteSupplier = (id: string) => {
-    setSuppliers(suppliers.filter(s => s.id !== id));
-
-    if (isConnectedToSupabase && session && currentStoreId) {
-      void deleteSupplierRow(session.access_token, currentStoreId, id)
-        .catch((error) => {
-          console.error('No se pudo eliminar proveedor en Supabase', error);
-          markPendingSync();
-          toast.error('Proveedor eliminado localmente, pero falló en Supabase.');
+      try {
+        const remoteId = await createSupplierRow(session.access_token, currentStoreId, {
+          name: newSupplier.name,
+          nit: newSupplier.nit,
+          phone: newSupplier.phone,
+          email: newSupplier.email,
+          address: newSupplier.address,
+          bankAccounts: newSupplier.bankAccounts,
+          debt: newSupplier.debt,
         });
+
+        if (!remoteId) {
+          toast.error('Supabase no devolvió el proveedor creado.');
+          return 'failed';
+        }
+
+        setSuppliers(prev => [...prev, { ...newSupplier, id: remoteId }]);
+        return 'remote-synced';
+      } catch (error) {
+        console.error('No se pudo guardar proveedor en Supabase', error);
+        toast.error('No se pudo guardar el proveedor en Supabase.');
+        return 'failed';
+      }
     }
+
+    setSuppliers(prev => [...prev, newSupplier]);
+    markPendingSync();
+    return 'local-pending';
+  };
+
+  const updateSupplier = async (id: string, updatedSupplier: Partial<Supplier>): Promise<ProductWriteStatus> => {
+    if (isConnectedToSupabase && session && currentStoreId) {
+      try {
+        await updateSupplierRow(session.access_token, currentStoreId, id, {
+          name: updatedSupplier.name,
+          nit: updatedSupplier.nit,
+          phone: updatedSupplier.phone,
+          email: updatedSupplier.email,
+          address: updatedSupplier.address,
+          bankAccounts: updatedSupplier.bankAccounts,
+          debt: updatedSupplier.debt,
+        });
+        setSuppliers(prev => prev.map(s => s.id === id ? { ...s, ...updatedSupplier } : s));
+        return 'remote-synced';
+      } catch (error) {
+        console.error('No se pudo actualizar proveedor en Supabase', error);
+        toast.error('No se pudo actualizar el proveedor en Supabase.');
+        return 'failed';
+      }
+    }
+
+    setSuppliers(prev => prev.map(s => s.id === id ? { ...s, ...updatedSupplier } : s));
+    markPendingSync();
+    return 'local-pending';
+  };
+
+  const deleteSupplier = async (id: string): Promise<ProductWriteStatus> => {
+    if (isConnectedToSupabase && session && currentStoreId) {
+      try {
+        await deleteSupplierRow(session.access_token, currentStoreId, id);
+        setSuppliers(prev => prev.filter(s => s.id !== id));
+        return 'remote-synced';
+      } catch (error) {
+        console.error('No se pudo eliminar proveedor en Supabase', error);
+        toast.error('No se pudo eliminar el proveedor en Supabase.');
+        return 'failed';
+      }
+    }
+
+    setSuppliers(prev => prev.filter(s => s.id !== id));
+    markPendingSync();
+    return 'local-pending';
   };
 
   const registerPurchase = (
@@ -2906,6 +3179,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       createStore,
       syncWithSupabase,
       uploadLocalBackupToSupabase,
+      getPendingProductSyncPreview,
       hasConnectedStore: Boolean(currentStoreId),
       products,
       addProduct,

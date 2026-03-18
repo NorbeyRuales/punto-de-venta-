@@ -26,7 +26,7 @@ export function Suppliers() {
   );
 
   // Alta de proveedores.
-  const handleAdd = () => {
+  const handleAdd = async () => {
     const trimmedName = formData.name.trim();
     const trimmedNit = formData.nit.trim();
     const trimmedPhone = formData.phone.trim();
@@ -40,20 +40,25 @@ export function Suppliers() {
       .map(account => account.trim())
       .filter(account => account.length > 0);
 
-    addSupplier({
+    const status = await addSupplier({
       ...formData,
       name: trimmedName,
       nit: trimmedNit,
       phone: trimmedPhone,
       bankAccounts
     });
-    toast.success('Proveedor agregado');
+    if (status === 'failed') return;
+    if (status === 'remote-synced') {
+      toast.success('Proveedor guardado en la base de datos.');
+    } else {
+      toast.info('Proveedor guardado localmente. Quedó pendiente de sincronización manual.');
+    }
     setShowAddDialog(false);
     setFormData({ name: '', nit: '', phone: '', email: '', address: '', bankAccounts: [''] });
   };
 
   // Edición de proveedores.
-  const handleEdit = () => {
+  const handleEdit = async () => {
     if (!selectedSupplier) return;
     const trimmedName = editFormData.name.trim();
     const trimmedNit = editFormData.nit.trim();
@@ -68,7 +73,7 @@ export function Suppliers() {
       .map(account => account.trim())
       .filter(account => account.length > 0);
 
-    updateSupplier(selectedSupplier.id, {
+    const status = await updateSupplier(selectedSupplier.id, {
       ...editFormData,
       name: trimmedName,
       nit: trimmedNit,
@@ -76,7 +81,12 @@ export function Suppliers() {
       bankAccounts
     });
 
-    toast.success('Proveedor actualizado');
+    if (status === 'failed') return;
+    if (status === 'remote-synced') {
+      toast.success('Proveedor actualizado en la base de datos.');
+    } else {
+      toast.info('Proveedor actualizado localmente. Quedó pendiente de sincronización manual.');
+    }
     setShowEditDialog(false);
     setSelectedSupplier(null);
     setEditFormData({ name: '', nit: '', phone: '', email: '', address: '', bankAccounts: [''] });
@@ -102,10 +112,15 @@ export function Suppliers() {
   };
 
   // Eliminación con confirmación.
-  const handleDelete = (supplierId: string) => {
+  const handleDelete = async (supplierId: string) => {
     if (!confirm('¿Está seguro de eliminar este proveedor?')) return;
-    deleteSupplier(supplierId);
-    toast.success('Proveedor eliminado');
+    const status = await deleteSupplier(supplierId);
+    if (status === 'failed') return;
+    if (status === 'remote-synced') {
+      toast.success('Proveedor eliminado en la base de datos.');
+    } else {
+      toast.info('Proveedor eliminado localmente. Quedó pendiente de sincronización manual.');
+    }
   };
 
   const handleBankAccountChange = (index: number, value: string) => {

@@ -230,7 +230,7 @@ export function Inventory() {
     : [];
 
   // Alta de producto.
-  const handleAddProduct = () => {
+  const handleAddProduct = async () => {
     const errors = validateForm();
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) {
@@ -238,7 +238,7 @@ export function Inventory() {
       return;
     }
 
-    addProduct({
+    const status = await addProduct({
       name: formData.name,
       sku: formData.sku || `SKU-${Date.now()}`,
       barcode: formData.barcode || `${Date.now()}`,
@@ -256,14 +256,21 @@ export function Inventory() {
       unitPrice: calculatedUnitSalePrice
     });
 
-    toast.success('Producto agregado exitosamente');
+    if (status === 'failed') return;
+
+    if (status === 'remote-synced') {
+      toast.success('Producto guardado en la base de datos.');
+    } else {
+      toast.info('Producto guardado localmente. Quedó pendiente de sincronización manual.');
+    }
+
     setShowAddDialog(false);
     setFormErrors({});
     resetForm();
   };
 
   // Edición de producto.
-  const handleEditProduct = () => {
+  const handleEditProduct = async () => {
     if (!selectedProduct) return;
     const errors = validateForm();
     setFormErrors(errors);
@@ -299,8 +306,10 @@ export function Inventory() {
 
     if (stockChanged) {
       const { stock, ...patchWithoutStock } = productPatch;
-      updateProduct(selectedProduct.id, patchWithoutStock);
-      adjustStock(selectedProduct.id, nextStock, {
+      const patchStatus = await updateProduct(selectedProduct.id, patchWithoutStock);
+      if (patchStatus === 'failed') return;
+
+      const adjusted = await adjustStock(selectedProduct.id, nextStock, {
         reference: `AJU-${Date.now().toString().slice(-6)}`,
         productName: formData.name,
         nextCostPrice: purchaseCost,
@@ -308,22 +317,41 @@ export function Inventory() {
         nextUnitsPerPurchase: unitsPerPurchase,
         unitSalePrice: calculatedUnitSalePrice
       });
+      if (!adjusted) return;
+
+      if (patchStatus === 'remote-synced') {
+        toast.success('Producto actualizado en la base de datos.');
+      } else {
+        toast.info('Producto actualizado localmente. Quedó pendiente de sincronización manual.');
+      }
     } else {
-      updateProduct(selectedProduct.id, productPatch);
+      const status = await updateProduct(selectedProduct.id, productPatch);
+      if (status === 'failed') return;
+
+      if (status === 'remote-synced') {
+        toast.success('Producto actualizado en la base de datos.');
+      } else {
+        toast.info('Producto actualizado localmente. Quedó pendiente de sincronización manual.');
+      }
     }
 
-    toast.success('Producto actualizado');
     setShowEditDialog(false);
     setSelectedProduct(null);
     setFormErrors({});
     resetForm();
   };
 
-  const handleDeleteProduct = (product: Product) => {
+  const handleDeleteProduct = async (product: Product) => {
     const confirmed = confirm(`¿Eliminar "${product.name}"? Esta acción no se puede deshacer.`);
     if (!confirmed) return;
-    deleteProduct(product.id);
-    toast.success('Producto eliminado');
+    const status = await deleteProduct(product.id);
+    if (status === 'failed') return;
+
+    if (status === 'remote-synced') {
+      toast.success('Producto eliminado en la base de datos.');
+    } else {
+      toast.info('Producto eliminado localmente. Quedó pendiente de sincronización manual.');
+    }
   };
 
   const openEditDialog = (product: Product) => {

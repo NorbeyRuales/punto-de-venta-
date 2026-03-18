@@ -72,13 +72,13 @@ export function Customers() {
   const customersWithDebt = customers.filter(c => c.debt > 0).length;
 
   // Alta y edición de clientes.
-  const handleAddCustomer = () => {
+  const handleAddCustomer = async () => {
     if (!formData.name || !formData.phone) {
       toast.error('Complete los campos requeridos');
       return;
     }
 
-    addCustomer({
+    const status = await addCustomer({
       name: formData.name,
       phone: formData.phone,
       address: formData.address,
@@ -86,15 +86,20 @@ export function Customers() {
       nit: formData.nit
     });
 
-    toast.success('Cliente agregado exitosamente');
+    if (status === 'failed') return;
+    if (status === 'remote-synced') {
+      toast.success('Cliente guardado en la base de datos.');
+    } else {
+      toast.info('Cliente guardado localmente. Quedó pendiente de sincronización manual.');
+    }
     setShowAddDialog(false);
     resetForm();
   };
 
-  const handleEditCustomer = () => {
+  const handleEditCustomer = async () => {
     if (!selectedCustomer) return;
 
-    updateCustomer(selectedCustomer.id, {
+    const status = await updateCustomer(selectedCustomer.id, {
       name: formData.name,
       phone: formData.phone,
       address: formData.address,
@@ -102,7 +107,12 @@ export function Customers() {
       nit: formData.nit
     });
 
-    toast.success('Cliente actualizado');
+    if (status === 'failed') return;
+    if (status === 'remote-synced') {
+      toast.success('Cliente actualizado en la base de datos.');
+    } else {
+      toast.info('Cliente actualizado localmente. Quedó pendiente de sincronización manual.');
+    }
     setShowEditDialog(false);
     setSelectedCustomer(null);
     resetForm();
