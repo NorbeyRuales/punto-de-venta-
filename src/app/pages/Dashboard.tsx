@@ -17,6 +17,13 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { format, subDays, startOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
 
+const roundToHundred = (value: number) => {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value / 100) * 100;
+};
+
+const formatCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
+
 export function Dashboard() {
   const { getSalesToday, products, sales, customers, kardexMovements } = usePOS();
   const navigate = useNavigate();
@@ -31,7 +38,7 @@ export function Dashboard() {
     Boolean(sale.returnedAt) || returnedReferences.has(`DEV-${sale.id}`);
   const todaySales = getSalesToday();
   const netTodaySales = todaySales.filter((sale) => !isReturned(sale));
-  const totalToday = netTodaySales.reduce((sum, sale) => sum + sale.total, 0);
+  const totalToday = roundToHundred(netTodaySales.reduce((sum, sale) => sum + sale.total, 0));
   const transactionsToday = netTodaySales.length;
 
   // Productos más vendidos hoy
@@ -69,7 +76,7 @@ export function Dashboard() {
     
     return {
       date: format(date, 'EEE', { locale: es }),
-      ventas: Math.round(total)
+      ventas: roundToHundred(total)
     };
   });
 
@@ -96,7 +103,7 @@ export function Dashboard() {
             <div>
               <p className="text-sm text-gray-600 mb-1">Ventas del Día</p>
               <p className="text-3xl font-bold text-[#2ECC71]">
-                ${totalToday.toLocaleString('es-CO')}
+                {formatCurrency(totalToday)}
               </p>
             </div>
             <div className="w-14 h-14 bg-[#2ECC71]/10 rounded-full flex items-center justify-center">
@@ -182,7 +189,7 @@ export function Dashboard() {
                 <XAxis dataKey="date" />
                 <YAxis />
                 <Tooltip 
-                  formatter={(value) => `$${Number(value).toLocaleString('es-CO')}`}
+                  formatter={(value) => formatCurrency(Number(value))}
                 />
                 <Line 
                   type="monotone" 

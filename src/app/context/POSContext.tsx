@@ -95,6 +95,11 @@ const toNumber = (value: unknown, fallback = 0): number => {
   return Number.isFinite(num) ? num : fallback;
 };
 
+const roundMoney = (value: number): number => {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value / 100) * 100;
+};
+
 const uuidLike = (value?: string | null): boolean =>
   !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
@@ -2019,16 +2024,20 @@ export function POSProvider({ children }: { children: ReactNode }) {
       .filter(movement => movement.type === 'cash_out' && !isReturnMovement(movement))
       .reduce((sum, movement) => sum + movement.amount, 0);
 
-    const expectedCash = session.openingCash + cashSalesTotal + cashInTotal - cashOutTotal - cashReturnTotal;
+    const roundedSalesByMethod: Record<string, number> = Object.fromEntries(
+      Object.entries(salesByMethod).map(([method, total]) => [method, roundMoney(total)])
+    );
+
+    const expectedCash = roundMoney(session.openingCash + cashSalesTotal + cashInTotal - cashOutTotal - cashReturnTotal);
 
     return {
-      salesTotal,
-      salesReturnedTotal,
-      salesByMethod,
-      cashSalesTotal,
-      cashInTotal,
-      cashOutTotal,
-      cashReturnTotal,
+      salesTotal: roundMoney(salesTotal),
+      salesReturnedTotal: roundMoney(salesReturnedTotal),
+      salesByMethod: roundedSalesByMethod,
+      cashSalesTotal: roundMoney(cashSalesTotal),
+      cashInTotal: roundMoney(cashInTotal),
+      cashOutTotal: roundMoney(cashOutTotal),
+      cashReturnTotal: roundMoney(cashReturnTotal),
       expectedCash,
     };
   };
@@ -2040,7 +2049,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
-    const safeOpeningCash = Number.isFinite(openingCash) ? Math.max(0, openingCash) : 0;
+    const safeOpeningCash = roundMoney(Number.isFinite(openingCash) ? Math.max(0, openingCash) : 0);
     const openedAt = new Date().toISOString();
     let sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -2085,7 +2094,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    const safeAmount = Number.isFinite(amount) ? Math.max(0, amount) : 0;
+    const safeAmount = roundMoney(Number.isFinite(amount) ? Math.max(0, amount) : 0);
     if (safeAmount <= 0) {
       toast.error('El monto debe ser mayor a 0.');
       return null;
@@ -2135,10 +2144,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    const safeCounted = Number.isFinite(countedCash) ? Math.max(0, countedCash) : 0;
+    const safeCounted = roundMoney(Number.isFinite(countedCash) ? Math.max(0, countedCash) : 0);
     const report = getCashSessionReport(currentCashSession.id);
-    const expectedCash = report.expectedCash;
-    const difference = safeCounted - expectedCash;
+    const expectedCash = roundMoney(report.expectedCash);
+    const difference = roundMoney(safeCounted - expectedCash);
     const closedAt = new Date().toISOString();
 
     const closedSession: CashSession = {
@@ -2212,23 +2221,27 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
 
       const total = subtotal - discountTotal;
-      if (total <= 0) {
+      const roundedSubtotal = roundMoney(subtotal);
+      const roundedDiscount = roundMoney(discountTotal);
+      const roundedIva = roundMoney(ivaTotal);
+      const roundedTotal = roundMoney(total);
+      if (roundedTotal <= 0) {
         toast.error('No hay productos en la venta.');
         return null;
       }
 
       const invoiceNumber = getNextOfflineInvoiceNumber();
-      const safeCashReceived = Number.isFinite(cashReceived) ? cashReceived : 0;
-      const change = safeCashReceived - total;
+      const safeCashReceived = roundMoney(Number.isFinite(cashReceived) ? cashReceived : 0);
+      const change = roundMoney(safeCashReceived - roundedTotal);
 
       const newSale: Sale = {
         id: `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         date: saleDate,
         items: [...cart],
-        subtotal,
-        discount: discountTotal,
-        iva: ivaTotal,
-        total,
+        subtotal: roundedSubtotal,
+        discount: roundedDiscount,
+        iva: roundedIva,
+        total: roundedTotal,
         paymentMethod: paymentMethodValue,
         cashReceived: safeCashReceived,
         change,
@@ -2308,7 +2321,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       const result = await finalizeSaleDraft(session.access_token, currentStoreId, {
         draftId: activeDraft.id,
         paymentMethod: paymentMethodValue,
-        cashReceived,
+        cashReceived: roundMoney(cashReceived),
       });
 
       const saleRow = result.sale;
@@ -2316,13 +2329,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
         id: saleRow.id,
         date: saleRow.created_at,
         items: [...cart],
-        subtotal: toNumber(saleRow.subtotal),
-        discount: toNumber(saleRow.discount),
-        iva: toNumber(saleRow.iva),
-        total: toNumber(saleRow.total),
+        subtotal: roundMoney(toNumber(saleRow.subtotal)),
+        discount: roundMoney(toNumber(saleRow.discount)),
+        iva: roundMoney(toNumber(saleRow.iva)),
+        total: roundMoney(toNumber(saleRow.total)),
         paymentMethod: saleRow.payment_method || paymentMethodValue,
-        cashReceived: toNumber(saleRow.cash_received),
-        change: toNumber(saleRow.change_value),
+        cashReceived: roundMoney(toNumber(saleRow.cash_received)),
+        change: roundMoney(toNumber(saleRow.change_value)),
         customerId: saleRow.customer_id ?? activeDraft.customerId,
         invoiceNumber: saleRow.invoice_number ?? undefined,
         cashSessionId: saleRow.cash_session_id ?? currentCashSession.id,
@@ -2544,12 +2557,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const addDebtToCustomer = (customerId: string, amount: number, description: string) => {
     const customer = customers.find(c => c.id === customerId);
     if (customer) {
-      const newDebt = customer.debt + amount;
+      const safeAmount = roundMoney(Number.isFinite(amount) ? Math.max(0, amount) : 0);
+      if (safeAmount <= 0) return;
+      const newDebt = roundMoney(customer.debt + safeAmount);
       const transaction: DebtTransaction = {
         id: Date.now().toString(),
         date: new Date().toISOString(),
         type: 'debt',
-        amount,
+        amount: safeAmount,
         description,
         balance: newDebt
       };
@@ -2562,7 +2577,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         void insertCustomerDebtTx(session.access_token, currentStoreId, {
           customerId,
           type: 'debt',
-          amount,
+          amount: safeAmount,
           description,
           balance: newDebt,
           createdAt: transaction.date,
@@ -2578,12 +2593,15 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const addPaymentToCustomer = (customerId: string, amount: number, description: string) => {
     const customer = customers.find(c => c.id === customerId);
     if (customer) {
-      const newDebt = Math.max(0, customer.debt - amount);
+      const safeAmount = roundMoney(Number.isFinite(amount) ? Math.max(0, amount) : 0);
+      if (safeAmount <= 0) return;
+      const paidAmount = Math.min(safeAmount, roundMoney(customer.debt));
+      const newDebt = roundMoney(Math.max(0, customer.debt - paidAmount));
       const transaction: DebtTransaction = {
         id: Date.now().toString(),
         date: new Date().toISOString(),
         type: 'payment',
-        amount,
+        amount: paidAmount,
         description,
         balance: newDebt
       };
@@ -2596,7 +2614,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         void insertCustomerDebtTx(session.access_token, currentStoreId, {
           customerId,
           type: 'payment',
-          amount,
+          amount: paidAmount,
           description,
           balance: newDebt,
           createdAt: transaction.date,

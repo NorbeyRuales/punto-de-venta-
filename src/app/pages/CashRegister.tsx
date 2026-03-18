@@ -10,7 +10,12 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { ArrowDownCircle, ArrowUpCircle, FileText, Lock, Unlock, Wallet } from 'lucide-react';
 
-const formatCurrency = (value: number) => `$${Math.round(value).toLocaleString('es-CO')}`;
+const roundToHundred = (value: number) => {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value / 100) * 100;
+};
+
+const formatCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
 
 const formatMethodLabel = (method: string) => {
   const normalized = method?.toLowerCase?.() || 'otro';
@@ -58,7 +63,7 @@ export function CashRegister() {
   const lastClosedReport = lastClosedSession ? getCashSessionReport(lastClosedSession.id) : null;
 
   const handleOpen = async () => {
-    const amount = parseFloat(openingCash) || 0;
+    const amount = roundToHundred(parseFloat(openingCash) || 0);
     const ok = await openCashSession(amount);
     if (ok) {
       setOpeningCash('');
@@ -66,7 +71,7 @@ export function CashRegister() {
   };
 
   const handleMovement = async () => {
-    const amount = parseFloat(movementAmount) || 0;
+    const amount = roundToHundred(parseFloat(movementAmount) || 0);
     const movement = await addCashMovement(movementType, amount, movementReason);
     if (movement) {
       setMovementAmount('');
@@ -75,7 +80,7 @@ export function CashRegister() {
   };
 
   const handleClose = async () => {
-    const amount = parseFloat(countedCash) || 0;
+    const amount = roundToHundred(parseFloat(countedCash) || 0);
     const closed = await closeCashSession(amount);
     if (closed) {
       setCountedCash('');
@@ -83,8 +88,8 @@ export function CashRegister() {
     }
   };
 
-  const countedPreview = parseFloat(countedCash) || 0;
-  const differencePreview = activeReport ? countedPreview - activeReport.expectedCash : 0;
+  const countedPreview = roundToHundred(parseFloat(countedCash) || 0);
+  const differencePreview = activeReport ? roundToHundred(countedPreview - activeReport.expectedCash) : 0;
 
   return (
     <div className="space-y-6">

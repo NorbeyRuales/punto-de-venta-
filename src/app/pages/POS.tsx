@@ -229,8 +229,8 @@ export function POS() {
     }
 
     if (paymentMethod === 'efectivo') {
-      const cash = parseFloat(cashReceived) || 0;
-      if (cash < cartTotal) {
+      const cash = roundToHundred(parseFloat(cashReceived) || 0);
+      if (cash < payableTotal) {
         toast.error('Monto insuficiente');
         return;
       }
@@ -239,7 +239,7 @@ export function POS() {
     keepPaymentDialogOpenRef.current = true;
     const sale = await completeSale(
       paymentMethod,
-      paymentMethod === 'efectivo' ? parseFloat(cashReceived) || 0 : cartTotal
+      paymentMethod === 'efectivo' ? roundToHundred(parseFloat(cashReceived) || 0) : payableTotal
     );
 
     if (!sale) {
@@ -275,11 +275,20 @@ export function POS() {
     const itemPrice = item.product.salePrice * item.quantity;
     return sum + ((itemPrice * item.discount) / 100);
   }, 0);
+  const roundedSubtotal = roundToHundred(subtotal);
+  const roundedDiscount = roundToHundred(totalDiscount);
+  const payableTotal = roundToHundred(cartTotal);
   const cashValue = Number(cashReceived) || 0;
-  const isCashInsufficient = paymentMethod === 'efectivo' && cashReceived !== '' && cashValue < cartTotal;
+  const roundedCashValue = roundToHundred(cashValue);
+  const isCashInsufficient = paymentMethod === 'efectivo' && cashReceived !== '' && roundedCashValue < payableTotal;
   const change = paymentMethod === 'efectivo' 
-    ? Math.max(0, cashValue - cartTotal)
+    ? Math.max(0, roundedCashValue - payableTotal)
     : 0;
+  const cannotChargeReason = !currentCashSession
+    ? 'Debes abrir una caja para habilitar Cobrar.'
+    : cart.length === 0
+      ? 'Agrega productos al carrito para habilitar Cobrar.'
+      : null;
 
   return (
     <div className="space-y-4">
@@ -548,17 +557,17 @@ export function POS() {
             <div className="p-4 border-t border-border space-y-2">
               <div className="flex justify-between text-sm">
                 <span>Subtotal:</span>
-                <span>{formatRoundedCurrency(subtotal)}</span>
+                <span>{formatRoundedCurrency(roundedSubtotal)}</span>
               </div>
               {totalDiscount > 0 && (
                 <div className="flex justify-between text-sm text-red-600">
                   <span>Descuento:</span>
-                  <span>-${totalDiscount.toLocaleString('es-CO')}</span>
+                  <span>-{formatRoundedCurrency(roundedDiscount)}</span>
                 </div>
               )}
               <div className="flex justify-between text-xl font-bold pt-2 border-t">
                 <span>Total:</span>
-                <span className="text-[#2ECC71]">{formatRoundedCurrency(cartTotal)}</span>
+                <span className="text-[#2ECC71]">{formatRoundedCurrency(payableTotal)}</span>
               </div>
             </div>
           )}
@@ -572,11 +581,15 @@ export function POS() {
             setCompletedSale(null);
             setShowPaymentDialog(true);
           }}
-          disabled={cart.length === 0 || !currentCashSession}
+          disabled={Boolean(cannotChargeReason)}
+          title={cannotChargeReason ?? 'Cobrar'}
         >
           <DollarSign className="w-6 h-6 mr-2" />
           Cobrar
         </Button>
+        {cannotChargeReason && (
+          <p className="text-xs text-amber-700 mt-2">{cannotChargeReason}</p>
+        )}
       </div>
 
       {/* Dialog de descuento */}
@@ -632,7 +645,7 @@ export function POS() {
             <div className="bg-secondary p-4 rounded-lg">
               <p className="text-sm text-gray-600 mb-1">{completedSale ? 'Total Pagado' : 'Total a Pagar'}</p>
               <p className="text-3xl font-bold text-[#2ECC71]">
-                {formatRoundedCurrency(completedSale ? completedSale.total : cartTotal)}
+                {formatRoundedCurrency(completedSale ? completedSale.total : payableTotal)}
               </p>
             </div>
 

@@ -24,6 +24,13 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import type { Customer } from '../context/POSContext';
 
+const roundToHundred = (value: number) => {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value / 100) * 100;
+};
+
+const formatCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
+
 export function Customers() {
   const { 
     customers, 
@@ -61,7 +68,7 @@ export function Customers() {
     c.phone.includes(searchQuery)
   );
 
-  const totalDebt = customers.reduce((sum, c) => sum + c.debt, 0);
+  const totalDebt = roundToHundred(customers.reduce((sum, c) => sum + c.debt, 0));
   const customersWithDebt = customers.filter(c => c.debt > 0).length;
 
   // Alta y edición de clientes.
@@ -108,9 +115,15 @@ export function Customers() {
       return;
     }
 
+    const amount = roundToHundred(parseFloat(debtAmount) || 0);
+    if (amount <= 0) {
+      toast.error('El monto debe ser mayor a 0');
+      return;
+    }
+
     addDebtToCustomer(
       selectedCustomer.id,
-      parseFloat(debtAmount),
+      amount,
       debtDescription || 'Compra fiada'
     );
 
@@ -127,9 +140,15 @@ export function Customers() {
       return;
     }
 
+    const amount = roundToHundred(parseFloat(paymentAmount) || 0);
+    if (amount <= 0) {
+      toast.error('El monto debe ser mayor a 0');
+      return;
+    }
+
     addPaymentToCustomer(
       selectedCustomer.id,
-      parseFloat(paymentAmount),
+      amount,
       paymentDescription || 'Abono a cuenta'
     );
 
@@ -214,7 +233,7 @@ export function Customers() {
             <div>
               <p className="text-sm text-gray-600 mb-1">Deuda Total</p>
               <p className="text-3xl font-bold text-[#E74C3C]">
-                ${totalDebt.toLocaleString('es-CO')}
+                {formatCurrency(totalDebt)}
               </p>
             </div>
             <div className="w-14 h-14 bg-red-100 rounded-full flex items-center justify-center">
@@ -274,7 +293,7 @@ export function Customers() {
               <div className="text-right">
                 <p className="text-sm text-gray-600">Deuda</p>
                 <p className={`font-bold ${customer.debt > 0 ? 'text-[#E74C3C]' : 'text-gray-900'}`}>
-                  ${customer.debt.toLocaleString('es-CO')}
+                  {formatCurrency(customer.debt)}
                 </p>
               </div>
             </div>
@@ -489,7 +508,7 @@ export function Customers() {
               <div className="p-4 bg-secondary rounded-lg">
                 <p className="font-semibold">{selectedCustomer.name}</p>
                 <p className="text-sm text-gray-600">
-                  Deuda actual: ${selectedCustomer.debt.toLocaleString('es-CO')}
+                  Deuda actual: {formatCurrency(selectedCustomer.debt)}
                 </p>
               </div>
             )}
@@ -549,7 +568,7 @@ export function Customers() {
               <div className="p-4 bg-secondary rounded-lg">
                 <p className="font-semibold">{selectedCustomer.name}</p>
                 <p className="text-sm text-gray-600">
-                  Deuda actual: ${selectedCustomer.debt.toLocaleString('es-CO')}
+                  Deuda actual: {formatCurrency(selectedCustomer.debt)}
                 </p>
               </div>
             )}
@@ -636,7 +655,7 @@ export function Customers() {
                   <div>
                     <p className="text-sm text-gray-600">Deuda</p>
                     <p className="font-semibold text-[#E74C3C]">
-                      ${selectedCustomer.debt.toLocaleString('es-CO')}
+                      {formatCurrency(selectedCustomer.debt)}
                     </p>
                   </div>
                 </div>
@@ -673,10 +692,10 @@ export function Customers() {
                               <p className={`font-bold ${
                                 transaction.type === 'debt' ? 'text-[#E74C3C]' : 'text-[#2ECC71]'
                               }`}>
-                                {transaction.type === 'debt' ? '+' : '-'}${transaction.amount.toLocaleString('es-CO')}
+                                {transaction.type === 'debt' ? '+' : '-'}{formatCurrency(transaction.amount)}
                               </p>
                               <p className="text-sm text-gray-600">
-                                Saldo: ${transaction.balance.toLocaleString('es-CO')}
+                                Saldo: {formatCurrency(transaction.balance)}
                               </p>
                             </div>
                           </div>
