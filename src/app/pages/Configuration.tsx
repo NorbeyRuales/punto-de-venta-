@@ -242,6 +242,11 @@ export function Configuration() {
     if (isUploading) return;
     const confirmed = confirm('Esto reemplazará los datos remotos por los locales. ¿Deseas continuar?');
     if (!confirmed) return;
+    const phrase = prompt('Escribe REEMPLAZAR para confirmar que deseas sobrescribir los datos remotos.');
+    if (phrase !== 'REEMPLAZAR') {
+      toast.info('Restauración cancelada. No se modificaron datos remotos.');
+      return;
+    }
     setIsUploading(true);
     try {
       await uploadLocalBackupToSupabase(true);

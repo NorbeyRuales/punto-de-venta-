@@ -185,6 +185,20 @@ export function Inventory() {
 
       if ((event.key === 'n' || event.key === 'N') && event.altKey) {
         event.preventDefault();
+        const nextCategory =
+          categoryFilter !== 'all' && categories.includes(categoryFilter)
+            ? categoryFilter
+            : defaultCategory;
+
+        const nextSupplier =
+          supplierFilter !== 'all' && suppliers.some((supplier) => supplier.name === supplierFilter)
+            ? supplierFilter
+            : '';
+
+        setFormData({
+          ...buildEmptyForm(nextCategory),
+          supplierName: nextSupplier,
+        });
         setShowAddDialog(true);
         setFormErrors({});
       }
@@ -192,7 +206,7 @@ export function Inventory() {
 
     window.addEventListener('keydown', handleShortcuts);
     return () => window.removeEventListener('keydown', handleShortcuts);
-  }, []);
+  }, [categoryFilter, supplierFilter, categories, suppliers, defaultCategory]);
 
   // Filtrado por búsqueda, categoría y proveedor.
   const filteredProducts = products.filter(p => {
@@ -326,6 +340,23 @@ export function Inventory() {
     setFormErrors({});
   };
 
+  const buildAddFormFromActiveFilters = () => {
+    const nextCategory =
+      categoryFilter !== 'all' && categories.includes(categoryFilter)
+        ? categoryFilter
+        : defaultCategory;
+
+    const nextSupplier =
+      supplierFilter !== 'all' && suppliers.some((supplier) => supplier.name === supplierFilter)
+        ? supplierFilter
+        : '';
+
+    return {
+      ...buildEmptyForm(nextCategory),
+      supplierName: nextSupplier,
+    };
+  };
+
   const handleAddDialogChange = (open: boolean) => {
     if (!open && isAddDirty) {
       const confirmed = confirm('Tienes cambios sin guardar. ¿Cerrar sin guardar?');
@@ -336,6 +367,7 @@ export function Inventory() {
       resetForm();
       return;
     }
+    setFormData(buildAddFormFromActiveFilters());
     setFormErrors({});
   };
 

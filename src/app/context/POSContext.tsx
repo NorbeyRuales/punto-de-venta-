@@ -59,6 +59,7 @@ const OFFLINE_INVOICE_KEY = 'pos_offline_invoice_seq';
 const OFFLINE_DRAFTS_KEY = 'pos_sale_drafts';
 const OFFLINE_ACTIVE_DRAFT_KEY = 'pos_active_draft_id';
 const OFFLINE_BACKUP_KEY = 'pos_offline_backup';
+const ALLOW_AUTOMATIC_BACKUP_UPLOAD = false;
 
 type LocalBackupPayload = {
   products: string | null;
@@ -585,6 +586,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const offlineSnapshotRef = useRef<string | null>(null);
   const isAutoSyncingRef = useRef(false);
   const autoSyncTimerRef = useRef<number | null>(null);
+  const pendingSyncNoticeRef = useRef(false);
   const offlinePinConfigured = Boolean(offlinePinHash);
   const canReachSupabase = Boolean(session?.access_token && isBrowserOnline && !isOfflineMode);
   const isConnectedToSupabase = Boolean(canReachSupabase && currentStoreId);
@@ -933,12 +935,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
 
       setIsOfflineMode(false);
-      const hasOfflineBackup = Boolean(localStorage.getItem(OFFLINE_BACKUP_KEY));
-      if (hasOfflineBackup) {
-        markPendingSync();
-      } else {
-        clearPendingSync();
-      }
+      // Supabase queda como fuente de verdad al descargar datos remotos.
+      clearPendingSync();
 
       return true;
     } catch (error) {
@@ -1398,6 +1396,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
+    if (!clearExisting) {
+      if (!isAutoSyncingRef.current) {
+        toast.error('Importación bloqueada por seguridad. Solo se permite restauración manual que reemplaza remoto.');
+      }
+      return false;
+    }
+
     let backupPayload = buildLocalBackupPayload();
     const offlineBackupRaw = localStorage.getItem(OFFLINE_BACKUP_KEY);
     if (offlineBackupRaw) {
@@ -1439,12 +1444,21 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Auto-sync: cuando vuelve conexión/sesión, subir cambios locales pendientes sin intervención manual.
+  // Auto-sync: deshabilitado por seguridad para evitar reimportaciones locales accidentales.
   useEffect(() => {
     if (!hasPendingSync || !canReachSupabase || !session || !currentStoreId) {
+      pendingSyncNoticeRef.current = false;
       if (autoSyncTimerRef.current) {
         window.clearTimeout(autoSyncTimerRef.current);
         autoSyncTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (!ALLOW_AUTOMATIC_BACKUP_UPLOAD) {
+      if (!pendingSyncNoticeRef.current) {
+        toast.info('Hay cambios locales pendientes. La subida automática está desactivada por seguridad del inventario remoto.');
+        pendingSyncNoticeRef.current = true;
       }
       return;
     }
