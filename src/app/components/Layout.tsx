@@ -109,7 +109,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
       )}
       {/* Sidebar Desktop */}
-      <aside className="hidden lg:flex lg:flex-col w-64 bg-white border-r border-border">
+      <aside className="hidden lg:flex lg:flex-col w-64 bg-white border-r border-border lg:sticky lg:top-0 lg:h-screen">
         <div className="p-6 border-b border-border">
           <div className="flex flex-col items-center text-center gap-2">
             <div className="relative w-16 h-16">
@@ -178,9 +178,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
             onClick={() => setIsSidebarOpen(false)}
           />
           <aside className="absolute left-0 top-0 bottom-0 w-64 bg-white flex flex-col">
-            <div className="p-6 border-b border-border flex items-center justify-between">
+            <div className="p-4 border-b border-border flex items-center justify-between">
               <div className="flex flex-col items-center text-center gap-2">
-                <div className="relative w-14 h-14">
+                <div className="relative w-12 h-12">
                   <div className="w-full h-full rounded-xl border border-border bg-white overflow-hidden flex items-center justify-center">
                     <img
                       src={logoSrc}
@@ -208,7 +208,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </button>
             </div>
             
-            <nav className="flex-1 p-4 overflow-y-auto">
+            <nav className="flex-1 p-3 overflow-y-auto">
               {menuItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.path;
@@ -219,20 +219,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
                       navigate(item.path);
                       setIsSidebarOpen(false);
                     }}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg mb-2 transition-colors ${
+                    className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg mb-1.5 transition-colors ${
                       isActive 
                         ? 'bg-[var(--primary)] text-white' 
                         : 'text-foreground hover:bg-secondary'
                     }`}
                   >
                     <Icon className="w-5 h-5" />
-                    <span className="font-medium">{item.label}</span>
+                    <span className="text-[1.06rem] font-medium">{item.label}</span>
                   </button>
                 );
               })}
             </nav>
 
-            <div className="p-4 border-t border-border">
+            <div className="p-3 border-t border-border bg-white">
               <Button
                 onClick={handleLogout}
                 variant="outline"
