@@ -60,6 +60,35 @@ const OFFLINE_DRAFTS_KEY = 'pos_sale_drafts';
 const OFFLINE_ACTIVE_DRAFT_KEY = 'pos_active_draft_id';
 const OFFLINE_BACKUP_KEY = 'pos_offline_backup';
 
+type LocalBackupPayload = {
+  products: string | null;
+  sales: string | null;
+  customers: string | null;
+  suppliers: string | null;
+  kardex: string | null;
+  recharges: string | null;
+  cash_sessions: string | null;
+  cash_movements: string | null;
+  config: string | null;
+} & Record<string, unknown>;
+
+const isLocalBackupField = (value: unknown): value is string | null => value === null || typeof value === 'string';
+
+const isLocalBackupPayload = (value: unknown): value is LocalBackupPayload => {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Record<string, unknown>;
+
+  return isLocalBackupField(candidate.products)
+    && isLocalBackupField(candidate.sales)
+    && isLocalBackupField(candidate.customers)
+    && isLocalBackupField(candidate.suppliers)
+    && isLocalBackupField(candidate.kardex)
+    && isLocalBackupField(candidate.recharges)
+    && isLocalBackupField(candidate.cash_sessions)
+    && isLocalBackupField(candidate.cash_movements)
+    && isLocalBackupField(candidate.config);
+};
+
 const toNumber = (value: unknown, fallback = 0): number => {
   const num = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -602,7 +631,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   }, [storeConfig.name, storeConfig.logo]);
 
-  const buildLocalBackupPayload = () => ({
+  const buildLocalBackupPayload = (): LocalBackupPayload => ({
     products: localStorage.getItem('pos_products'),
     sales: localStorage.getItem('pos_sales'),
     customers: localStorage.getItem('pos_customers'),
@@ -614,7 +643,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     config: localStorage.getItem('pos_config'),
   });
 
-  const buildStateBackupPayload = () => ({
+  const buildStateBackupPayload = (): LocalBackupPayload => ({
     products: JSON.stringify(products),
     sales: JSON.stringify(sales),
     customers: JSON.stringify(customers),
@@ -1373,7 +1402,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const offlineBackupRaw = localStorage.getItem(OFFLINE_BACKUP_KEY);
     if (offlineBackupRaw) {
       try {
-        backupPayload = JSON.parse(offlineBackupRaw) as Record<string, unknown>;
+        const parsedBackup: unknown = JSON.parse(offlineBackupRaw);
+        if (isLocalBackupPayload(parsedBackup)) {
+          backupPayload = parsedBackup;
+        }
       } catch {
         // Si el backup offline está corrupto, usamos el estado local actual.
       }
