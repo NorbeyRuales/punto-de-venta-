@@ -4,8 +4,7 @@ import { usePOS } from '../context/POSContext';
 import type { Sale } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { FileText, Download, TrendingUp, DollarSign, Eye, Share2 } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { FileText, Download, TrendingUp, DollarSign, Share2 } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { startOfDay, endOfDay, subDays, format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -15,8 +14,6 @@ import { toast } from 'sonner';
 export function Reports() {
   const { getSalesInRange, kardexMovements, registerReturn, customers, storeConfig } = usePOS();
   const [period, setPeriod] = useState('today');
-  const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
-  const [showSaleDialog, setShowSaleDialog] = useState(false);
 
   // Calcula rango de fechas según periodo seleccionado.
   const getDateRange = () => {
@@ -86,6 +83,12 @@ export function Reports() {
     return Math.round(value / 100) * 100;
   };
   const formatRoundedCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
+  const formatSaleItemsSummary = (sale: Sale) => {
+    if (sale.items.length === 0) return 'Sin productos';
+    const [firstItem, ...restItems] = sale.items;
+    const firstLabel = `${firstItem.product.name} x${firstItem.quantity}`;
+    return restItems.length > 0 ? `${firstLabel} +${restItems.length} más` : firstLabel;
+  };
 
   const buildWhatsappMessage = (sale: Sale) => {
     const customer = sale.customerId ? customers.find(c => c.id === sale.customerId) : undefined;
@@ -122,11 +125,6 @@ export function Reports() {
     const message = buildWhatsappMessage(sale);
     const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
-  };
-
-  const openSaleDetail = (sale: Sale) => {
-    setSelectedSale(sale);
-    setShowSaleDialog(true);
   };
 
   const handleReturnSale = (saleId: string, invoiceNumber?: string) => {
@@ -264,20 +262,13 @@ export function Reports() {
                     <div>
                       <p className="text-sm text-gray-600">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</p>
                       <p className="font-semibold">{sale.invoiceNumber || sale.id}</p>
+                      <p className="text-xs text-gray-500">{formatSaleItemsSummary(sale)}</p>
                       <p className="text-xs text-gray-500 capitalize">{sale.paymentMethod}</p>
                     </div>
                     <span className="font-bold text-[#2ECC71]">{formatRoundedCurrency(sale.total)}</span>
                   </div>
 
                   <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => openSaleDetail(sale)}
-                    >
-                      <Eye className="w-4 h-4 mr-1" />
-                      Detalle
-                    </Button>
                     <Button
                       size="sm"
                       variant="outline"
@@ -308,6 +299,7 @@ export function Reports() {
               <tr>
                 <th className="text-left p-3">Fecha</th>
                 <th className="text-left p-3">Factura</th>
+                <th className="text-left p-3">Detalle compra</th>
                 <th className="text-left p-3">Método Pago</th>
                 <th className="text-right p-3">Total</th>
                 <th className="text-right p-3">Acciones</th>
@@ -319,19 +311,24 @@ export function Reports() {
                 return (
                   <tr key={sale.id} className="border-b">
                     <td className="p-3">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</td>
-                    <td className="p-3">{sale.invoiceNumber}</td>
+                    <td className="p-3">{sale.invoiceNumber || sale.id}</td>
+                    <td className="p-3 align-top">
+                      <div className="space-y-1 text-sm">
+                        {sale.items.length === 0 ? (
+                          <span className="text-gray-500">Sin productos</span>
+                        ) : (
+                          sale.items.map((item, index) => (
+                            <p key={`${item.product.id}-${index}`} className="leading-snug">
+                              {item.product.name} x{item.quantity}
+                            </p>
+                          ))
+                        )}
+                      </div>
+                    </td>
                     <td className="p-3 capitalize">{sale.paymentMethod}</td>
                     <td className="p-3 text-right font-bold text-[#2ECC71]">{formatRoundedCurrency(sale.total)}</td>
                     <td className="p-3 text-right">
                       <div className="flex flex-wrap justify-end gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openSaleDetail(sale)}
-                        >
-                          <Eye className="w-4 h-4 mr-1" />
-                          Detalle
-                        </Button>
                         <Button
                           size="sm"
                           variant="outline"
@@ -358,133 +355,6 @@ export function Reports() {
           </table>
         </div>
       </Card>
-
-      <Dialog
-        open={showSaleDialog}
-        onOpenChange={(open) => {
-          setShowSaleDialog(open);
-          if (!open) setSelectedSale(null);
-        }}
-      >
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Detalle de venta</DialogTitle>
-          </DialogHeader>
-
-          {selectedSale && (() => {
-            const customer = selectedSale.customerId
-              ? customers.find(c => c.id === selectedSale.customerId)
-              : undefined;
-            const isReturned = isSaleReturned(selectedSale);
-
-            return (
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="p-4 bg-secondary rounded-lg space-y-2">
-                    <p className="text-xs text-gray-600">Factura</p>
-                    <p className="font-semibold">{selectedSale.invoiceNumber || selectedSale.id}</p>
-                    <p className="text-xs text-gray-600">Fecha</p>
-                    <p className="font-semibold">
-                      {format(new Date(selectedSale.date), "d MMMM, HH:mm", { locale: es })}
-                    </p>
-                    <p className="text-xs text-gray-600">Método de pago</p>
-                    <p className="font-semibold capitalize">{selectedSale.paymentMethod}</p>
-                    {isReturned && (
-                      <p className="text-sm font-semibold text-[#E74C3C]">Venta devuelta</p>
-                    )}
-                  </div>
-
-                  <div className="p-4 bg-secondary rounded-lg space-y-2">
-                    <p className="text-xs text-gray-600">Cliente</p>
-                    <p className="font-semibold">{customer?.name || 'Cliente general'}</p>
-                    <p className="text-xs text-gray-600">Teléfono</p>
-                    <p className="font-semibold">{customer?.phone || 'N/A'}</p>
-                    <p className="text-xs text-gray-600">NIT/CC</p>
-                    <p className="font-semibold">{customer?.nit || 'N/A'}</p>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto border rounded-lg">
-                  <table className="w-full text-sm">
-                    <thead className="bg-secondary border-b">
-                      <tr>
-                        <th className="text-left p-3">Producto</th>
-                        <th className="text-center p-3">Cantidad</th>
-                        <th className="text-right p-3">Precio</th>
-                        <th className="text-right p-3">Descuento</th>
-                        <th className="text-right p-3">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {selectedSale.items.map((item, index) => {
-                        const subtotalItem = item.product.salePrice * item.quantity;
-                        const discountValue = (subtotalItem * item.discount) / 100;
-                        const totalItem = subtotalItem - discountValue;
-                        return (
-                          <tr key={`${item.product.id}-${index}`} className="border-b">
-                            <td className="p-3">{item.product.name}</td>
-                            <td className="p-3 text-center">{item.quantity}</td>
-                            <td className="p-3 text-right">{formatRoundedCurrency(item.product.salePrice)}</td>
-                            <td className="p-3 text-right">{item.discount > 0 ? `${item.discount}%` : '-'}</td>
-                            <td className="p-3 text-right font-semibold">{formatRoundedCurrency(totalItem)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
-                  <div className="text-sm text-gray-600">
-                    {storeConfig?.dianResolution && (
-                      <p>Resolución DIAN: {storeConfig.dianResolution}</p>
-                    )}
-                  </div>
-
-                  <div className="w-full md:w-72 space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span>Subtotal:</span>
-                      <span>{formatRoundedCurrency(selectedSale.subtotal)}</span>
-                    </div>
-                    {selectedSale.discount > 0 && (
-                      <div className="flex justify-between text-red-600">
-                        <span>Descuento:</span>
-                        <span>-{formatRoundedCurrency(selectedSale.discount)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span>IVA:</span>
-                      <span>{formatRoundedCurrency(selectedSale.iva)}</span>
-                    </div>
-                    <div className="flex justify-between font-bold text-lg border-t pt-2">
-                      <span>Total:</span>
-                      <span className="text-[#2ECC71]">{formatRoundedCurrency(selectedSale.total)}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2 justify-end">
-                  <Button
-                    variant="outline"
-                    onClick={() => handleShareWhatsapp(selectedSale)}
-                    className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
-                  >
-                    <Share2 className="w-4 h-4 mr-1" />
-                    Enviar por WhatsApp
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={isReturned}
-                    onClick={() => handleReturnSale(selectedSale.id, selectedSale.invoiceNumber)}
-                  >
-                    {isReturned ? 'Devuelto' : 'Devolver venta'}
-                  </Button>
-                </div>
-              </div>
-            );
-          })()}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

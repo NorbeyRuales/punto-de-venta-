@@ -8,7 +8,7 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import { ArrowDownCircle, ArrowUpCircle, FileText, Lock, Unlock, Wallet } from 'lucide-react';
+import { AlertTriangle, ArrowDownCircle, ArrowUpCircle, CheckCircle2, FileText, Lock, Unlock, Wallet } from 'lucide-react';
 
 const roundToHundred = (value: number) => {
   if (!Number.isFinite(value)) return 0;
@@ -90,6 +90,9 @@ export function CashRegister() {
 
   const countedPreview = roundToHundred(parseFloat(countedCash) || 0);
   const differencePreview = activeReport ? roundToHundred(countedPreview - activeReport.expectedCash) : 0;
+  const manualFlowTotal = activeReport
+    ? roundToHundred(activeReport.cashInTotal - activeReport.cashOutTotal - activeReport.cashReturnTotal)
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -98,7 +101,13 @@ export function CashRegister() {
           <h1 className="text-3xl font-bold">Caja</h1>
           <p className="text-gray-600">Control de apertura, movimientos y cierre</p>
         </div>
-        <div className="flex items-center gap-2 text-sm text-gray-600">
+        <div
+          className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium ${
+            currentCashSession
+              ? 'bg-emerald-100 text-emerald-700'
+              : 'bg-amber-100 text-amber-700'
+          }`}
+        >
           <Wallet className="w-4 h-4" />
           {currentCashSession ? 'Sesión abierta' : 'Sin sesión activa'}
         </div>
@@ -132,11 +141,41 @@ export function CashRegister() {
       )}
 
       {currentCashSession && activeReport && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <Card className="border-emerald-200 bg-emerald-50/60 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-emerald-700">Ventas sesión</p>
+            <p className="mt-1 text-2xl font-bold text-emerald-700">{formatCurrency(activeReport.salesTotal)}</p>
+            <p className="mt-1 text-xs text-emerald-700/80">Incluye todos los métodos de pago</p>
+          </Card>
+
+          <Card className="border-blue-200 bg-blue-50/70 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-blue-700">Ventas en efectivo</p>
+            <p className="mt-1 text-2xl font-bold text-blue-700">{formatCurrency(activeReport.cashSalesTotal)}</p>
+            <p className="mt-1 text-xs text-blue-700/80">Base para el efectivo esperado</p>
+          </Card>
+
+          <Card className="border-violet-200 bg-violet-50/70 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-violet-700">Efectivo esperado</p>
+            <p className="mt-1 text-2xl font-bold text-violet-700">{formatCurrency(activeReport.expectedCash)}</p>
+            <p className="mt-1 text-xs text-violet-700/80">Resultado de apertura + operaciones</p>
+          </Card>
+
+          <Card className="border-slate-200 bg-slate-50 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-600">Flujo manual neto</p>
+            <p className={`mt-1 text-2xl font-bold ${manualFlowTotal >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+              {formatCurrency(manualFlowTotal)}
+            </p>
+            <p className="mt-1 text-xs text-slate-600">Ingresos - retiros - devoluciones</p>
+          </Card>
+        </div>
+      )}
+
+      {currentCashSession && activeReport && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <Card className="p-6 lg:col-span-2">
             <div className="flex items-center gap-2 mb-4">
               <FileText className="w-5 h-5 text-[var(--primary)]" />
-              <h2 className="text-lg font-bold">Resumen de Sesión</h2>
+              <h2 className="text-lg font-bold">Resumen de sesión activa</h2>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-4 rounded-lg bg-secondary">
@@ -147,7 +186,7 @@ export function CashRegister() {
                 <p className="text-sm text-gray-600">Base: {formatCurrency(currentCashSession.openingCash)}</p>
               </div>
               <div className="p-4 rounded-lg bg-secondary">
-                <p className="text-xs text-gray-600">Ventas totales</p>
+                <p className="text-xs text-gray-600">Ventas totales de la sesión</p>
                 <p className="text-lg font-semibold text-[#2ECC71]">{formatCurrency(activeReport.salesTotal)}</p>
                 <p className="text-sm text-gray-600">Efectivo: {formatCurrency(activeReport.cashSalesTotal)}</p>
               </div>
@@ -179,6 +218,9 @@ export function CashRegister() {
               <ArrowUpCircle className="w-5 h-5 text-emerald-600" />
               <h2 className="text-lg font-bold">Movimientos</h2>
             </div>
+            <p className="mb-4 text-sm text-gray-600">
+              Registra ingresos o retiros manuales para mantener el esperado de caja actualizado.
+            </p>
             <div className="space-y-3">
               <div>
                 <Label>Tipo de movimiento</Label>
@@ -228,6 +270,10 @@ export function CashRegister() {
               <ArrowDownCircle className="w-5 h-5 text-red-600" />
               <h2 className="text-lg font-bold">Cierre de Caja</h2>
             </div>
+            <div className="mb-4 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3">
+              <p className="text-xs text-slate-600">Esperado actual</p>
+              <p className="text-lg font-bold text-slate-800">{formatCurrency(activeReport.expectedCash)}</p>
+            </div>
             <div className="space-y-4">
               <div>
                 <Label>Dinero contado</Label>
@@ -245,6 +291,11 @@ export function CashRegister() {
                 <p className="text-xs text-gray-600">Diferencia estimada</p>
                 <p className={`text-xl font-bold ${differencePreview >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                   {formatCurrency(differencePreview)}
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {differencePreview > 0 && 'Hay sobrante frente al esperado.'}
+                  {differencePreview < 0 && 'Hay faltante frente al esperado.'}
+                  {differencePreview === 0 && 'El conteo coincide con el esperado.'}
                 </p>
               </div>
               <Button className="h-12 bg-[#0f172a] hover:bg-[#111827] text-white" onClick={handleClose}>
@@ -264,9 +315,9 @@ export function CashRegister() {
                 <p className="text-sm text-gray-500">No hay ventas registradas en la sesión.</p>
               )}
               {Object.entries(activeReport.salesByMethod).map(([method, total]) => (
-                <div key={method} className="flex items-center justify-between text-sm">
-                  <span>{formatMethodLabel(method)}</span>
-                  <span className="font-semibold">{formatCurrency(total)}</span>
+                <div key={method} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                  <span className="font-medium text-slate-700">{formatMethodLabel(method)}</span>
+                  <span className="font-semibold text-slate-900">{formatCurrency(total)}</span>
                 </div>
               ))}
             </div>
@@ -280,6 +331,7 @@ export function CashRegister() {
             <FileText className="w-5 h-5 text-gray-500" />
             <h2 className="text-lg font-bold">Movimientos registrados</h2>
           </div>
+          <p className="mb-4 text-sm text-gray-600">Se muestran los últimos 10 movimientos manuales de la sesión actual.</p>
           {activeMovements.length === 0 ? (
             <p className="text-sm text-gray-500">No hay movimientos manuales en esta sesión.</p>
           ) : (
@@ -297,9 +349,20 @@ export function CashRegister() {
                   {activeMovements.slice(-10).reverse().map((movement) => (
                     <tr key={movement.id} className="border-b">
                       <td className="p-3">{format(new Date(movement.date), "d MMM, HH:mm", { locale: es })}</td>
-                      <td className="p-3">{movement.type === 'cash_in' ? 'Ingreso' : 'Retiro'}</td>
+                      <td className="p-3">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-xs font-semibold ${
+                            movement.type === 'cash_in'
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-red-100 text-red-700'
+                          }`}
+                        >
+                          {movement.type === 'cash_in' ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+                          {movement.type === 'cash_in' ? 'Ingreso' : 'Retiro'}
+                        </span>
+                      </td>
                       <td className="p-3">{movement.reason || 'Sin motivo'}</td>
-                      <td className="p-3 text-right font-semibold">
+                      <td className={`p-3 text-right font-semibold ${movement.type === 'cash_in' ? 'text-emerald-700' : 'text-red-700'}`}>
                         {movement.type === 'cash_out' ? '-' : ''}{formatCurrency(movement.amount)}
                       </td>
                     </tr>
@@ -345,7 +408,7 @@ export function CashRegister() {
               <p className="text-sm font-semibold">{formatCurrency(lastClosedReport.salesTotal)}</p>
             </div>
             <div>
-              <p className="text-xs text-gray-600">Ventas efectivo</p>
+              <p className="text-xs text-gray-600">Ventas en efectivo</p>
               <p className="text-sm font-semibold">{formatCurrency(lastClosedReport.cashSalesTotal)}</p>
             </div>
           </div>
