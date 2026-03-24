@@ -36,6 +36,22 @@ type BarcodeLookupResponse = {
 const barcodeLookupUrl = (barcode: string) =>
   `${supabaseUrl}/functions/v1/make-server-cf6a4e6a/barcode-scrape/${barcode}`;
 
+const unitOptions = [
+  { value: 'unidad', label: 'Unidad' },
+  { value: 'paquete', label: 'Paquete' },
+  { value: 'blister', label: 'Blister' },
+  { value: 'bolsa', label: 'Bolsa' },
+  { value: 'sobre', label: 'Sobre' },
+] as const;
+
+const normalizeUnitValue = (unit?: string) => {
+  const normalized = (unit || '').trim().toLowerCase();
+  if (normalized === 'und') return 'unidad';
+  if (normalized === 'sb') return 'sobre';
+  if (unitOptions.some((option) => option.value === normalized)) return normalized;
+  return 'unidad';
+};
+
 export function Inventory() {
   const { products, addProduct, updateProduct, deleteProduct, categories, suppliers, getKardexByProduct, adjustStock } = usePOS();
   const navigate = useNavigate();
@@ -97,7 +113,7 @@ export function Inventory() {
     profitMargin: (product.profitMargin ?? 30).toString(),
     stock: product.stock.toString(),
     minStock: product.minStock.toString(),
-    unit: product.unit,
+    unit: normalizeUnitValue(product.unit),
     isBulk: product.isBulk,
     iva: product.iva.toString(),
     supplierName: product.supplierName || ''
@@ -1245,12 +1261,9 @@ return (
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="unidad">Unidad</SelectItem>
-                  <SelectItem value="kg">Kilogramo (kg)</SelectItem>
-                  <SelectItem value="g">Gramo (g)</SelectItem>
-                  <SelectItem value="l">Litro (l)</SelectItem>
-                  <SelectItem value="ml">Mililitro (ml)</SelectItem>
-                  <SelectItem value="paquete">Paquete</SelectItem>
+                  {unitOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-gray-500 mt-1">Se muestra junto al stock.</p>
@@ -1267,6 +1280,7 @@ return (
                   <SelectItem value="5">5%</SelectItem>
                   <SelectItem value="8">8%</SelectItem>
                   <SelectItem value="19">19%</SelectItem>
+                  <SelectItem value="20">20%</SelectItem>
                 </SelectContent>
               </Select>
               <p className="text-xs text-gray-500 mt-1">Afecta el precio con IVA y el costo unitario.</p>
@@ -1538,12 +1552,9 @@ return (
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="unidad">Unidad</SelectItem>
-                  <SelectItem value="kg">Kilogramo (kg)</SelectItem>
-                  <SelectItem value="g">Gramo (g)</SelectItem>
-                  <SelectItem value="l">Litro (l)</SelectItem>
-                  <SelectItem value="ml">Mililitro (ml)</SelectItem>
-                  <SelectItem value="paquete">Paquete</SelectItem>
+                  {unitOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-gray-500 mt-1">Se muestra junto al stock.</p>
