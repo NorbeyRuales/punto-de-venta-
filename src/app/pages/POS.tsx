@@ -7,7 +7,6 @@ import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Checkbox } from '../components/ui/checkbox';
 import { 
   Search, 
   Plus, 
@@ -61,7 +60,6 @@ export function POS() {
   const [cashReceived, setCashReceived] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [discountAmount, setDiscountAmount] = useState('');
-  const [searchSelectionByProduct, setSearchSelectionByProduct] = useState<Record<string, boolean>>({});
   const [recentlyAddedProductId, setRecentlyAddedProductId] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const keepPaymentDialogOpenRef = useRef(false);
@@ -441,14 +439,14 @@ export function POS() {
                 placeholder="Buscar productos..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 h-14 text-lg"
+                className="pl-10 h-12 text-base"
                 autoFocus
                 aria-label="Buscar productos"
               />
             </div>
 
             <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-              <SelectTrigger className="h-14 text-base">
+              <SelectTrigger className="h-12 text-base">
                 <SelectValue placeholder="Todas las categorías" />
               </SelectTrigger>
               <SelectContent>
@@ -460,7 +458,7 @@ export function POS() {
             </Select>
 
             <Select value={supplierFilter} onValueChange={setSupplierFilter}>
-              <SelectTrigger className="h-14 text-base">
+              <SelectTrigger className="h-12 text-base">
                 <SelectValue placeholder="Todos los proveedores" />
               </SelectTrigger>
               <SelectContent>
@@ -477,44 +475,27 @@ export function POS() {
             <div className="mt-4 max-h-64 overflow-y-auto space-y-2">
               {filteredProducts.length > 0 ? (
                 filteredProducts.map(product => (
-                  <div key={product.id} className="w-full flex items-stretch gap-2">
-                    <button
-                      onClick={() => handleAddToCart(product.id)}
-                      className={`flex-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 rounded-lg text-left transition-all duration-300 ${
-                        recentlyAddedProductId === product.id
-                          ? 'bg-emerald-50 ring-2 ring-emerald-300'
-                          : 'bg-secondary hover:bg-gray-200'
-                      }`}
-                    >
-                      <div className="flex-1">
-                        <p className="font-semibold">{product.name}</p>
-                        <p className="text-sm text-gray-600">
-                          {product.category} - Stock: {product.stock} {product.unit}
-                        </p>
-                      </div>
-                      <div className="w-full sm:w-auto text-left sm:text-right">
-                        <p className="font-bold text-lg text-[#2ECC71]">
-                          {formatSalePrice(product.salePrice)}
-                        </p>
-                      </div>
-                    </button>
-                    <div className="shrink-0 rounded-lg border border-violet-200 bg-white px-3 grid place-items-center">
-                      <Checkbox
-                        checked={Boolean(searchSelectionByProduct[product.id])}
-                        aria-label={`Agregar ${product.name} al carrito`}
-                        onCheckedChange={(checked) => {
-                          const shouldCheck = checked === true;
-                          if (!shouldCheck) {
-                            setSearchSelectionByProduct((prev) => ({ ...prev, [product.id]: false }));
-                            return;
-                          }
-
-                          const added = handleAddToCart(product.id, true);
-                          setSearchSelectionByProduct((prev) => ({ ...prev, [product.id]: !added }));
-                        }}
-                      />
+                  <button
+                    key={product.id}
+                    onClick={() => handleAddToCart(product.id, true)}
+                    className={`w-full flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 rounded-lg text-left transition-all duration-300 ${
+                      recentlyAddedProductId === product.id
+                        ? 'bg-emerald-50 ring-2 ring-emerald-300'
+                        : 'bg-secondary hover:bg-gray-200'
+                    }`}
+                  >
+                    <div className="flex-1">
+                      <p className="font-semibold">{product.name}</p>
+                      <p className="text-sm text-gray-600">
+                        {product.category} - Stock: {product.stock} {product.unit}
+                      </p>
                     </div>
-                  </div>
+                    <div className="w-full sm:w-auto text-left sm:text-right">
+                      <p className="font-bold text-lg text-[#2ECC71]">
+                        {formatSalePrice(product.salePrice)}
+                      </p>
+                    </div>
+                  </button>
                 ))
               ) : (
                 <p className="text-center text-gray-500 py-8">No se encontraron productos</p>
