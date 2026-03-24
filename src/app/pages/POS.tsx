@@ -61,6 +61,8 @@ export function POS() {
   const [cashReceived, setCashReceived] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [discountAmount, setDiscountAmount] = useState('');
+  const [searchSelectionByProduct, setSearchSelectionByProduct] = useState<Record<string, boolean>>({});
+  const [recentlyAddedProductId, setRecentlyAddedProductId] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const keepPaymentDialogOpenRef = useRef(false);
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
@@ -77,6 +79,17 @@ export function POS() {
     setShowPaymentDialog(false);
     setCompletedSale(null);
   }, [activeDraftId]);
+
+  useEffect(() => {
+    if (!recentlyAddedProductId) return;
+    const timeoutId = window.setTimeout(() => {
+      setRecentlyAddedProductId((current) => (current === recentlyAddedProductId ? null : current));
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [recentlyAddedProductId]);
 
   const roundToHundred = (value: number) => {
     if (!Number.isFinite(value)) return 0;
@@ -206,15 +219,18 @@ export function POS() {
     if (product) {
       if (product.stock <= 0) {
         toast.error('Producto sin stock');
-        return;
+        return false;
       }
       addToCart(product, 1);
       toast.success('Producto agregado');
+      setRecentlyAddedProductId(productId);
       if (!preserveSearch) {
         setSearchQuery('');
       }
       searchInputRef.current?.focus();
+      return true;
     }
+    return false;
   };
 
   // Ajusta cantidades del carrito con validaciones.
@@ -464,7 +480,11 @@ export function POS() {
                   <div key={product.id} className="w-full flex items-stretch gap-2">
                     <button
                       onClick={() => handleAddToCart(product.id)}
-                      className="flex-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 bg-secondary hover:bg-gray-200 rounded-lg transition-colors text-left"
+                      className={`flex-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 sm:p-4 rounded-lg text-left transition-all duration-300 ${
+                        recentlyAddedProductId === product.id
+                          ? 'bg-emerald-50 ring-2 ring-emerald-300'
+                          : 'bg-secondary hover:bg-gray-200'
+                      }`}
                     >
                       <div className="flex-1">
                         <p className="font-semibold">{product.name}</p>
@@ -480,11 +500,17 @@ export function POS() {
                     </button>
                     <div className="shrink-0 rounded-lg border border-violet-200 bg-white px-3 grid place-items-center">
                       <Checkbox
+                        checked={Boolean(searchSelectionByProduct[product.id])}
                         aria-label={`Agregar ${product.name} al carrito`}
                         onCheckedChange={(checked) => {
-                          if (checked === true) {
-                            handleAddToCart(product.id, true);
+                          const shouldCheck = checked === true;
+                          if (!shouldCheck) {
+                            setSearchSelectionByProduct((prev) => ({ ...prev, [product.id]: false }));
+                            return;
                           }
+
+                          const added = handleAddToCart(product.id, true);
+                          setSearchSelectionByProduct((prev) => ({ ...prev, [product.id]: !added }));
                         }}
                       />
                     </div>
