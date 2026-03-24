@@ -30,6 +30,7 @@ export function POS() {
   const {
     products,
     categories,
+    suppliers,
     saleDrafts,
     activeDraftId,
     activeDraft,
@@ -53,6 +54,8 @@ export function POS() {
 
   // Estado de UI y cobro.
   const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [supplierFilter, setSupplierFilter] = useState('all');
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('efectivo');
   const [cashReceived, setCashReceived] = useState('');
@@ -95,6 +98,20 @@ export function POS() {
       .toLowerCase()
       .trim();
 
+  // Mantiene filtros válidos cuando cambia catálogo.
+  useEffect(() => {
+    if (categoryFilter !== 'all' && !categories.includes(categoryFilter)) {
+      setCategoryFilter('all');
+    }
+  }, [categories, categoryFilter]);
+
+  useEffect(() => {
+    const availableSuppliers = suppliers.map(supplier => supplier.name);
+    if (supplierFilter !== 'all' && !availableSuppliers.includes(supplierFilter)) {
+      setSupplierFilter('all');
+    }
+  }, [suppliers, supplierFilter]);
+
   const buildWhatsappMessage = (sale: Sale) => {
     const customer = sale.customerId ? customers.find(c => c.id === sale.customerId) : undefined;
     const lines = [
@@ -126,14 +143,19 @@ export function POS() {
 
   // Resultados de búsqueda por nombre/SKU/código de barras.
   const normalizedQuery = normalizeText(searchQuery);
-  const filteredProducts = searchQuery
-    ? products.filter(p =>
-        normalizeText(p.name).includes(normalizedQuery) ||
-        normalizeText(p.sku || '').includes(normalizedQuery) ||
-        normalizeText(p.category || '').includes(normalizedQuery) ||
-        (p.barcode || '').includes(searchQuery.trim())
-      )
-    : [];
+  const filteredProducts = products.filter(p => {
+    const matchesSearch = normalizedQuery === ''
+      || normalizeText(p.name).includes(normalizedQuery)
+      || normalizeText(p.sku || '').includes(normalizedQuery)
+      || normalizeText(p.category || '').includes(normalizedQuery)
+      || normalizeText(p.supplierName || '').includes(normalizedQuery)
+      || (p.barcode || '').includes(searchQuery.trim());
+    const matchesCategory = categoryFilter === 'all' || p.category === categoryFilter;
+    const matchesSupplier = supplierFilter === 'all' || (p.supplierName || '') === supplierFilter;
+    return matchesSearch && matchesCategory && matchesSupplier;
+  });
+  const hasActiveSearchOrFilters =
+    searchQuery.trim() !== '' || categoryFilter !== 'all' || supplierFilter !== 'all';
 
   const quickCategories = useMemo(() => {
     const fallbackCategories = categories.length > 0
@@ -394,22 +416,48 @@ export function POS() {
       {/* Panel de productos */}
       <div className="lg:col-span-2 flex flex-col gap-4">
         <Card className="p-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-            <Input
-              ref={searchInputRef}
-              type="text"
-              placeholder="Buscar por nombre, código o escanear código de barras..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 h-14 text-lg"
-              autoFocus
-              aria-label="Buscar productos"
-            />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="relative md:col-span-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Buscar productos..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 h-14 text-lg"
+                autoFocus
+                aria-label="Buscar productos"
+              />
+            </div>
+
+            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+              <SelectTrigger className="h-14 text-base">
+                <SelectValue placeholder="Todas las categorías" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todas las categorías</SelectItem>
+                {categories.map(category => (
+                  <SelectItem key={category} value={category}>{category}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select value={supplierFilter} onValueChange={setSupplierFilter}>
+              <SelectTrigger className="h-14 text-base">
+                <SelectValue placeholder="Todos los proveedores" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos los proveedores</SelectItem>
+                {suppliers.map(supplier => (
+                  <SelectItem key={supplier.id} value={supplier.name}>{supplier.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Resultados de búsqueda */}
-          {searchQuery && (
+          {hasActiveSearchOrFilters && (
             <div className="mt-4 max-h-64 overflow-y-auto space-y-2">
               {filteredProducts.length > 0 ? (
                 filteredProducts.map(product => (
