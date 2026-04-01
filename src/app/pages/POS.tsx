@@ -91,7 +91,14 @@ export function POS() {
 
   const roundToHundred = (value: number) => {
     if (!Number.isFinite(value)) return 0;
-    return Math.round(value / 100) * 100;
+    return Math.floor(value / 100) * 100;
+  };
+  const computeLineMoney = (unitSalePrice: number, quantity: number, discountPercent: number) => {
+    const roundedUnitSalePrice = roundToHundred(unitSalePrice);
+    const lineSubtotal = roundToHundred(roundedUnitSalePrice * quantity);
+    const lineDiscount = roundToHundred((lineSubtotal * discountPercent) / 100);
+    const lineTotal = roundToHundred(lineSubtotal - lineDiscount);
+    return { roundedUnitSalePrice, lineSubtotal, lineDiscount, lineTotal };
   };
   const formatSalePrice = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
   const formatRoundedCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
@@ -309,13 +316,14 @@ export function POS() {
   };
 
   // Totales de la venta.
-  const subtotal = cart.reduce((sum, item) => sum + (item.product.salePrice * item.quantity), 0);
-  const totalDiscount = cart.reduce((sum, item) => {
-    const itemPrice = item.product.salePrice * item.quantity;
-    return sum + ((itemPrice * item.discount) / 100);
+  const roundedSubtotal = cart.reduce((sum, item) => {
+    const { lineSubtotal } = computeLineMoney(item.product.salePrice, item.quantity, item.discount);
+    return roundToHundred(sum + lineSubtotal);
   }, 0);
-  const roundedSubtotal = roundToHundred(subtotal);
-  const roundedDiscount = roundToHundred(totalDiscount);
+  const roundedDiscount = cart.reduce((sum, item) => {
+    const { lineDiscount } = computeLineMoney(item.product.salePrice, item.quantity, item.discount);
+    return roundToHundred(sum + lineDiscount);
+  }, 0);
   const payableTotal = roundToHundred(cartTotal);
   const cashValue = Number(cashReceived) || 0;
   const roundedCashValue = roundToHundred(cashValue);
@@ -602,7 +610,9 @@ export function POS() {
                         <p className="text-xs text-red-600">-{item.discount}%</p>
                       )}
                       <p className="font-bold">
-                        {formatRoundedCurrency((item.product.salePrice * item.quantity) * (1 - item.discount / 100))}
+                        {formatRoundedCurrency(
+                          computeLineMoney(item.product.salePrice, item.quantity, item.discount).lineTotal
+                        )}
                       </p>
                     </div>
                   </div>
@@ -628,7 +638,7 @@ export function POS() {
                 <span>Subtotal:</span>
                 <span>{formatRoundedCurrency(roundedSubtotal)}</span>
               </div>
-              {totalDiscount > 0 && (
+              {roundedDiscount > 0 && (
                 <div className="flex justify-between text-sm text-red-600">
                   <span>Descuento:</span>
                   <span>-{formatRoundedCurrency(roundedDiscount)}</span>

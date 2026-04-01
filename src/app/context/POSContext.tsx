@@ -97,7 +97,16 @@ const toNumber = (value: unknown, fallback = 0): number => {
 
 const roundMoney = (value: number): number => {
   if (!Number.isFinite(value)) return 0;
-  return Math.round(value / 100) * 100;
+  return Math.floor(value / 100) * 100;
+};
+
+const computeLineMoney = (unitSalePrice: number, quantity: number, discountPercent: number, ivaPercent: number) => {
+  const roundedUnitSalePrice = roundMoney(unitSalePrice);
+  const lineSubtotal = roundMoney(roundedUnitSalePrice * quantity);
+  const lineDiscount = roundMoney((lineSubtotal * discountPercent) / 100);
+  const lineTotal = roundMoney(lineSubtotal - lineDiscount);
+  const lineIva = roundMoney(lineTotal * (ivaPercent / (100 + ivaPercent)));
+  return { roundedUnitSalePrice, lineSubtotal, lineDiscount, lineTotal, lineIva };
 };
 
 const uuidLike = (value?: string | null): boolean =>
@@ -2233,9 +2242,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
     .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime())[0] ?? null;
 
   const cartTotal = cart.reduce((total, item) => {
-    const itemPrice = item.product.salePrice * item.quantity;
-    const discountAmount = (itemPrice * item.discount) / 100;
-    return total + (itemPrice - discountAmount);
+    const { lineTotal } = computeLineMoney(
+      item.product.salePrice,
+      item.quantity,
+      item.discount,
+      item.product.iva,
+    );
+    return roundMoney(total + lineTotal);
   }, 0);
 
   const getCashSessionReport = (sessionId: string): CashSessionReport => {
@@ -2466,17 +2479,19 @@ export function POSProvider({ children }: { children: ReactNode }) {
           return null;
         }
 
-        const lineSubtotal = item.product.salePrice * item.quantity;
-        const lineDiscount = (lineSubtotal * item.discount) / 100;
-        const lineTotal = lineSubtotal - lineDiscount;
-        const lineIva = lineTotal * (item.product.iva / (100 + item.product.iva));
+        const { lineSubtotal, lineDiscount, lineIva } = computeLineMoney(
+          item.product.salePrice,
+          item.quantity,
+          item.discount,
+          item.product.iva,
+        );
 
-        subtotal += lineSubtotal;
-        discountTotal += lineDiscount;
-        ivaTotal += lineIva;
+        subtotal = roundMoney(subtotal + lineSubtotal);
+        discountTotal = roundMoney(discountTotal + lineDiscount);
+        ivaTotal = roundMoney(ivaTotal + lineIva);
       }
 
-      const total = subtotal - discountTotal;
+      const total = roundMoney(subtotal - discountTotal);
       const roundedSubtotal = roundMoney(subtotal);
       const roundedDiscount = roundMoney(discountTotal);
       const roundedIva = roundMoney(ivaTotal);

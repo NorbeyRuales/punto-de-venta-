@@ -528,7 +528,7 @@ export function Inventory() {
   const getRoundedSalePrice = (product: Product): number => {
     const salePrice = getUnitSalePrice(product);
     if (!Number.isFinite(salePrice)) return 0;
-    return Math.round(salePrice / 100) * 100;
+    return Math.floor(salePrice / 100) * 100;
   };
 
   const handleEditCostWithIvaChange = (value: string) => {
@@ -1293,21 +1293,21 @@ return (
                   <SelectItem value="20">20%</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-gray-500 mt-1">Se acumula con IPUC para calcular costo/precio con impuestos.</p>
+              <p className="text-xs text-gray-500 mt-1">Se acumula con ICUI para calcular costo/precio con impuestos.</p>
             </div>
 
             <div>
-              <Label>IPUC (%)</Label>
+              <Label>ICUI (%)</Label>
               <Select value={formData.ipuc} onValueChange={(val) => setFormData({ ...formData, ipuc: val })}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">0% (Sin IPUC)</SelectItem>
+                  <SelectItem value="0">0% (Sin ICUI)</SelectItem>
                   <SelectItem value="20">20%</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-gray-500 mt-1">Impuesto adicional que se suma al IVA.</p>
+              <p className="text-xs text-gray-500 mt-1">Impuesto adicional ICUI que se suma al IVA.</p>
             </div>
           </div>
 
@@ -1597,21 +1597,21 @@ return (
                   <SelectItem value="19">19%</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-gray-500 mt-1">Se acumula con IPUC para calcular costo/precio con impuestos.</p>
+              <p className="text-xs text-gray-500 mt-1">Se acumula con ICUI para calcular costo/precio con impuestos.</p>
             </div>
 
             <div>
-              <Label>IPUC (%)</Label>
+              <Label>ICUI (%)</Label>
               <Select value={formData.ipuc} onValueChange={(val) => setFormData({ ...formData, ipuc: val })}>
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="0">0% (Sin IPUC)</SelectItem>
+                  <SelectItem value="0">0% (Sin ICUI)</SelectItem>
                   <SelectItem value="20">20%</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-gray-500 mt-1">Impuesto adicional que se suma al IVA.</p>
+              <p className="text-xs text-gray-500 mt-1">Impuesto adicional ICUI que se suma al IVA.</p>
             </div>
           </div>
 
