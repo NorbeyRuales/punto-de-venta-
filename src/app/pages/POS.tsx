@@ -91,7 +91,7 @@ export function POS() {
 
   const roundToHundred = (value: number) => {
     if (!Number.isFinite(value)) return 0;
-    return Math.floor(value / 100) * 100;
+    return Math.round(value / 100) * 100;
   };
   const computeLineMoney = (unitSalePrice: number, quantity: number, discountPercent: number) => {
     const roundedUnitSalePrice = roundToHundred(unitSalePrice);

@@ -528,7 +528,7 @@ export function Inventory() {
   const getRoundedSalePrice = (product: Product): number => {
     const salePrice = getUnitSalePrice(product);
     if (!Number.isFinite(salePrice)) return 0;
-    return Math.floor(salePrice / 100) * 100;
+    return Math.round(salePrice / 100) * 100;
   };
 
   const handleEditCostWithIvaChange = (value: string) => {
