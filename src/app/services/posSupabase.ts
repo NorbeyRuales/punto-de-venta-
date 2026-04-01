@@ -371,6 +371,7 @@ export async function createProduct(token: string, storeId: string, product: Omi
     unit: created.unit,
     isBulk: created.is_bulk,
     iva: Number(created.iva ?? 0),
+    ipuc: Number(product.ipuc ?? 0),
     unitsPerPurchase: created.units_per_purchase ?? undefined,
     profitMargin: created.profit_margin ?? undefined,
     unitPrice: created.unit_price ?? undefined,

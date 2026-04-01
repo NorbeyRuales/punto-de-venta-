@@ -174,6 +174,7 @@ export interface Product {
   unit: string;
   isBulk: boolean;
   iva: number;
+  ipuc?: number;
   unitsPerPurchase?: number;
   profitMargin?: number;
   unitPrice?: number;
@@ -394,6 +395,7 @@ interface POSContextType {
       unitSalePrice?: number;
       nextCostPrice?: number;
       nextIva?: number;
+      nextIpuc?: number;
       nextUnitsPerPurchase?: number;
       productName?: string;
     }
@@ -1767,6 +1769,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       unitSalePrice?: number;
       nextCostPrice?: number;
       nextIva?: number;
+      nextIpuc?: number;
       nextUnitsPerPurchase?: number;
       productName?: string;
     }
@@ -1783,6 +1786,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     const effectiveCostPrice = typeof options?.nextCostPrice === 'number' ? options.nextCostPrice : product.costPrice;
     const effectiveIva = typeof options?.nextIva === 'number' ? options.nextIva : product.iva;
+    const effectiveIpuc = typeof options?.nextIpuc === 'number' ? options.nextIpuc : Number(product.ipuc || 0);
     const effectiveUnits = typeof options?.nextUnitsPerPurchase === 'number'
       ? options.nextUnitsPerPurchase
       : Number(product.unitsPerPurchase ?? 1) || 1;
@@ -1792,6 +1796,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           ...product,
           costPrice: effectiveCostPrice,
           iva: effectiveIva,
+          ipuc: effectiveIpuc,
           unitsPerPurchase: effectiveUnits,
         });
     const unitSalePrice = typeof options?.unitSalePrice === 'number'
@@ -2189,8 +2194,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const buildUnitCostWithIva = (product: Product, nextCostPrice?: number): number => {
     const units = Number(product.unitsPerPurchase ?? 1) || 1;
     const baseCost = typeof nextCostPrice === 'number' ? nextCostPrice : product.costPrice;
-    const ivaFactor = 1 + (Number(product.iva || 0) / 100);
-    return (baseCost * ivaFactor) / units;
+    const taxFactor = 1 + ((Number(product.iva || 0) + Number(product.ipuc || 0)) / 100);
+    return (baseCost * taxFactor) / units;
   };
 
   // Registra un movimiento de Kardex local y lo intenta persistir en Supabase.

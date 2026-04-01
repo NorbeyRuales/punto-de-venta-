@@ -84,6 +84,7 @@ export function Inventory() {
     unit: 'unidad',
     isBulk: false,
     iva: '0',
+    ipuc: '0',
     supplierName: ''
   });
   const [formData, setFormData] = useState(buildEmptyForm(defaultCategory));
@@ -96,9 +97,11 @@ export function Inventory() {
   const unitsPerPurchase = parseFloat(formData.unitsPerPurchase) || 0;
   const profitMargin = parseFloat(formData.profitMargin) || 0;
   const ivaRate = parseFloat(formData.iva) || 0;
+  const ipucRate = parseFloat(formData.ipuc) || 0;
+  const totalTaxRate = ivaRate + ipucRate;
   const calculatedUnitCost = unitsPerPurchase > 0 ? purchaseCost / unitsPerPurchase : 0;
   const marginFactor = 1 - (profitMargin / 100);
-  const calculatedCostWithIva = purchaseCost * (1 + (ivaRate / 100));
+  const calculatedCostWithIva = purchaseCost * (1 + (totalTaxRate / 100));
   const calculatedUnitCostWithIva = unitsPerPurchase > 0 ? calculatedCostWithIva / unitsPerPurchase : 0;
   const calculatedUnitSalePrice = marginFactor > 0 ? calculatedUnitCostWithIva / marginFactor : 0;
   const emptyFormData = buildEmptyForm(defaultCategory);
@@ -116,6 +119,7 @@ export function Inventory() {
     unit: normalizeUnitValue(product.unit),
     isBulk: product.isBulk,
     iva: product.iva.toString(),
+    ipuc: (product.ipuc ?? 0).toString(),
     supplierName: product.supplierName || ''
   });
 
@@ -287,6 +291,7 @@ export function Inventory() {
       unit: formData.unit,
       isBulk: formData.isBulk,
       iva: parseFloat(formData.iva) || 0,
+      ipuc: parseFloat(formData.ipuc) || 0,
       supplierName: formData.supplierName || undefined,
       unitsPerPurchase,
       profitMargin,
@@ -319,6 +324,7 @@ export function Inventory() {
     const nextStockRaw = parseFloat(formData.stock);
     const nextStock = Number.isFinite(nextStockRaw) ? nextStockRaw : selectedProduct.stock;
     const nextIva = parseFloat(formData.iva) || 0;
+    const nextIpuc = parseFloat(formData.ipuc) || 0;
     const nextMinStockRaw = parseFloat(formData.minStock);
     const nextMinStock = Number.isFinite(nextMinStockRaw) ? nextMinStockRaw : selectedProduct.minStock;
     const stockChanged = nextStock !== selectedProduct.stock;
@@ -335,6 +341,7 @@ export function Inventory() {
       unit: formData.unit,
       isBulk: formData.isBulk,
       iva: nextIva,
+      ipuc: nextIpuc,
       supplierName: formData.supplierName || undefined,
       unitsPerPurchase,
       profitMargin,
@@ -351,6 +358,7 @@ export function Inventory() {
         productName: formData.name,
         nextCostPrice: purchaseCost,
         nextIva,
+        nextIpuc,
         nextUnitsPerPurchase: unitsPerPurchase,
         unitSalePrice: calculatedUnitSalePrice
       });
@@ -504,11 +512,13 @@ export function Inventory() {
 
   const getUnitCost = (product: Product): number => {
     const units = getUnitsPerPurchase(product);
-    return (product.costPrice * (1 + (Number(product.iva || 0) / 100))) / units;
+    const taxRate = Number(product.iva || 0) + Number(product.ipuc || 0);
+    return (product.costPrice * (1 + (taxRate / 100))) / units;
   };
 
   const getCostWithIva = (product: Product): number => {
-    return product.costPrice * (1 + (Number(product.iva || 0) / 100));
+    const taxRate = Number(product.iva || 0) + Number(product.ipuc || 0);
+    return product.costPrice * (1 + (taxRate / 100));
   };
 
   const getUnitSalePrice = (product: Product): number => {
@@ -528,7 +538,7 @@ export function Inventory() {
       return;
     }
 
-    const divisor = 1 + (ivaRate / 100);
+    const divisor = 1 + (totalTaxRate / 100);
     const nextCostPrice = divisor > 0 ? nextCostWithIva / divisor : nextCostWithIva;
     setFormData(prev => ({ ...prev, costPrice: nextCostPrice.toString() }));
   };
@@ -542,7 +552,7 @@ export function Inventory() {
 
     const units = unitsPerPurchase > 0 ? unitsPerPurchase : 1;
     const nextCostWithIva = nextUnitCost * units;
-    const divisor = 1 + (ivaRate / 100);
+    const divisor = 1 + (totalTaxRate / 100);
     const nextCostPrice = divisor > 0 ? nextCostWithIva / divisor : nextCostWithIva;
     setFormData(prev => ({ ...prev, costPrice: nextCostPrice.toString() }));
   };
@@ -1283,7 +1293,21 @@ return (
                   <SelectItem value="20">20%</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-gray-500 mt-1">Afecta el precio con IVA y el costo unitario.</p>
+              <p className="text-xs text-gray-500 mt-1">Se acumula con IPUC para calcular costo/precio con impuestos.</p>
+            </div>
+
+            <div>
+              <Label>IPUC (%)</Label>
+              <Select value={formData.ipuc} onValueChange={(val) => setFormData({ ...formData, ipuc: val })}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">0% (Sin IPUC)</SelectItem>
+                  <SelectItem value="20">20%</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-500 mt-1">Impuesto adicional que se suma al IVA.</p>
             </div>
           </div>
 
@@ -1573,7 +1597,21 @@ return (
                   <SelectItem value="19">19%</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-gray-500 mt-1">Afecta el precio con IVA y el costo unitario.</p>
+              <p className="text-xs text-gray-500 mt-1">Se acumula con IPUC para calcular costo/precio con impuestos.</p>
+            </div>
+
+            <div>
+              <Label>IPUC (%)</Label>
+              <Select value={formData.ipuc} onValueChange={(val) => setFormData({ ...formData, ipuc: val })}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="0">0% (Sin IPUC)</SelectItem>
+                  <SelectItem value="20">20%</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-500 mt-1">Impuesto adicional que se suma al IVA.</p>
             </div>
           </div>
 
