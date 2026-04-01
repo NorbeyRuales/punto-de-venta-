@@ -25,6 +25,7 @@ type ProductRow = {
   unit: string;
   is_bulk: boolean;
   iva: number;
+  ipuc: number;
   units_per_purchase: number | null;
   profit_margin: number | null;
   unit_price: number | null;
@@ -262,7 +263,7 @@ export async function loadCategoriesAndProducts(token: string, storeId: string):
 
   const products = await selectRows<ProductRow>(
     'products',
-    `select=id,name,sku,barcode,cost_price,sale_price,stock,min_stock,unit,is_bulk,iva,units_per_purchase,profit_margin,unit_price,category_id,supplier_id,is_active,supplier:suppliers(name)&store_id=eq.${storeId}&order=created_at.asc`,
+    `select=id,name,sku,barcode,cost_price,sale_price,stock,min_stock,unit,is_bulk,iva,ipuc,units_per_purchase,profit_margin,unit_price,category_id,supplier_id,is_active,supplier:suppliers(name)&store_id=eq.${storeId}&order=created_at.asc`,
     token,
   );
 
@@ -282,6 +283,7 @@ export async function loadCategoriesAndProducts(token: string, storeId: string):
       unit: row.unit ?? 'unidad',
       isBulk: Boolean(row.is_bulk),
       iva: Number(row.iva ?? 0),
+      ipuc: Number(row.ipuc ?? 0),
       unitsPerPurchase: row.units_per_purchase ?? undefined,
       profitMargin: row.profit_margin ?? undefined,
       unitPrice: row.unit_price ?? undefined,
@@ -348,6 +350,7 @@ export async function createProduct(token: string, storeId: string, product: Omi
     unit: product.unit,
     is_bulk: product.isBulk,
     iva: product.iva,
+    ipuc: product.ipuc ?? 0,
     units_per_purchase: product.unitsPerPurchase ?? null,
     profit_margin: product.profitMargin ?? null,
     unit_price: product.unitPrice ?? null,
@@ -371,7 +374,7 @@ export async function createProduct(token: string, storeId: string, product: Omi
     unit: created.unit,
     isBulk: created.is_bulk,
     iva: Number(created.iva ?? 0),
-    ipuc: Number(product.ipuc ?? 0),
+    ipuc: Number(created.ipuc ?? 0),
     unitsPerPurchase: created.units_per_purchase ?? undefined,
     profitMargin: created.profit_margin ?? undefined,
     unitPrice: created.unit_price ?? undefined,
@@ -392,6 +395,7 @@ export async function patchProduct(token: string, storeId: string, productId: st
   if (patch.unit !== undefined) dbPatch.unit = patch.unit;
   if (patch.isBulk !== undefined) dbPatch.is_bulk = patch.isBulk;
   if (patch.iva !== undefined) dbPatch.iva = patch.iva;
+  if (patch.ipuc !== undefined) dbPatch.ipuc = patch.ipuc;
   if (patch.unitsPerPurchase !== undefined) dbPatch.units_per_purchase = patch.unitsPerPurchase ?? null;
   if (patch.profitMargin !== undefined) dbPatch.profit_margin = patch.profitMargin ?? null;
   if (patch.unitPrice !== undefined) dbPatch.unit_price = patch.unitPrice ?? null;

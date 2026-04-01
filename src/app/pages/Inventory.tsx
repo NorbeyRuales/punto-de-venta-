@@ -474,11 +474,11 @@ export function Inventory() {
     const rows = products.map(p => [
       p.name,
       p.unitsPerPurchase || 1,
-      p.costPrice * (1 + ((p.iva || 0) / 100)),
-      (p.costPrice * (1 + ((p.iva || 0) / 100))) / (p.unitsPerPurchase || 1),
+      p.costPrice * (1 + (((p.iva || 0) + (p.ipuc || 0)) / 100)),
+      (p.costPrice * (1 + (((p.iva || 0) + (p.ipuc || 0)) / 100))) / (p.unitsPerPurchase || 1),
       Number(p.unitPrice ?? p.salePrice),
       calculateProfitMargin(
-        (p.costPrice * (1 + ((p.iva || 0) / 100))) / (p.unitsPerPurchase || 1),
+        (p.costPrice * (1 + (((p.iva || 0) + (p.ipuc || 0)) / 100))) / (p.unitsPerPurchase || 1),
         Number(p.unitPrice ?? p.salePrice)
       ),
       p.stock,
