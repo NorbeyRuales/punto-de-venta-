@@ -1,5 +1,5 @@
 // Inventario: alta/edición de productos, filtros, Kardex y exportación.
-import { useEffect, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -52,6 +52,13 @@ const normalizeUnitValue = (unit?: string) => {
   return 'unidad';
 };
 
+const normalizeText = (value: string) =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
 export function Inventory() {
   const { products, addProduct, updateProduct, deleteProduct, categories, suppliers, getKardexByProduct, adjustStock } = usePOS();
   const navigate = useNavigate();
@@ -91,6 +98,8 @@ export function Inventory() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [isExporting, setIsExporting] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const [visibleRowsCount, setVisibleRowsCount] = useState(120);
 
   // Cálculos automáticos de costos/IVA/utilidad.
   const purchaseCost = parseFloat(formData.costPrice) || 0;
@@ -176,14 +185,14 @@ export function Inventory() {
     return errors;
   };
 
-  const hasSharedBarcode = (() => {
+  const hasSharedBarcode = useMemo(() => {
     const normalizedBarcode = formData.barcode.trim();
     if (!normalizedBarcode) return false;
     const currentEditingId = selectedProduct?.id;
     return products.some((product) =>
       product.id !== currentEditingId && (product.barcode || '').trim() === normalizedBarcode
     );
-  })();
+  }, [formData.barcode, products, selectedProduct?.id]);
 
   // Mantiene filtros válidos cuando cambia catálogo.
   useEffect(() => {
@@ -249,26 +258,92 @@ export function Inventory() {
     return () => window.removeEventListener('keydown', handleShortcuts);
   }, [categoryFilter, supplierFilter, categories, suppliers, defaultCategory]);
 
-  // Filtrado por búsqueda, categoría y proveedor.
-  const filteredProducts = products.filter(p => {
-    const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.sku.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.barcode.includes(searchQuery);
-    const matchesCategory = categoryFilter === 'all' || p.category === categoryFilter;
-    const matchesSupplier = supplierFilter === 'all' || (p.supplierName || '') === supplierFilter;
-    return matchesSearch && matchesCategory && matchesSupplier;
-  });
+  // Índice de búsqueda cacheado para evitar normalizaciones costosas en cada tecla.
+  const productSearchIndex = useMemo(() => {
+    return products.map((product) => ({
+      product,
+      name: normalizeText(product.name),
+      sku: normalizeText(product.sku || ''),
+      barcode: (product.barcode || '').trim(),
+    }));
+  }, [products]);
 
-  const lowStockCount = products.filter(p => p.stock <= p.minStock).length;
+  // Filtrado por búsqueda, categoría y proveedor (diferido para mejorar INP al teclear).
+  const filteredProducts = useMemo(() => {
+    const normalizedQuery = normalizeText(deferredSearchQuery);
+    const barcodeQuery = deferredSearchQuery.trim();
+    const hasQuery = normalizedQuery !== '' || barcodeQuery !== '';
+
+    return productSearchIndex
+      .filter(({ product, name, sku, barcode }) => {
+        const matchesSearch = !hasQuery
+          || name.includes(normalizedQuery)
+          || sku.includes(normalizedQuery)
+          || barcode.includes(barcodeQuery);
+        const matchesCategory = categoryFilter === 'all' || product.category === categoryFilter;
+        const matchesSupplier = supplierFilter === 'all' || (product.supplierName || '') === supplierFilter;
+        return matchesSearch && matchesCategory && matchesSupplier;
+      })
+      .map(({ product }) => product);
+  }, [productSearchIndex, deferredSearchQuery, categoryFilter, supplierFilter]);
+
+  useEffect(() => {
+    setVisibleRowsCount(120);
+  }, [deferredSearchQuery, categoryFilter, supplierFilter]);
+
+  const visibleProducts = useMemo(
+    () => filteredProducts.slice(0, visibleRowsCount),
+    [filteredProducts, visibleRowsCount],
+  );
+
+  const hasMoreProducts = visibleRowsCount < filteredProducts.length;
+
+  const productMetricsById = useMemo(() => {
+    const metrics = new Map<string, {
+      unitsPerPurchase: number;
+      costWithIva: number;
+      unitCost: number;
+      roundedSalePrice: number;
+      unitSalePrice: number;
+      profitMargin: number;
+      isLowStock: boolean;
+    }>();
+
+    visibleProducts.forEach((product) => {
+      const unitsPerPurchaseValue = getUnitsPerPurchase(product);
+      const costWithIvaValue = getCostWithIva(product);
+      const unitCostValue = getUnitCost(product);
+      const unitSalePriceValue = getUnitSalePrice(product);
+      const roundedSalePriceValue = getRoundedSalePrice(product);
+      const profitMarginValue = calculateProfitMargin(unitCostValue, unitSalePriceValue);
+      metrics.set(product.id, {
+        unitsPerPurchase: unitsPerPurchaseValue,
+        costWithIva: costWithIvaValue,
+        unitCost: unitCostValue,
+        roundedSalePrice: roundedSalePriceValue,
+        unitSalePrice: unitSalePriceValue,
+        profitMargin: profitMarginValue,
+        isLowStock: product.stock <= product.minStock,
+      });
+    });
+
+    return metrics;
+  }, [visibleProducts]);
+
+  const lowStockCount = useMemo(
+    () => products.filter((product) => product.stock <= product.minStock).length,
+    [products],
+  );
 
   const openKardexDialog = (product: Product) => {
     setSelectedKardexProduct(product);
     setShowKardexDialog(true);
   };
 
-  const selectedKardexMovements = selectedKardexProduct
-    ? getKardexByProduct(selectedKardexProduct.id)
-    : [];
+  const selectedKardexMovements = useMemo(() => {
+    if (!selectedKardexProduct) return [];
+    return getKardexByProduct(selectedKardexProduct.id);
+  }, [selectedKardexProduct, getKardexByProduct]);
 
   // Alta de producto.
   const handleAddProduct = async () => {
@@ -775,7 +850,10 @@ return (
               <p>No se encontraron productos</p>
             </div>
           ) : (
-            filteredProducts.map(product => (
+            visibleProducts.map(product => {
+              const metrics = productMetricsById.get(product.id);
+              if (!metrics) return null;
+              return (
               <div key={product.id} className="rounded-lg border border-border bg-white p-3 space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div>
@@ -786,7 +864,7 @@ return (
                     </p>
                   </div>
                   <span className="text-sm font-semibold text-[#2ECC71]">
-                    ${getRoundedSalePrice(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                    ${metrics.roundedSalePrice.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                   </span>
                 </div>
 
@@ -794,7 +872,7 @@ return (
                   <div>
                     <p>Stock</p>
                     <p className={`font-semibold ${
-                      product.stock <= product.minStock ? 'text-red-600' : 'text-gray-900'
+                      metrics.isLowStock ? 'text-red-600' : 'text-gray-900'
                     }`}>
                       {product.stock} {product.unit}
                     </p>
@@ -802,19 +880,19 @@ return (
                   <div>
                     <p>Utilidad</p>
                     <p className="font-semibold text-[#8E44AD]">
-                      {calculateProfitMargin(getUnitCost(product), getUnitSalePrice(product)).toFixed(2)}%
+                      {metrics.profitMargin.toFixed(2)}%
                     </p>
                   </div>
                   <div>
                     <p>Precio c/IVA</p>
                     <p className="font-semibold text-gray-900">
-                      ${getCostWithIva(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                      ${metrics.costWithIva.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                     </p>
                   </div>
                   <div>
                     <p>Costo uni</p>
                     <p className="font-semibold text-gray-900">
-                      ${getUnitCost(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                      ${metrics.unitCost.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                     </p>
                   </div>
                 </div>
@@ -850,7 +928,7 @@ return (
                   </Button>
                 </div>
               </div>
-            ))
+            )})
           )}
         </div>
 
@@ -877,7 +955,10 @@ return (
                   </td>
                 </tr>
               ) : (
-                filteredProducts.map(product => (
+                visibleProducts.map(product => {
+                    const metrics = productMetricsById.get(product.id);
+                    if (!metrics) return null;
+                    return (
                     <tr key={product.id} className="border-b border-[var(--border)] even:bg-[rgba(206,181,255,0.12)] hover:bg-[rgba(206,181,255,0.22)] transition-colors">
                     <td className="p-3 sm:p-4">
                       <p className="font-semibold">{product.name}</p>
@@ -886,30 +967,30 @@ return (
                         {product.supplierName ? ` · ${product.supplierName}` : ''}
                       </p>
                     </td>
-                    <td className="p-3 sm:p-4 text-center font-medium">{getUnitsPerPurchase(product)}</td>
+                    <td className="p-3 sm:p-4 text-center font-medium">{metrics.unitsPerPurchase}</td>
                     <td className="p-3 sm:p-4 text-right">
-                      ${getCostWithIva(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                      ${metrics.costWithIva.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                     </td>
                     <td className="p-3 sm:p-4 text-right">
-                      ${getUnitCost(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                      ${metrics.unitCost.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                     </td>
                     <td className="p-3 sm:p-4 text-right font-semibold text-[#2ECC71]">
-                      ${getRoundedSalePrice(product).toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                      ${metrics.roundedSalePrice.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                     </td>
                     <td className="p-3 sm:p-4 text-right">
                       <span className="font-semibold text-[#8E44AD]">
-                        {calculateProfitMargin(getUnitCost(product), getUnitSalePrice(product)).toFixed(2)}%
+                        {metrics.profitMargin.toFixed(2)}%
                       </span>
                     </td>
                     <td className="p-3 sm:p-4 text-center">
                       <span className={`font-semibold ${
-                        product.stock <= product.minStock
+                        metrics.isLowStock
                           ? 'text-red-600'
                           : 'text-gray-900'
                       }`}>
                         {product.stock} {product.unit}
                       </span>
-                      {product.stock <= product.minStock && (
+                      {metrics.isLowStock && (
                         <p className="text-xs text-red-600">¡Stock bajo!</p>
                       )}
                     </td>
@@ -963,12 +1044,23 @@ return (
                       </div>
                     </td>
                   </tr>
-                ))
+                )})
               )}
             </tbody>
           </table>
         </div>
       </Card>
+
+      {hasMoreProducts && (
+        <div className="flex justify-center">
+          <Button
+            variant="outline"
+            onClick={() => setVisibleRowsCount((current) => current + 120)}
+          >
+            Mostrar más productos ({Math.min(120, filteredProducts.length - visibleRowsCount)} más)
+          </Button>
+        </div>
+      )}
 
       {!isTopAddButtonVisible && !showAddDialog && (
         <Button
