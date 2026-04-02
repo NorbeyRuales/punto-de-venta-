@@ -1,86 +1,180 @@
 # Punto de Venta Completo
 
-## Resumen
-POS web para tiendas minoristas. El proyecto nació de una plantilla de Figma y se fue ajustando a flujos reales (venta, inventario, caja, clientes, proveedores, reportes y configuración). La app es **offline-first** con respaldo en `localStorage` y sincronización opcional con Supabase (Auth + DB + Edge Functions).
+Aplicacion web POS para tiendas minoristas, pensada para operar con internet y tambien en contingencia offline.
 
-## Origen del diseño (Figma)
-- Plantilla base: https://www.figma.com/design/vWSgmOCGSRhgnBVG85Afde/Punto-de-Venta-completo
-- El layout inicial proviene del diseño y se refinó en código para cubrir módulos reales del POS.
+Este repositorio ya incluye modulos funcionales de:
 
-## Estado del proyecto
-- En desarrollo activo: varias pantallas están completas y otras siguen siendo demo o están en preparación.
-- Enfoque actual: consolidar POS + inventario + caja + sincronización Supabase.
+- ventas
+- inventario
+- caja
+- clientes
+- proveedores
+- compras
+- recargas
+- reportes
+- configuracion
 
-## Módulos y rutas principales
-| Ruta | Módulo | Qué cubre |
+## Que es este proyecto
+
+Es una SPA construida con React + Vite que centraliza el estado del negocio en un contexto global y combina dos fuentes de datos:
+
+- Supabase como backend principal (auth, tablas y RPC)
+- localStorage como respaldo operativo para trabajar sin conexion
+
+Objetivo practico: que el negocio siga vendiendo aun cuando falle internet, y luego pueda sincronizar cambios cuando vuelva la conectividad.
+
+## Como funciona (resumen rapido)
+
+1. La app inicia en Login.
+2. Si el usuario entra con email y clave, autentica contra Supabase.
+3. Se identifica la tienda del usuario y se cargan catalogos y operaciones desde la base de datos.
+4. Las pantallas internas usan rutas protegidas (si no hay sesion, vuelve a Login).
+5. Si no hay conectividad, se puede ingresar con PIN offline y operar con datos locales.
+6. Los cambios hechos offline quedan marcados como pendientes y luego se suben manualmente a Supabase.
+
+## Mapa de modulos
+
+| Ruta | Modulo | Uso principal |
 | --- | --- | --- |
-| `/` | Login | Autenticación Supabase y modo offline con PIN/rol. |
-| `/dashboard` | Dashboard | KPIs, alertas de stock y visión general. |
-| `/pos` | Punto de Venta | Venta, descuentos, cobro y manejo de borradores. |
-| `/inventory` | Inventario | Productos, categorías, Kardex y búsqueda por código de barras. |
-| `/customers` | Clientes | Datos, puntos, fiado y pagos. |
-| `/suppliers` | Proveedores | Gestión de proveedores y cuentas. |
-| `/purchases` | Compras | Ingreso de compras y política de precios. |
-| `/cash-register` | Caja | Apertura, movimientos y cierre de caja. |
-| `/recharges` | Recargas | Recargas y servicios con comisión. |
-| `/reports` | Reportes | Gráficas y resúmenes de negocio. |
-| `/invoice` | Factura | Vista demo de factura electrónica. |
-| `/configuration` | Configuración | Tienda, branding, backups y ajustes generales. |
+| / | Login | Acceso online y acceso offline con PIN. |
+| /dashboard | Dashboard | Resumen general del negocio. |
+| /pos | Punto de venta | Venta, carrito, cobro y borradores. |
+| /inventory | Inventario | Productos, categorias, stock y kardex. |
+| /customers | Clientes | Clientes, deuda y pagos. |
+| /suppliers | Proveedores | Proveedores y datos de contacto. |
+| /purchases | Compras | Registro de compras e impacto en inventario. |
+| /cash-register | Caja | Apertura, movimientos, arqueo y cierre. |
+| /recharges | Recargas | Recargas y servicios con comision. |
+| /reports | Reportes | Vistas operativas y analiticas. |
+| /invoice | Factura | Vista de factura/demo. |
+| /configuration | Configuracion | Datos de tienda, backup, PIN y sincronizacion. |
 
-## Stack técnico
-- React 18 + Vite 6.
-- React Router 7.
-- Tailwind CSS 4 + `@tailwindcss/vite`.
-- Radix UI + shadcn/ui.
-- Supabase (Auth, REST/RPC y Edge Functions).
-- Recharts, date-fns, sonner, lucide-react.
-- MUI + Emotion para componentes puntuales.
+## Arquitectura clave
 
-## Arquitectura y flujo de datos
-- `src/main.tsx` arranca la app.
-- `src/app/App.tsx` monta proveedores globales.
-- `src/app/routes.tsx` define rutas y protección con `ProtectedRoute`.
-- `src/app/components/Layout.tsx` contiene navegación y layout principal.
-- `src/app/context/POSContext.tsx` centraliza estado del POS (productos, ventas, clientes, proveedores, caja, configuración, borradores).
-- `src/app/services/posSupabase.ts` es la capa de acceso a datos (REST + RPC).
-- `src/lib/supabaseClient.ts` implementa el cliente HTTP liviano para Supabase.
+- src/main.tsx: punto de entrada de la SPA.
+- src/app/App.tsx: integra contexto global, rutas y notificaciones.
+- src/app/routes.tsx: define rutas publicas/protegidas y carga lazy de paginas.
+- src/app/components/ProtectedRoute.tsx: bloquea acceso si no hay sesion lista.
+- src/app/context/POSContext.tsx: nucleo del negocio (estado, auth, offline, sync, acciones CRUD).
+- src/app/services/posSupabase.ts: capa de acceso a tablas y RPC de Supabase.
+- src/lib/supabaseClient.ts: cliente HTTP base para Auth, REST y RPC.
+- supabase/migrations/: esquema SQL y evolucion de base de datos.
 
-## Persistencia offline y sincronización
-- Estado local persistido en `localStorage` para operar sin conexión.
-- Modo offline con PIN y rol por defecto; se registra un backup local cuando hay cambios.
-- Al reconectar con Supabase se sincronizan catálogos y operaciones.
-- Se puede subir el backup local a Supabase desde Configuración.
+## Stack tecnico
 
-## Supabase (DB + Edge Functions)
-- Esquema y funciones SQL en `supabase/migrations/`.
-- Edge Function para búsqueda de códigos de barras en `supabase/functions/server/index.tsx`.
-- Guía completa de setup y bootstrap en `supabase/README.md`.
+- React 18
+- Vite 6
+- React Router 7
+- Tailwind CSS 4
+- Radix UI (componentes base)
+- Supabase (Auth + PostgREST + RPC)
+- Sonner, Lucide React, Recharts
+- MUI/Emotion (uso puntual)
 
-## Estructura de carpetas clave
-- `src/app/pages/` módulos funcionales (POS, Inventario, Clientes, etc.).
-- `src/app/components/` layout, rutas protegidas y UI.
-- `src/app/components/ui/` componentes base tipo shadcn/ui.
-- `src/app/components/figma/` piezas originales del diseño.
-- `src/styles/` estilos globales y tema.
-- `public/branding/` assets de marca.
+## Requisitos
 
-## Variables de entorno
-Crear `.env` o `.env.local` (puedes copiar `.env.example`) con:
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
+- Node.js 18 o superior
+- npm
+- Proyecto Supabase activo con Auth y DB disponibles
 
-Sin estas variables la app falla al iniciar porque el cliente de Supabase valida credenciales.
+## Puesta en marcha local
 
-## Scripts
-- `npm i` instalar dependencias.
-- `npm run dev` iniciar servidor de desarrollo.
-- `npm run build` generar build de producción.
+1. Instalar dependencias:
 
-## Branding / logo
-- Coloca un JPEG en `public/branding/logo.jpeg`.
-- Ajusta la ruta en Configuración → Tienda → “Ruta pública del logo”.
-- Si no hay logo, la UI muestra un placeholder sin romperse.
+```bash
+npm install
+```
 
-## Notas
-- Este proyecto sigue en evolución; algunas pantallas son demostrativas.
-- Se recomienda hacer backups periódicos desde la sección de Configuración.
+2. Crear archivo de entorno desde .env.example:
+
+```bash
+cp .env.example .env
+```
+
+3. Configurar variables:
+
+```env
+VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+VITE_SUPABASE_ANON_KEY=your-public-anon-key
+```
+
+4. Preparar base de datos y tienda inicial siguiendo supabase/README.md.
+
+5. Levantar entorno de desarrollo:
+
+```bash
+npm run dev
+```
+
+6. Generar build de produccion:
+
+```bash
+npm run build
+```
+
+## Importante sobre modo offline
+
+Aunque el proyecto opera con logica offline, hoy el frontend exige VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY para arrancar.
+
+En otras palabras:
+
+- si faltan variables de entorno, la app no inicia
+- si hay variables y luego se cae internet, si puedes operar con PIN offline
+
+## Sincronizacion y backups
+
+- El estado operativo se persiste en localStorage.
+- Cuando hay cambios offline, se marca estado pendiente de sincronizacion.
+- Desde Configuracion puedes:
+  - revisar pendientes
+  - subir cambios a Supabase
+  - descargar backup JSON local
+- La sincronizacion prioriza que Supabase vuelva a ser fuente de verdad cuando la carga remota es exitosa.
+
+## Scripts disponibles
+
+En la raiz del proyecto solo hay dos scripts:
+
+- npm run dev
+- npm run build
+
+No hay scripts de test, lint ni preview definidos en package.json.
+
+## Estructura del repositorio
+
+```text
+src/
+  app/
+    components/
+    constants/
+    context/
+    pages/
+    services/
+  assets/
+  lib/
+  styles/
+public/
+  branding/
+supabase/
+  functions/
+  migrations/
+mcp/
+  supabase/
+```
+
+## Despliegue
+
+El proyecto compila como SPA estatica. En Vercel, vercel.json ya contempla:
+
+- cache para assets
+- manejo de branding
+- rewrite a index.html para soportar rutas del frontend
+
+Si despliegas en otro hosting, configura un rewrite equivalente hacia index.html.
+
+## Referencias utiles
+
+- README principal de base de datos: supabase/README.md
+- MCP para consultas Postgres: mcp/supabase/README.md
+- Atribuciones: ATTRIBUTIONS.md
+
