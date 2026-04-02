@@ -310,12 +310,18 @@ export function Inventory() {
     }>();
 
     visibleProducts.forEach((product) => {
-      const unitsPerPurchaseValue = getUnitsPerPurchase(product);
-      const costWithIvaValue = getCostWithIva(product);
-      const unitCostValue = getUnitCost(product);
-      const unitSalePriceValue = getUnitSalePrice(product);
-      const roundedSalePriceValue = getRoundedSalePrice(product);
-      const profitMarginValue = calculateProfitMargin(unitCostValue, unitSalePriceValue);
+      const unitsRaw = Number(product.unitsPerPurchase ?? 1);
+      const unitsPerPurchaseValue = unitsRaw > 0 ? unitsRaw : 1;
+      const taxRate = Number(product.iva || 0) + Number(product.ipuc || 0);
+      const costWithIvaValue = product.costPrice * (1 + (taxRate / 100));
+      const unitCostValue = costWithIvaValue / unitsPerPurchaseValue;
+      const unitSalePriceValue = Number(product.unitPrice ?? product.salePrice);
+      const roundedSalePriceValue = Number.isFinite(unitSalePriceValue)
+        ? Math.round(unitSalePriceValue / 100) * 100
+        : 0;
+      const profitMarginValue = unitSalePriceValue === 0
+        ? 0
+        : ((unitSalePriceValue - unitCostValue) / unitSalePriceValue) * 100;
       metrics.set(product.id, {
         unitsPerPurchase: unitsPerPurchaseValue,
         costWithIva: costWithIvaValue,
