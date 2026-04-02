@@ -528,6 +528,11 @@ export async function updateCustomerRow(
   await updateRows('customers', `store_id=eq.${storeId}&id=eq.${customerId}`, dbPatch, token);
 }
 
+export async function deleteCustomerRow(token: string, storeId: string, customerId: string): Promise<void> {
+  if (!uuidLike(customerId)) return;
+  await deleteRows('customers', `store_id=eq.${storeId}&id=eq.${customerId}`, token);
+}
+
 export async function insertCustomerDebtTx(
   token: string,
   storeId: string,

@@ -20,6 +20,7 @@ import {
   createRechargeRow,
   createSaleDraftRow,
   createSupplierRow,
+  deleteCustomerRow,
   deleteSupplierRow,
   deleteSaleDraftRow,
   fetchMyStoreMembership,
@@ -460,6 +461,7 @@ interface POSContextType {
   customers: Customer[];
   addCustomer: (customer: Omit<Customer, 'id' | 'points' | 'debt' | 'purchases' | 'debtHistory'>) => Promise<ProductWriteStatus>;
   updateCustomer: (id: string, customer: Partial<Customer>) => Promise<ProductWriteStatus>;
+  deleteCustomer: (id: string) => Promise<ProductWriteStatus>;
   addDebtToCustomer: (customerId: string, amount: number, description: string) => void;
   addPaymentToCustomer: (
     customerId: string,
@@ -2907,6 +2909,49 @@ export function POSProvider({ children }: { children: ReactNode }) {
     return 'local-pending';
   };
 
+  const deleteCustomer = async (id: string): Promise<ProductWriteStatus> => {
+    const customer = customers.find((item) => item.id === id);
+    if (!customer) {
+      return 'failed';
+    }
+
+    if (customer.debt > 0) {
+      toast.error('No puedes eliminar un cliente con deuda pendiente.');
+      return 'failed';
+    }
+
+    const clearCustomerReferences = () => {
+      setSaleDrafts((prev) => prev.map((draft) => (
+        draft.customerId === id
+          ? { ...draft, customerId: undefined }
+          : draft
+      )));
+      setSales((prev) => prev.map((sale) => (
+        sale.customerId === id
+          ? { ...sale, customerId: undefined }
+          : sale
+      )));
+    };
+
+    if (isConnectedToSupabase && session && currentStoreId && uuidLike(id)) {
+      try {
+        await deleteCustomerRow(session.access_token, currentStoreId, id);
+        setCustomers((prev) => prev.filter((item) => item.id !== id));
+        clearCustomerReferences();
+        return 'remote-synced';
+      } catch (error) {
+        console.error('No se pudo eliminar cliente en Supabase', error);
+        toast.error('No se pudo eliminar el cliente en Supabase.');
+        return 'failed';
+      }
+    }
+
+    setCustomers((prev) => prev.filter((item) => item.id !== id));
+    clearCustomerReferences();
+    markPendingSync();
+    return 'local-pending';
+  };
+
   const addDebtToCustomer = (customerId: string, amount: number, description: string) => {
     const customer = customers.find(c => c.id === customerId);
     if (customer) {
@@ -3347,6 +3392,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       customers,
       addCustomer,
       updateCustomer,
+      deleteCustomer,
       addDebtToCustomer,
       addPaymentToCustomer,
       suppliers,

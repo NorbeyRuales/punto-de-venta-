@@ -15,9 +15,20 @@ import {
   Phone,
   MapPin,
   CreditCard,
-  Gift
+  Gift,
+  Trash2,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -36,6 +47,7 @@ export function Customers() {
     customers, 
     addCustomer, 
     updateCustomer, 
+    deleteCustomer,
     addDebtToCustomer,
     addPaymentToCustomer,
     currentCashSession,
@@ -48,7 +60,9 @@ export function Customers() {
   const [showDebtDialog, setShowDebtDialog] = useState(false);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [pendingDeleteCustomer, setPendingDeleteCustomer] = useState<Customer | null>(null);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -62,61 +76,153 @@ export function Customers() {
   const [debtDescription, setDebtDescription] = useState('');
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentDescription, setPaymentDescription] = useState('');
+  const [isSavingCustomer, setIsSavingCustomer] = useState(false);
+  const [isDeletingCustomer, setIsDeletingCustomer] = useState(false);
 
-  // Búsqueda simple por nombre/teléfono.
-  const filteredCustomers = customers.filter(c =>
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.phone.includes(searchQuery)
-  );
+  const normalizePhone = (value: string) => value.trim().replace(/\s+/g, '');
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const normalizeCustomerForm = () => ({
+    name: formData.name.trim(),
+    phone: normalizePhone(formData.phone),
+    address: formData.address.trim(),
+    email: formData.email.trim(),
+    nit: formData.nit.trim(),
+  });
+
+  const validateCustomerForm = (excludeCustomerId?: string): ReturnType<typeof normalizeCustomerForm> | null => {
+    const normalized = normalizeCustomerForm();
+
+    if (!normalized.name || !normalized.phone) {
+      toast.error('Complete los campos requeridos');
+      return null;
+    }
+
+    if (normalized.email && !emailRegex.test(normalized.email)) {
+      toast.error('Ingrese un correo electrónico válido.');
+      return null;
+    }
+
+    const duplicatedPhone = customers.some(customer => (
+      customer.id !== excludeCustomerId
+      && normalizePhone(customer.phone) === normalized.phone
+    ));
+
+    if (duplicatedPhone) {
+      toast.error('Ya existe un cliente con ese teléfono.');
+      return null;
+    }
+
+    return normalized;
+  };
+
+  // Búsqueda por nombre, teléfono, NIT y correo.
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const normalizedPhoneQuery = normalizePhone(searchQuery);
+  const filteredCustomers = customers.filter((customer) => {
+    if (!normalizedQuery && !normalizedPhoneQuery) return true;
+
+    const byName = customer.name.toLowerCase().includes(normalizedQuery);
+    const byPhone = normalizePhone(customer.phone).includes(normalizedPhoneQuery);
+    const byNit = (customer.nit || '').toLowerCase().includes(normalizedQuery);
+    const byEmail = (customer.email || '').toLowerCase().includes(normalizedQuery);
+
+    return byName || byPhone || byNit || byEmail;
+  });
 
   const totalDebt = roundToHundred(customers.reduce((sum, c) => sum + c.debt, 0));
   const customersWithDebt = customers.filter(c => c.debt > 0).length;
 
   // Alta y edición de clientes.
   const handleAddCustomer = async () => {
-    if (!formData.name || !formData.phone) {
-      toast.error('Complete los campos requeridos');
-      return;
-    }
+    if (isSavingCustomer) return;
+    const normalized = validateCustomerForm();
+    if (!normalized) return;
 
-    const status = await addCustomer({
-      name: formData.name,
-      phone: formData.phone,
-      address: formData.address,
-      email: formData.email,
-      nit: formData.nit
-    });
+    setIsSavingCustomer(true);
+    try {
+      const status = await addCustomer(normalized);
 
-    if (status === 'failed') return;
-    if (status === 'remote-synced') {
-      toast.success('Cliente guardado en la base de datos.');
-    } else {
-      toast.info('Cliente guardado localmente. Quedó pendiente de sincronización manual.');
+      if (status === 'failed') return;
+      if (status === 'remote-synced') {
+        toast.success('Cliente guardado en la base de datos.');
+      } else {
+        toast.info('Cliente guardado localmente. Quedó pendiente de sincronización manual.');
+      }
+      setShowAddDialog(false);
+      resetForm();
+    } finally {
+      setIsSavingCustomer(false);
     }
-    setShowAddDialog(false);
-    resetForm();
   };
 
   const handleEditCustomer = async () => {
-    if (!selectedCustomer) return;
+    if (!selectedCustomer || isSavingCustomer) return;
+    const normalized = validateCustomerForm(selectedCustomer.id);
+    if (!normalized) return;
 
-    const status = await updateCustomer(selectedCustomer.id, {
-      name: formData.name,
-      phone: formData.phone,
-      address: formData.address,
-      email: formData.email,
-      nit: formData.nit
-    });
+    setIsSavingCustomer(true);
+    try {
+      const status = await updateCustomer(selectedCustomer.id, normalized);
 
-    if (status === 'failed') return;
-    if (status === 'remote-synced') {
-      toast.success('Cliente actualizado en la base de datos.');
-    } else {
-      toast.info('Cliente actualizado localmente. Quedó pendiente de sincronización manual.');
+      if (status === 'failed') return;
+      if (status === 'remote-synced') {
+        toast.success('Cliente actualizado en la base de datos.');
+      } else {
+        toast.info('Cliente actualizado localmente. Quedó pendiente de sincronización manual.');
+      }
+      setShowEditDialog(false);
+      setSelectedCustomer(null);
+      resetForm();
+    } finally {
+      setIsSavingCustomer(false);
     }
-    setShowEditDialog(false);
-    setSelectedCustomer(null);
-    resetForm();
+  };
+
+  const requestDeleteCustomer = (customer: Customer) => {
+    if (isDeletingCustomer) return;
+    if (customer.debt > 0) {
+      toast.error('No puedes eliminar un cliente con deuda pendiente.');
+      return;
+    }
+
+    setPendingDeleteCustomer(customer);
+    setShowDeleteDialog(true);
+  };
+
+  const handleDeleteDialogChange = (open: boolean) => {
+    if (!open && !isDeletingCustomer) {
+      setPendingDeleteCustomer(null);
+    }
+    setShowDeleteDialog(open);
+  };
+
+  const handleDeleteCustomer = async () => {
+    if (!pendingDeleteCustomer || isDeletingCustomer) return;
+
+    setIsDeletingCustomer(true);
+    try {
+      const status = await deleteCustomer(pendingDeleteCustomer.id);
+      if (status === 'failed') return;
+      if (status === 'remote-synced') {
+        toast.success('Cliente eliminado en la base de datos.');
+      } else {
+        toast.info('Cliente eliminado localmente. Quedó pendiente de sincronización manual.');
+      }
+
+      if (selectedCustomer?.id === pendingDeleteCustomer.id) {
+        setSelectedCustomer(null);
+        setShowDetailDialog(false);
+        setShowEditDialog(false);
+        setShowDebtDialog(false);
+        setShowPaymentDialog(false);
+      }
+
+      setShowDeleteDialog(false);
+      setPendingDeleteCustomer(null);
+    } finally {
+      setIsDeletingCustomer(false);
+    }
   };
 
   // Registro de deuda y pagos.
@@ -202,6 +308,52 @@ export function Customers() {
     });
   };
 
+  const resetDebtForm = () => {
+    setDebtAmount('');
+    setDebtDescription('');
+  };
+
+  const resetPaymentForm = () => {
+    setPaymentAmount('');
+    setPaymentDescription('');
+  };
+
+  const handleAddDialogChange = (open: boolean) => {
+    setShowAddDialog(open);
+    if (!open) resetForm();
+  };
+
+  const handleEditDialogChange = (open: boolean) => {
+    setShowEditDialog(open);
+    if (!open) {
+      setSelectedCustomer(null);
+      resetForm();
+    }
+  };
+
+  const handleDebtDialogChange = (open: boolean) => {
+    setShowDebtDialog(open);
+    if (!open) {
+      setSelectedCustomer(null);
+      resetDebtForm();
+    }
+  };
+
+  const handlePaymentDialogChange = (open: boolean) => {
+    setShowPaymentDialog(open);
+    if (!open) {
+      setSelectedCustomer(null);
+      resetPaymentForm();
+    }
+  };
+
+  const handleDetailDialogChange = (open: boolean) => {
+    setShowDetailDialog(open);
+    if (!open) {
+      setSelectedCustomer(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -264,7 +416,7 @@ export function Customers() {
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
           <Input
-            placeholder="Buscar por nombre o teléfono..."
+            placeholder="Buscar por nombre, teléfono, NIT o correo..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-10 h-12"
@@ -352,6 +504,16 @@ export function Customers() {
                   Registrar Pago
                 </Button>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-red-600 hover:text-red-700"
+                disabled={isDeletingCustomer}
+                onClick={() => requestDeleteCustomer(customer)}
+              >
+                <Trash2 className="w-4 h-4 mr-1" />
+                Eliminar
+              </Button>
             </div>
           </Card>
         ))}
@@ -365,7 +527,7 @@ export function Customers() {
       )}
 
       {/* Dialog Agregar Cliente */}
-      <Dialog open={showAddDialog} onOpenChange={setShowAddDialog}>
+      <Dialog open={showAddDialog} onOpenChange={handleAddDialogChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Agregar Cliente</DialogTitle>
@@ -421,9 +583,10 @@ export function Customers() {
             <div className="flex gap-2 pt-4">
               <Button
                 onClick={handleAddCustomer}
+                disabled={isSavingCustomer}
                 className="flex-1 bg-[#2ECC71] hover:bg-[#27AE60]"
               >
-                Agregar Cliente
+                {isSavingCustomer ? 'Guardando...' : 'Agregar Cliente'}
               </Button>
               <Button
                 variant="outline"
@@ -431,6 +594,7 @@ export function Customers() {
                   setShowAddDialog(false);
                   resetForm();
                 }}
+                disabled={isSavingCustomer}
                 className="flex-1"
               >
                 Cancelar
@@ -441,7 +605,7 @@ export function Customers() {
       </Dialog>
 
       {/* Dialog Editar Cliente */}
-      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+      <Dialog open={showEditDialog} onOpenChange={handleEditDialogChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Editar Cliente</DialogTitle>
@@ -492,9 +656,10 @@ export function Customers() {
             <div className="flex gap-2 pt-4">
               <Button
                 onClick={handleEditCustomer}
+                disabled={isSavingCustomer}
                 className="flex-1 bg-[#2ECC71] hover:bg-[#27AE60]"
               >
-                Guardar Cambios
+                {isSavingCustomer ? 'Guardando...' : 'Guardar Cambios'}
               </Button>
               <Button
                 variant="outline"
@@ -503,6 +668,7 @@ export function Customers() {
                   setSelectedCustomer(null);
                   resetForm();
                 }}
+                disabled={isSavingCustomer}
                 className="flex-1"
               >
                 Cancelar
@@ -513,7 +679,7 @@ export function Customers() {
       </Dialog>
 
       {/* Dialog Registrar Deuda */}
-      <Dialog open={showDebtDialog} onOpenChange={setShowDebtDialog}>
+      <Dialog open={showDebtDialog} onOpenChange={handleDebtDialogChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Registrar Fiado</DialogTitle>
@@ -560,8 +726,7 @@ export function Customers() {
                 variant="outline"
                 onClick={() => {
                   setShowDebtDialog(false);
-                  setDebtAmount('');
-                  setDebtDescription('');
+                  resetDebtForm();
                 }}
                 className="flex-1"
               >
@@ -573,7 +738,7 @@ export function Customers() {
       </Dialog>
 
       {/* Dialog Registrar Pago */}
-      <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
+      <Dialog open={showPaymentDialog} onOpenChange={handlePaymentDialogChange}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Registrar Pago</DialogTitle>
@@ -620,8 +785,7 @@ export function Customers() {
                 variant="outline"
                 onClick={() => {
                   setShowPaymentDialog(false);
-                  setPaymentAmount('');
-                  setPaymentDescription('');
+                  resetPaymentForm();
                 }}
                 className="flex-1"
               >
@@ -633,7 +797,7 @@ export function Customers() {
       </Dialog>
 
       {/* Dialog Detalles Cliente */}
-      <Dialog open={showDetailDialog} onOpenChange={setShowDetailDialog}>
+      <Dialog open={showDetailDialog} onOpenChange={handleDetailDialogChange}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Detalles del Cliente</DialogTitle>
@@ -724,6 +888,29 @@ export function Customers() {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={showDeleteDialog} onOpenChange={handleDeleteDialogChange}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar cliente?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeleteCustomer
+                ? `Vas a eliminar a ${pendingDeleteCustomer.name}. Esta acción quitará el cliente del listado y desvinculará sus referencias en ventas y borradores.`
+                : 'Esta acción quitará el cliente del listado y desvinculará sus referencias en ventas y borradores.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingCustomer}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteCustomer}
+              disabled={isDeletingCustomer}
+              className="bg-[#E74C3C] hover:bg-[#C0392B]"
+            >
+              {isDeletingCustomer ? 'Eliminando...' : 'Eliminar'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
