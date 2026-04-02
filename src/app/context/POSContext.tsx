@@ -646,6 +646,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const draftSyncTimers = useRef<Record<string, number>>({});
   const isHydratingRef = useRef(true);
   const offlineSnapshotRef = useRef<string | null>(null);
+  const localStorageCacheRef = useRef<Record<string, string | null>>({});
   const isAutoSyncingRef = useRef(false);
   const autoSyncTimerRef = useRef<number | null>(null);
   const pendingSyncNoticeRef = useRef(false);
@@ -718,6 +719,20 @@ export function POSProvider({ children }: { children: ReactNode }) {
     cash_movements: JSON.stringify(cashMovements),
     config: JSON.stringify(storeConfig),
   });
+
+  const persistLocalStorageValue = (key: string, value: string | null) => {
+    if (localStorageCacheRef.current[key] === value) return;
+    localStorageCacheRef.current[key] = value;
+    if (value === null) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, value);
+  };
+
+  const persistLocalStorageJson = (key: string, value: unknown) => {
+    persistLocalStorageValue(key, JSON.stringify(value));
+  };
 
   const markPendingSync = () => {
     setHasPendingSync(true);
@@ -1195,73 +1210,77 @@ export function POSProvider({ children }: { children: ReactNode }) {
   // Guardar productos
   useEffect(() => {
     if (products.length > 0) {
-      localStorage.setItem('pos_products', JSON.stringify(products));
+      persistLocalStorageJson('pos_products', products);
     }
   }, [products]);
 
   // Guardar categorías
   useEffect(() => {
-    localStorage.setItem('pos_categories', JSON.stringify(categories));
+    persistLocalStorageJson('pos_categories', categories);
   }, [categories]);
 
   // Guardar ventas
   useEffect(() => {
-    localStorage.setItem('pos_sales', JSON.stringify(sales));
+    persistLocalStorageJson('pos_sales', sales);
   }, [sales]);
 
   // Guardar kardex
   useEffect(() => {
-    localStorage.setItem('pos_kardex', JSON.stringify(kardexMovements));
+    persistLocalStorageJson('pos_kardex', kardexMovements);
   }, [kardexMovements]);
 
   // Guardar clientes
   useEffect(() => {
-    localStorage.setItem('pos_customers', JSON.stringify(customers));
+    persistLocalStorageJson('pos_customers', customers);
   }, [customers]);
 
   // Guardar proveedores
   useEffect(() => {
-    localStorage.setItem('pos_suppliers', JSON.stringify(suppliers));
+    persistLocalStorageJson('pos_suppliers', suppliers);
   }, [suppliers]);
 
   // Guardar recargas
   useEffect(() => {
-    localStorage.setItem('pos_recharges', JSON.stringify(recharges));
+    persistLocalStorageJson('pos_recharges', recharges);
   }, [recharges]);
 
   // Guardar sesiones de caja
   useEffect(() => {
-    localStorage.setItem('pos_cash_sessions', JSON.stringify(cashSessions));
+    persistLocalStorageJson('pos_cash_sessions', cashSessions);
   }, [cashSessions]);
 
   // Guardar movimientos de caja
   useEffect(() => {
-    localStorage.setItem('pos_cash_movements', JSON.stringify(cashMovements));
+    persistLocalStorageJson('pos_cash_movements', cashMovements);
   }, [cashMovements]);
 
   // Guardar configuración
   useEffect(() => {
-    localStorage.setItem('pos_config', JSON.stringify(storeConfig));
+    persistLocalStorageJson('pos_config', storeConfig);
   }, [storeConfig]);
 
   // Guardar autenticación
   useEffect(() => {
     if (!isAuthReady) return;
-    localStorage.setItem('pos_auth', JSON.stringify({ isAuthenticated, currentUser }));
+    persistLocalStorageJson('pos_auth', { isAuthenticated, currentUser });
   }, [isAuthenticated, currentUser, isAuthReady]);
 
   // Guardar borradores locales para modo offline.
   useEffect(() => {
-    localStorage.setItem(OFFLINE_DRAFTS_KEY, JSON.stringify(saleDrafts));
+    persistLocalStorageJson(OFFLINE_DRAFTS_KEY, saleDrafts);
     if (activeDraftId) {
-      localStorage.setItem(OFFLINE_ACTIVE_DRAFT_KEY, activeDraftId);
+      persistLocalStorageValue(OFFLINE_ACTIVE_DRAFT_KEY, activeDraftId);
     } else {
-      localStorage.removeItem(OFFLINE_ACTIVE_DRAFT_KEY);
+      persistLocalStorageValue(OFFLINE_ACTIVE_DRAFT_KEY, null);
     }
   }, [saleDrafts, activeDraftId]);
 
   // Marcar cambios offline pendientes de sincronización.
   useEffect(() => {
+    if (!isHydratingRef.current && isConnectedToSupabase) {
+      return;
+    }
+
     const snapshot = JSON.stringify({
       products,
       categories,
@@ -1283,8 +1302,6 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     if (snapshot === offlineSnapshotRef.current) return;
     offlineSnapshotRef.current = snapshot;
-
-    if (isConnectedToSupabase) return;
 
     markPendingSync();
   }, [
