@@ -109,6 +109,14 @@ const computeLineMoney = (unitSalePrice: number, quantity: number, discountPerce
   return { roundedUnitSalePrice, lineSubtotal, lineDiscount, lineTotal, lineIva };
 };
 
+const buildCreditSaleDescription = (reference: string, items: CartItem[]): string => {
+  const details = items
+    .map((item) => `${item.product.name} x${item.quantity}`)
+    .join(', ');
+  const condensedDetails = details.length > 220 ? `${details.slice(0, 217)}...` : details;
+  return `Venta fiada ${reference}: ${condensedDetails}`;
+};
+
 const uuidLike = (value?: string | null): boolean =>
   !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
@@ -453,7 +461,12 @@ interface POSContextType {
   addCustomer: (customer: Omit<Customer, 'id' | 'points' | 'debt' | 'purchases' | 'debtHistory'>) => Promise<ProductWriteStatus>;
   updateCustomer: (id: string, customer: Partial<Customer>) => Promise<ProductWriteStatus>;
   addDebtToCustomer: (customerId: string, amount: number, description: string) => void;
-  addPaymentToCustomer: (customerId: string, amount: number, description: string) => void;
+  addPaymentToCustomer: (
+    customerId: string,
+    amount: number,
+    description: string,
+    options?: { registerCashIn?: boolean }
+  ) => void;
   
   // Proveedores
   suppliers: Supplier[];
@@ -2483,6 +2496,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
       ? paymentMethod as 'efectivo' | 'tarjeta' | 'transferencia' | 'credito'
       : 'otro';
 
+    if (paymentMethodValue === 'credito' && !activeDraft.customerId) {
+      toast.error('Selecciona un cliente para registrar una venta fiada.');
+      return null;
+    }
+
     if (!isConnectedToSupabase) {
       const saleDate = new Date().toISOString();
       let subtotal = 0;
@@ -2519,8 +2537,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
 
       const invoiceNumber = getNextOfflineInvoiceNumber();
-      const safeCashReceived = roundMoney(Number.isFinite(cashReceived) ? cashReceived : 0);
-      const change = roundMoney(safeCashReceived - roundedTotal);
+      const safeCashReceived = paymentMethodValue === 'credito'
+        ? 0
+        : roundMoney(Number.isFinite(cashReceived) ? cashReceived : 0);
+      const change = paymentMethodValue === 'efectivo'
+        ? roundMoney(safeCashReceived - roundedTotal)
+        : 0;
 
       const newSale: Sale = {
         id: `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -2575,6 +2597,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
             purchases: [...customer.purchases, newSale],
           };
         }));
+
+        if (paymentMethodValue === 'credito') {
+          const reference = newSale.invoiceNumber || newSale.id;
+          addDebtToCustomer(newSale.customerId, newSale.total, buildCreditSaleDescription(reference, cart));
+        }
       }
 
       const remainingDrafts = saleDrafts.filter(draft => draft.id !== activeDraft.id);
@@ -2606,10 +2633,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
         cashSessionId: currentCashSession.id,
       });
 
+      const saleCashReceived = paymentMethodValue === 'credito'
+        ? 0
+        : roundMoney(cashReceived);
+
       const result = await finalizeSaleDraft(session.access_token, currentStoreId, {
         draftId: activeDraft.id,
         paymentMethod: paymentMethodValue,
-        cashReceived: roundMoney(cashReceived),
+        cashReceived: saleCashReceived,
       });
 
       const saleRow = result.sale;
@@ -2622,8 +2653,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
         iva: roundMoney(toNumber(saleRow.iva)),
         total: roundMoney(toNumber(saleRow.total)),
         paymentMethod: saleRow.payment_method || paymentMethodValue,
-        cashReceived: roundMoney(toNumber(saleRow.cash_received)),
-        change: roundMoney(toNumber(saleRow.change_value)),
+        cashReceived: paymentMethodValue === 'credito'
+          ? 0
+          : roundMoney(toNumber(saleRow.cash_received)),
+        change: paymentMethodValue === 'credito'
+          ? 0
+          : roundMoney(toNumber(saleRow.change_value)),
         customerId: saleRow.customer_id ?? activeDraft.customerId,
         invoiceNumber: saleRow.invoice_number ?? undefined,
         cashSessionId: saleRow.cash_session_id ?? currentCashSession.id,
@@ -2674,6 +2709,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
             purchases: [...customer.purchases, newSale],
           };
         }));
+
+        if (paymentMethodValue === 'credito') {
+          const reference = newSale.invoiceNumber || newSale.id;
+          addDebtToCustomer(newSale.customerId, newSale.total, buildCreditSaleDescription(reference, cart));
+        }
       }
 
       const remainingDrafts = saleDrafts.filter(draft => draft.id !== activeDraft.id);
@@ -2755,6 +2795,15 @@ export function POSProvider({ children }: { children: ReactNode }) {
         'cash_out',
         sale.total,
         `Devolución venta ${sale.invoiceNumber || sale.id}`,
+      );
+    }
+
+    if (sale.paymentMethod === 'credito' && sale.customerId) {
+      addPaymentToCustomer(
+        sale.customerId,
+        sale.total,
+        `Reverso por devolución ${sale.invoiceNumber || sale.id}`,
+        { registerCashIn: false },
       );
     }
 
@@ -2894,12 +2943,28 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const addPaymentToCustomer = (customerId: string, amount: number, description: string) => {
+  const addPaymentToCustomer = (
+    customerId: string,
+    amount: number,
+    description: string,
+    options?: { registerCashIn?: boolean },
+  ) => {
+    const registerCashIn = options?.registerCashIn ?? true;
     const customer = customers.find(c => c.id === customerId);
     if (customer) {
       const safeAmount = roundMoney(Number.isFinite(amount) ? Math.max(0, amount) : 0);
       if (safeAmount <= 0) return;
       const paidAmount = Math.min(safeAmount, roundMoney(customer.debt));
+      if (paidAmount <= 0) {
+        toast.info('El cliente no tiene deuda pendiente.');
+        return;
+      }
+
+      if (registerCashIn && !currentCashSession) {
+        toast.error('Debes abrir una caja para registrar pagos de fiados.');
+        return;
+      }
+
       const newDebt = roundMoney(Math.max(0, customer.debt - paidAmount));
       const transaction: DebtTransaction = {
         id: Date.now().toString(),
@@ -2913,6 +2978,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
         debt: newDebt,
         debtHistory: [...customer.debtHistory, transaction]
       });
+
+      if (registerCashIn) {
+        void addCashMovement(
+          'cash_in',
+          paidAmount,
+          `Abono fiado ${customer.name}`,
+        );
+      }
 
       if (isConnectedToSupabase && session && currentStoreId) {
         void insertCustomerDebtTx(session.access_token, currentStoreId, {

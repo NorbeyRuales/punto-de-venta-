@@ -102,6 +102,19 @@ export function POS() {
   };
   const formatSalePrice = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
   const formatRoundedCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
+  const formatPaymentMethodLabel = (method: string) => {
+    const normalized = method?.toLowerCase?.() || 'otro';
+    const labels: Record<string, string> = {
+      efectivo: 'Efectivo',
+      tarjeta: 'Tarjeta/Datáfono',
+      transferencia: 'Transferencia',
+      nequi: 'Nequi',
+      daviplata: 'Daviplata',
+      credito: 'Fiado a cliente',
+      otro: 'Otro',
+    };
+    return labels[normalized] || method;
+  };
   const formatInputCurrency = (value: string) => {
     if (!value) return '';
     const numeric = Number(value);
@@ -148,7 +161,7 @@ export function POS() {
       `Subtotal: ${formatRoundedCurrency(sale.subtotal)}`,
       sale.discount > 0 ? `Descuento: -${formatRoundedCurrency(sale.discount)}` : null,
       `Total: ${formatRoundedCurrency(sale.total)}`,
-      `Pago: ${sale.paymentMethod}`,
+      `Pago: ${formatPaymentMethodLabel(sale.paymentMethod)}`,
       sale.paymentMethod === 'efectivo'
         ? `Efectivo: ${formatRoundedCurrency(sale.cashReceived)} | Cambio: ${formatRoundedCurrency(sale.change)}`
         : null,
@@ -282,10 +295,19 @@ export function POS() {
       }
     }
 
+    if (paymentMethod === 'credito' && !selectedCustomer) {
+      toast.error('Selecciona un cliente para registrar el fiado.');
+      return;
+    }
+
     keepPaymentDialogOpenRef.current = true;
     const sale = await completeSale(
       paymentMethod,
-      paymentMethod === 'efectivo' ? roundToHundred(parseFloat(cashReceived) || 0) : payableTotal
+      paymentMethod === 'efectivo'
+        ? roundToHundred(parseFloat(cashReceived) || 0)
+        : paymentMethod === 'credito'
+          ? 0
+          : payableTotal
     );
 
     if (!sale) {
@@ -757,6 +779,12 @@ export function POS() {
                         </div>
                       </SelectItem>
                       <SelectItem value="daviplata">Daviplata</SelectItem>
+                      <SelectItem value="credito">
+                        <div className="flex items-center gap-2">
+                          <CreditCard className="w-4 h-4" />
+                          Fiado a cliente
+                        </div>
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -799,7 +827,7 @@ export function POS() {
                 )}
 
                 <div>
-                  <Label>Cliente (Opcional)</Label>
+                  <Label>Cliente {paymentMethod === 'credito' ? '*' : '(Opcional)'}</Label>
                   <Select value={selectedCustomer} onValueChange={(value) => setActiveDraftCustomerId(value || null)}>
                     <SelectTrigger className="h-12">
                       <SelectValue placeholder="Seleccionar cliente" />
@@ -812,15 +840,21 @@ export function POS() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {paymentMethod === 'credito' && !selectedCustomer && (
+                    <p className="text-xs text-red-600 mt-1">
+                      El fiado requiere seleccionar un cliente.
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex gap-2 pt-4">
                   <Button
                     onClick={handlePayment}
+                    disabled={paymentMethod === 'credito' && !selectedCustomer}
                     className="flex-1 h-12 bg-[#2ECC71] hover:bg-[#27AE60] text-white"
                   >
                     <DollarSign className="w-5 h-5 mr-2" />
-                    Completar Venta
+                    {paymentMethod === 'credito' ? 'Registrar Fiado' : 'Completar Venta'}
                   </Button>
                 </div>
               </>

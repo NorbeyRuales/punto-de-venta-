@@ -37,7 +37,8 @@ export function Customers() {
     addCustomer, 
     updateCustomer, 
     addDebtToCustomer,
-    addPaymentToCustomer
+    addPaymentToCustomer,
+    currentCashSession,
   } = usePOS();
 
   // Estado de UI y formularios.
@@ -147,6 +148,11 @@ export function Customers() {
   const handleAddPayment = () => {
     if (!selectedCustomer || !paymentAmount) {
       toast.error('Complete los campos requeridos');
+      return;
+    }
+
+    if (!currentCashSession) {
+      toast.error('Debes abrir caja para registrar un pago de fiado.');
       return;
     }
 
