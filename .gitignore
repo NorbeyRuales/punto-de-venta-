@@ -40,3 +40,5 @@ Thumbs.db
 *.temp
 *.bak
 .vercel
+.agents/
+skills-lock.json
