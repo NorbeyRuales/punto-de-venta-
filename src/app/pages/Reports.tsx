@@ -83,6 +83,31 @@ export function Reports() {
     return Math.round(value / 100) * 100;
   };
   const formatRoundedCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
+  const formatPaymentMethodLabel = (method: string) => {
+    const normalized = method?.toLowerCase?.() || 'otro';
+    const labels: Record<string, string> = {
+      efectivo: 'Efectivo',
+      tarjeta: 'Tarjeta/Datáfono',
+      transferencia: 'Transferencia',
+      nequi: 'Nequi',
+      daviplata: 'Daviplata',
+      credito: 'Fiado',
+      otro: 'Otro',
+    };
+    return labels[normalized] || method;
+  };
+  const getSalePaymentBreakdown = (sale: Sale) => {
+    const source = sale.paymentBreakdown || {};
+    const cleaned = Object.entries(source)
+      .map(([method, amount]) => [method, roundToHundred(Number(amount) || 0)] as const)
+      .filter(([, amount]) => amount > 0);
+
+    if (cleaned.length > 0) return cleaned;
+    return [[sale.paymentMethod || 'otro', roundToHundred(sale.total)] as const];
+  };
+  const formatSalePaymentBreakdown = (sale: Sale) => getSalePaymentBreakdown(sale)
+    .map(([method, amount]) => `${formatPaymentMethodLabel(method)}: ${formatRoundedCurrency(amount)}`)
+    .join(' | ');
   const formatSaleItemsSummary = (sale: Sale) => {
     if (sale.items.length === 0) return 'Sin productos';
     const [firstItem, ...restItems] = sale.items;
@@ -109,10 +134,11 @@ export function Reports() {
       `Subtotal: ${formatRoundedCurrency(sale.subtotal)}`,
       sale.discount > 0 ? `Descuento: -${formatRoundedCurrency(sale.discount)}` : null,
       `Total: ${formatRoundedCurrency(sale.total)}`,
-      `Pago: ${sale.paymentMethod}`,
-      sale.paymentMethod === 'efectivo'
-        ? `Efectivo: ${formatRoundedCurrency(sale.cashReceived)} | Cambio: ${formatRoundedCurrency(sale.change)}`
+      `Pago: ${formatSalePaymentBreakdown(sale)}`,
+      sale.cashReceived > 0
+        ? `Efectivo recibido: ${formatRoundedCurrency(sale.cashReceived)} | Cambio: ${formatRoundedCurrency(sale.change)}`
         : null,
+      (sale.creditedAmount ?? 0) > 0 ? `Saldo fiado: ${formatRoundedCurrency(sale.creditedAmount ?? 0)}` : null,
       storeConfig?.phone ? `Contacto: ${storeConfig.phone}` : null,
       '',
       '¡Gracias por tu compra!',
@@ -263,7 +289,7 @@ export function Reports() {
                       <p className="text-sm text-gray-600">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</p>
                       <p className="font-semibold">{sale.invoiceNumber || sale.id}</p>
                       <p className="text-xs text-gray-500">{formatSaleItemsSummary(sale)}</p>
-                      <p className="text-xs text-gray-500 capitalize">{sale.paymentMethod}</p>
+                      <p className="text-xs text-gray-500">{formatSalePaymentBreakdown(sale)}</p>
                     </div>
                     <span className="font-bold text-[#2ECC71]">{formatRoundedCurrency(sale.total)}</span>
                   </div>
@@ -325,7 +351,7 @@ export function Reports() {
                         )}
                       </div>
                     </td>
-                    <td className="p-3 capitalize">{sale.paymentMethod}</td>
+                    <td className="p-3">{formatSalePaymentBreakdown(sale)}</td>
                     <td className="p-3 text-right font-bold text-[#2ECC71]">{formatRoundedCurrency(sale.total)}</td>
                     <td className="p-3 text-right">
                       <div className="flex flex-wrap justify-end gap-2">

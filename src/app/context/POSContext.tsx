@@ -219,6 +219,16 @@ export interface SaleDraft {
   items: CartItem[];
 }
 
+export type PaymentMethodOption = 'efectivo' | 'tarjeta' | 'transferencia' | 'nequi' | 'daviplata' | 'credito' | 'otro';
+export type PaymentBreakdown = Partial<Record<PaymentMethodOption, number>>;
+
+export interface SalePaymentInput {
+  primaryMethod: PaymentMethodOption;
+  primaryAmount: number;
+  secondaryMethod?: PaymentMethodOption;
+  secondaryAmount?: number;
+}
+
 export interface Sale {
   id: string;
   date: string;
@@ -230,11 +240,68 @@ export interface Sale {
   paymentMethod: string;
   cashReceived: number;
   change: number;
+  paymentBreakdown?: PaymentBreakdown;
+  creditedAmount?: number;
   customerId?: string;
   invoiceNumber?: string;
   cashSessionId?: string;
   returnedAt?: string | null;
 }
+
+const PAYMENT_METHOD_OPTIONS: PaymentMethodOption[] = ['efectivo', 'tarjeta', 'transferencia', 'nequi', 'daviplata', 'credito', 'otro'];
+
+const sanitizePaymentBreakdown = (value: unknown): PaymentBreakdown => {
+  if (!value || typeof value !== 'object') return {};
+  const raw = value as Record<string, unknown>;
+  const sanitized: PaymentBreakdown = {};
+
+  PAYMENT_METHOD_OPTIONS.forEach((method) => {
+    const amount = roundMoney(toNumber(raw[method]));
+    if (amount > 0) {
+      sanitized[method] = amount;
+    }
+  });
+
+  return sanitized;
+};
+
+const getSalePaymentBreakdown = (sale: Sale): PaymentBreakdown => {
+  const normalized = sanitizePaymentBreakdown(sale.paymentBreakdown ?? {});
+  if (Object.keys(normalized).length > 0) return normalized;
+
+  const fallback: PaymentBreakdown = {};
+  const normalizedMethod = sale.paymentMethod as PaymentMethodOption;
+  const effectiveCash = roundMoney(Math.max(0, toNumber(sale.cashReceived) - toNumber(sale.change)));
+
+  if (normalizedMethod === 'efectivo') {
+    if (effectiveCash > 0) fallback.efectivo = effectiveCash;
+    return fallback;
+  }
+
+  if (normalizedMethod === 'credito') {
+    const creditAmount = roundMoney(Math.max(0, sale.creditedAmount ?? sale.total));
+    if (creditAmount > 0) fallback.credito = creditAmount;
+    return fallback;
+  }
+
+  const saleTotal = roundMoney(sale.total);
+  if (saleTotal <= 0) return fallback;
+
+  if (normalizedMethod === 'tarjeta' || normalizedMethod === 'transferencia' || normalizedMethod === 'nequi' || normalizedMethod === 'daviplata' || normalizedMethod === 'otro') {
+    fallback[normalizedMethod] = saleTotal;
+    return fallback;
+  }
+
+  fallback.otro = saleTotal;
+  return fallback;
+};
+
+const getSaleCreditedAmount = (sale: Sale): number => {
+  const byField = roundMoney(Math.max(0, toNumber(sale.creditedAmount)));
+  if (byField > 0) return byField;
+  const breakdown = getSalePaymentBreakdown(sale);
+  return roundMoney(Math.max(0, toNumber(breakdown.credito)));
+};
 
 export interface Customer {
   id: string;
@@ -439,7 +506,7 @@ interface POSContextType {
   
   // Ventas
   sales: Sale[];
-  completeSale: (paymentMethod: string, cashReceived: number) => Promise<Sale | null>;
+  completeSale: (paymentInput: SalePaymentInput) => Promise<Sale | null>;
   getSalesToday: () => Sale[];
   getSalesInRange: (startDate: Date, endDate: Date) => Sale[];
   registerReturn: (saleId: string) => boolean;
@@ -845,6 +912,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
           paymentMethod: sale.payment_method || 'efectivo',
           cashReceived: toNumber(sale.cash_received),
           change: toNumber(sale.change_value),
+          paymentBreakdown: sanitizePaymentBreakdown(sale.payment_breakdown),
+          creditedAmount: toNumber(sale.credited_amount),
           customerId: sale.customer_id ?? undefined,
           invoiceNumber: sale.invoice_number ?? undefined,
           cashSessionId: sale.cash_session_id ?? undefined,
@@ -2303,14 +2372,32 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const netSales = sessionSales.filter((sale) => !sale.returnedAt);
     const salesByMethod: Record<string, number> = {};
     let salesTotal = 0;
+    let cashSalesTotal = 0;
 
     netSales.forEach((sale) => {
       salesTotal += sale.total;
-      const method = sale.paymentMethod || 'otro';
-      salesByMethod[method] = (salesByMethod[method] || 0) + sale.total;
+
+      const breakdown = getSalePaymentBreakdown(sale);
+      const breakdownEntries = Object.entries(breakdown).filter(([, amount]) => toNumber(amount) > 0);
+
+      if (breakdownEntries.length === 0) {
+        const method = sale.paymentMethod || 'otro';
+        const amount = roundMoney(sale.total);
+        salesByMethod[method] = roundMoney((salesByMethod[method] || 0) + amount);
+        if (method === 'efectivo') {
+          cashSalesTotal = roundMoney(cashSalesTotal + amount);
+        }
+        return;
+      }
+
+      breakdownEntries.forEach(([method, amount]) => {
+        const roundedAmount = roundMoney(toNumber(amount));
+        salesByMethod[method] = roundMoney((salesByMethod[method] || 0) + roundedAmount);
+      });
+
+      cashSalesTotal = roundMoney(cashSalesTotal + toNumber(breakdown.efectivo));
     });
 
-    const cashSalesTotal = salesByMethod['efectivo'] || 0;
     const sessionMovements = cashMovements.filter(movement => movement.cashSessionId === sessionId);
     const isReturnMovement = (movement: CashMovement) =>
       movement.type === 'cash_out' && movement.reason?.startsWith('Devolución venta ');
@@ -2483,7 +2570,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   // Funciones de ventas
-  const completeSale = async (paymentMethod: string, cashReceived: number): Promise<Sale | null> => {
+  const completeSale = async (paymentInput: SalePaymentInput): Promise<Sale | null> => {
     if (!currentCashSession) {
       toast.error('Debes abrir una caja antes de registrar ventas.');
       return null;
@@ -2494,57 +2581,145 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return null;
     }
 
-    const paymentMethodValue = ['efectivo', 'tarjeta', 'transferencia', 'credito'].includes(paymentMethod)
-      ? paymentMethod as 'efectivo' | 'tarjeta' | 'transferencia' | 'credito'
-      : 'otro';
+    let subtotal = 0;
+    let discountTotal = 0;
+    let ivaTotal = 0;
 
-    if (paymentMethodValue === 'credito' && !activeDraft.customerId) {
-      toast.error('Selecciona un cliente para registrar una venta fiada.');
-      return null;
-    }
-
-    if (!isConnectedToSupabase) {
-      const saleDate = new Date().toISOString();
-      let subtotal = 0;
-      let discountTotal = 0;
-      let ivaTotal = 0;
-
-      for (const item of cart) {
-        const product = products.find(p => p.id === item.product.id) ?? item.product;
-        if (product.stock < item.quantity) {
-          toast.error(`Stock insuficiente para ${product.name}.`);
-          return null;
-        }
-
-        const { lineSubtotal, lineDiscount, lineIva } = computeLineMoney(
-          item.product.salePrice,
-          item.quantity,
-          item.discount,
-          item.product.iva,
-        );
-
-        subtotal = roundMoney(subtotal + lineSubtotal);
-        discountTotal = roundMoney(discountTotal + lineDiscount);
-        ivaTotal = roundMoney(ivaTotal + lineIva);
-      }
-
-      const total = roundMoney(subtotal - discountTotal);
-      const roundedSubtotal = roundMoney(subtotal);
-      const roundedDiscount = roundMoney(discountTotal);
-      const roundedIva = roundMoney(ivaTotal);
-      const roundedTotal = roundMoney(total);
-      if (roundedTotal <= 0) {
-        toast.error('No hay productos en la venta.');
+    for (const item of cart) {
+      const product = products.find(p => p.id === item.product.id) ?? item.product;
+      if (product.stock < item.quantity) {
+        toast.error(`Stock insuficiente para ${product.name}.`);
         return null;
       }
 
+      const { lineSubtotal, lineDiscount, lineIva } = computeLineMoney(
+        item.product.salePrice,
+        item.quantity,
+        item.discount,
+        item.product.iva,
+      );
+
+      subtotal = roundMoney(subtotal + lineSubtotal);
+      discountTotal = roundMoney(discountTotal + lineDiscount);
+      ivaTotal = roundMoney(ivaTotal + lineIva);
+    }
+
+    const roundedSubtotal = roundMoney(subtotal);
+    const roundedDiscount = roundMoney(discountTotal);
+    const roundedIva = roundMoney(ivaTotal);
+    const roundedTotal = roundMoney(roundedSubtotal - roundedDiscount);
+
+    if (roundedTotal <= 0) {
+      toast.error('No hay productos en la venta.');
+      return null;
+    }
+
+    const primaryMethod = PAYMENT_METHOD_OPTIONS.includes(paymentInput.primaryMethod)
+      ? paymentInput.primaryMethod
+      : 'otro';
+    const secondaryMethod = paymentInput.secondaryMethod
+      && paymentInput.secondaryMethod !== primaryMethod
+      && paymentInput.secondaryMethod !== 'credito'
+      && PAYMENT_METHOD_OPTIONS.includes(paymentInput.secondaryMethod)
+      ? paymentInput.secondaryMethod
+      : undefined;
+
+    const primaryRawAmount = roundMoney(Math.max(0, toNumber(paymentInput.primaryAmount)));
+    const primaryAmount = primaryMethod === 'credito'
+      ? 0
+      : (primaryRawAmount > 0 ? primaryRawAmount : roundedTotal);
+    const secondaryAmount = secondaryMethod
+      ? roundMoney(Math.max(0, toNumber(paymentInput.secondaryAmount)))
+      : 0;
+
+    const paymentBreakdown: PaymentBreakdown = {};
+    const addPaymentAmount = (method: PaymentMethodOption, amount: number) => {
+      if (amount <= 0 || method === 'credito') return;
+      paymentBreakdown[method] = roundMoney(toNumber(paymentBreakdown[method]) + amount);
+    };
+
+    addPaymentAmount(primaryMethod, primaryAmount);
+    if (secondaryMethod) {
+      addPaymentAmount(secondaryMethod, secondaryAmount);
+    }
+
+    const cashApplied = roundMoney(toNumber(paymentBreakdown.efectivo));
+    const nonCashApplied = roundMoney(
+      toNumber(paymentBreakdown.tarjeta)
+      + toNumber(paymentBreakdown.transferencia)
+      + toNumber(paymentBreakdown.nequi)
+      + toNumber(paymentBreakdown.daviplata)
+      + toNumber(paymentBreakdown.otro)
+    );
+
+    const hasOnlyCashPayment = cashApplied > 0 && nonCashApplied === 0;
+    let allocatedPaid = roundMoney(cashApplied + nonCashApplied);
+    let cashTendered = cashApplied;
+    let change = 0;
+
+    if (primaryMethod === 'credito' && allocatedPaid <= 0) {
+      allocatedPaid = 0;
+      cashTendered = 0;
+    } else if (allocatedPaid <= 0) {
+      toast.error('Ingresa al menos un abono para registrar la venta.');
+      return null;
+    }
+
+    if (allocatedPaid > roundedTotal) {
+      if (!hasOnlyCashPayment) {
+        toast.error('El pago total no puede superar el valor de la venta en pagos mixtos.');
+        return null;
+      }
+
+      cashTendered = allocatedPaid;
+      change = roundMoney(cashTendered - roundedTotal);
+      paymentBreakdown.efectivo = roundedTotal;
+      allocatedPaid = roundedTotal;
+    }
+
+    let creditedAmount = roundMoney(Math.max(0, roundedTotal - allocatedPaid));
+    if (primaryMethod === 'credito' && allocatedPaid <= 0) {
+      creditedAmount = roundedTotal;
+    }
+
+    if (creditedAmount > 0) {
+      paymentBreakdown.credito = creditedAmount;
+    } else {
+      delete paymentBreakdown.credito;
+    }
+
+    if (creditedAmount > 0 && !activeDraft.customerId) {
+      toast.error('Selecciona un cliente para registrar el saldo pendiente como fiado.');
+      return null;
+    }
+
+    if (!hasOnlyCashPayment) {
+      cashTendered = cashApplied;
+      change = 0;
+    }
+
+    const nonCreditMethods = Object.entries(paymentBreakdown)
+      .filter(([method, amount]) => method !== 'credito' && toNumber(amount) > 0)
+      .map(([method]) => method as PaymentMethodOption);
+
+    const toDbPaymentMethod = (method: PaymentMethodOption): 'efectivo' | 'tarjeta' | 'transferencia' | 'credito' | 'otro' => {
+      if (method === 'efectivo') return 'efectivo';
+      if (method === 'tarjeta') return 'tarjeta';
+      if (method === 'transferencia' || method === 'nequi' || method === 'daviplata') return 'transferencia';
+      if (method === 'credito') return 'credito';
+      return 'otro';
+    };
+
+    const paymentMethodValue: 'efectivo' | 'tarjeta' | 'transferencia' | 'credito' | 'otro' =
+      creditedAmount === roundedTotal
+        ? 'credito'
+        : (nonCreditMethods.length === 1 && creditedAmount === 0)
+          ? toDbPaymentMethod(nonCreditMethods[0])
+          : 'otro';
+
+    if (!isConnectedToSupabase) {
+      const saleDate = new Date().toISOString();
       const invoiceNumber = getNextOfflineInvoiceNumber();
-      const safeCashReceived = paymentMethodValue === 'credito'
-        ? 0
-        : roundMoney(Number.isFinite(cashReceived) ? cashReceived : 0);
-      const change = paymentMethodValue === 'efectivo'
-        ? roundMoney(safeCashReceived - roundedTotal)
-        : 0;
 
       const newSale: Sale = {
         id: `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -2555,8 +2730,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
         iva: roundedIva,
         total: roundedTotal,
         paymentMethod: paymentMethodValue,
-        cashReceived: safeCashReceived,
+        cashReceived: cashTendered,
         change,
+        paymentBreakdown,
+        creditedAmount,
         customerId: activeDraft.customerId,
         invoiceNumber,
         cashSessionId: currentCashSession.id,
@@ -2600,9 +2777,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
           };
         }));
 
-        if (paymentMethodValue === 'credito') {
+        if (creditedAmount > 0) {
           const reference = newSale.invoiceNumber || newSale.id;
-          addDebtToCustomer(newSale.customerId, newSale.total, buildCreditSaleDescription(reference, cart));
+          addDebtToCustomer(newSale.customerId, creditedAmount, buildCreditSaleDescription(reference, cart));
         }
       }
 
@@ -2614,7 +2791,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
         setActiveDraftId(remainingDrafts[0].id);
       }
 
-      toast.success('Venta registrada correctamente.');
+      toast.success(creditedAmount > 0
+        ? 'Venta registrada con abono y saldo a fiado.'
+        : 'Venta registrada correctamente.');
       return newSale;
     }
 
@@ -2635,17 +2814,16 @@ export function POSProvider({ children }: { children: ReactNode }) {
         cashSessionId: currentCashSession.id,
       });
 
-      const saleCashReceived = paymentMethodValue === 'credito'
-        ? 0
-        : roundMoney(cashReceived);
-
       const result = await finalizeSaleDraft(session.access_token, currentStoreId, {
         draftId: activeDraft.id,
         paymentMethod: paymentMethodValue,
-        cashReceived: saleCashReceived,
+        cashReceived: cashTendered,
+        paymentBreakdown,
+        creditedAmount,
       });
 
       const saleRow = result.sale;
+      const rowBreakdown = sanitizePaymentBreakdown(saleRow.payment_breakdown);
       const newSale: Sale = {
         id: saleRow.id,
         date: saleRow.created_at,
@@ -2655,12 +2833,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
         iva: roundMoney(toNumber(saleRow.iva)),
         total: roundMoney(toNumber(saleRow.total)),
         paymentMethod: saleRow.payment_method || paymentMethodValue,
-        cashReceived: paymentMethodValue === 'credito'
-          ? 0
-          : roundMoney(toNumber(saleRow.cash_received)),
-        change: paymentMethodValue === 'credito'
-          ? 0
-          : roundMoney(toNumber(saleRow.change_value)),
+        cashReceived: roundMoney(toNumber(saleRow.cash_received)),
+        change: roundMoney(toNumber(saleRow.change_value)),
+        paymentBreakdown: Object.keys(rowBreakdown).length > 0 ? rowBreakdown : paymentBreakdown,
+        creditedAmount: roundMoney(toNumber(saleRow.credited_amount, creditedAmount)),
         customerId: saleRow.customer_id ?? activeDraft.customerId,
         invoiceNumber: saleRow.invoice_number ?? undefined,
         cashSessionId: saleRow.cash_session_id ?? currentCashSession.id,
@@ -2712,9 +2888,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
           };
         }));
 
-        if (paymentMethodValue === 'credito') {
+        if (getSaleCreditedAmount(newSale) > 0) {
           const reference = newSale.invoiceNumber || newSale.id;
-          addDebtToCustomer(newSale.customerId, newSale.total, buildCreditSaleDescription(reference, cart));
+          addDebtToCustomer(newSale.customerId, getSaleCreditedAmount(newSale), buildCreditSaleDescription(reference, cart));
         }
       }
 
@@ -2726,7 +2902,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
         setActiveDraftId(remainingDrafts[0].id);
       }
 
-      toast.success('Venta registrada correctamente.');
+      toast.success(getSaleCreditedAmount(newSale) > 0
+        ? 'Venta registrada con abono y saldo a fiado.'
+        : 'Venta registrada correctamente.');
       return newSale;
     } catch (error) {
       console.error('No se pudo registrar venta en Supabase', error);
@@ -2792,18 +2970,22 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    if (sale.paymentMethod === 'efectivo') {
+    const saleBreakdown = getSalePaymentBreakdown(sale);
+    const cashRefund = roundMoney(toNumber(saleBreakdown.efectivo));
+    const creditedRefund = getSaleCreditedAmount(sale);
+
+    if (cashRefund > 0) {
       void addCashMovement(
         'cash_out',
-        sale.total,
+        cashRefund,
         `Devolución venta ${sale.invoiceNumber || sale.id}`,
       );
     }
 
-    if (sale.paymentMethod === 'credito' && sale.customerId) {
+    if (creditedRefund > 0 && sale.customerId) {
       addPaymentToCustomer(
         sale.customerId,
-        sale.total,
+        creditedRefund,
         `Reverso por devolución ${sale.invoiceNumber || sale.id}`,
         { registerCashIn: false },
       );

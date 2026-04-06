@@ -113,6 +113,8 @@ type SaleRow = {
   payment_method: PaymentMethod;
   cash_received: number;
   change_value: number;
+  payment_breakdown: Record<string, number> | null;
+  credited_amount: number;
   customer_id: string | null;
   invoice_number: string | null;
   cash_session_id: string | null;
@@ -608,6 +610,8 @@ export async function createSaleWithItems(
     paymentMethod: PaymentMethod;
     cashReceived: number;
     changeValue: number;
+    paymentBreakdown?: Record<string, number>;
+    creditedAmount?: number;
     createdAt?: string;
     items: Array<{
       productId?: string;
@@ -635,6 +639,8 @@ export async function createSaleWithItems(
     payment_method: payload.paymentMethod,
     cash_received: payload.cashReceived,
     change_value: payload.changeValue,
+    payment_breakdown: payload.paymentBreakdown ?? {},
+    credited_amount: payload.creditedAmount ?? 0,
     created_at: payload.createdAt || new Date().toISOString(),
   }], token);
 
@@ -785,6 +791,8 @@ export async function finalizeSaleDraft(
     draftId: string;
     paymentMethod: PaymentMethod;
     cashReceived: number;
+    paymentBreakdown?: Record<string, number>;
+    creditedAmount?: number;
   },
 ): Promise<FinalizeSaleDraftResponse> {
   return rpc<FinalizeSaleDraftResponse>(
@@ -794,6 +802,8 @@ export async function finalizeSaleDraft(
       p_draft_id: payload.draftId,
       p_payment_method: payload.paymentMethod,
       p_cash_received: payload.cashReceived,
+      p_payment_breakdown: payload.paymentBreakdown ?? {},
+      p_credited_amount: payload.creditedAmount ?? null,
     },
     token,
   );
@@ -1008,7 +1018,7 @@ export async function loadSuppliersWithPurchases(token: string, storeId: string)
 export async function loadSalesWithItems(token: string, storeId: string): Promise<SaleRow[]> {
   return selectRows<SaleRow>(
     'sales',
-    'select=id,created_at,returned_at,subtotal,discount,iva,total,payment_method,cash_received,change_value,customer_id,invoice_number,cash_session_id,'
+    'select=id,created_at,returned_at,subtotal,discount,iva,total,payment_method,cash_received,change_value,payment_breakdown,credited_amount,customer_id,invoice_number,cash_session_id,'
       + 'sale_items(id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at)'
       + `&store_id=eq.${storeId}&order=created_at.asc`,
     token,

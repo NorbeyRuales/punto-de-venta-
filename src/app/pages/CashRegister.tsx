@@ -23,6 +23,8 @@ const formatMethodLabel = (method: string) => {
     efectivo: 'Efectivo',
     tarjeta: 'Tarjeta',
     transferencia: 'Transferencia',
+    nequi: 'Nequi',
+    daviplata: 'Daviplata',
     credito: 'Crédito',
     otro: 'Otros',
   };

@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import { usePOS } from '../context/POSContext';
-import type { Sale } from '../context/POSContext';
+import type { PaymentMethodOption, Sale } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -56,8 +56,10 @@ export function POS() {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [supplierFilter, setSupplierFilter] = useState('all');
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState('efectivo');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethodOption>('efectivo');
   const [cashReceived, setCashReceived] = useState('');
+  const [secondaryPaymentMethod, setSecondaryPaymentMethod] = useState<PaymentMethodOption | 'none'>('none');
+  const [secondaryPaymentAmount, setSecondaryPaymentAmount] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [discountAmount, setDiscountAmount] = useState('');
   const [recentlyAddedProductId, setRecentlyAddedProductId] = useState<string | null>(null);
@@ -69,6 +71,8 @@ export function POS() {
   useEffect(() => {
     setPaymentMethod('efectivo');
     setCashReceived('');
+    setSecondaryPaymentMethod('none');
+    setSecondaryPaymentAmount('');
     setSelectedProduct(null);
     setDiscountAmount('');
     if (keepPaymentDialogOpenRef.current) {
@@ -122,6 +126,40 @@ export function POS() {
     return `$${numeric.toLocaleString('es-CO')}`;
   };
 
+  const getSalePaymentBreakdown = (sale: Sale) => {
+    const source = sale.paymentBreakdown || {};
+    const cleaned = Object.entries(source)
+      .map(([method, amount]) => [method, roundToHundred(Number(amount) || 0)] as const)
+      .filter(([, amount]) => amount > 0);
+
+    if (cleaned.length > 0) {
+      return cleaned;
+    }
+
+    if (sale.paymentMethod === 'efectivo') {
+      const efectivoNeto = Math.max(0, roundToHundred((sale.cashReceived || 0) - (sale.change || 0)));
+      return efectivoNeto > 0 ? [['efectivo', efectivoNeto] as const] : [];
+    }
+
+    if (sale.paymentMethod === 'credito') {
+      const credit = roundToHundred(sale.creditedAmount ?? sale.total);
+      return credit > 0 ? [['credito', credit] as const] : [];
+    }
+
+    return [[sale.paymentMethod || 'otro', roundToHundred(sale.total)] as const];
+  };
+
+  const formatSalePaymentBreakdown = (sale: Sale) => {
+    const breakdown = getSalePaymentBreakdown(sale);
+    if (breakdown.length === 0) {
+      return formatPaymentMethodLabel(sale.paymentMethod);
+    }
+
+    return breakdown
+      .map(([method, amount]) => `${formatPaymentMethodLabel(method)}: ${formatRoundedCurrency(amount)}`)
+      .join(' | ');
+  };
+
   const normalizeText = (value: string) =>
     value
       .normalize('NFD')
@@ -145,6 +183,7 @@ export function POS() {
 
   const buildWhatsappMessage = (sale: Sale) => {
     const customer = sale.customerId ? customers.find(c => c.id === sale.customerId) : undefined;
+    const creditedAmount = roundToHundred(sale.creditedAmount ?? 0);
     const lines = [
       storeConfig?.name ? `Tienda: ${storeConfig.name}` : 'Comprobante de venta',
       `Factura: ${sale.invoiceNumber || sale.id}`,
@@ -161,10 +200,9 @@ export function POS() {
       `Subtotal: ${formatRoundedCurrency(sale.subtotal)}`,
       sale.discount > 0 ? `Descuento: -${formatRoundedCurrency(sale.discount)}` : null,
       `Total: ${formatRoundedCurrency(sale.total)}`,
-      `Pago: ${formatPaymentMethodLabel(sale.paymentMethod)}`,
-      sale.paymentMethod === 'efectivo'
-        ? `Efectivo: ${formatRoundedCurrency(sale.cashReceived)} | Cambio: ${formatRoundedCurrency(sale.change)}`
-        : null,
+      `Pago: ${formatSalePaymentBreakdown(sale)}`,
+      sale.cashReceived > 0 ? `Recibido en efectivo: ${formatRoundedCurrency(sale.cashReceived)} | Cambio: ${formatRoundedCurrency(sale.change)}` : null,
+      creditedAmount > 0 ? `Saldo fiado: ${formatRoundedCurrency(creditedAmount)}` : null,
       '',
       '¡Gracias por tu compra!',
     ].filter(Boolean);
@@ -287,28 +325,23 @@ export function POS() {
       return;
     }
 
-    if (paymentMethod === 'efectivo') {
-      const cash = roundToHundred(parseFloat(cashReceived) || 0);
-      if (cash < payableTotal) {
-        toast.error('Monto insuficiente');
-        return;
-      }
+    if (isMixedOverpay) {
+      toast.error('En pago mixto no puedes superar el total de la venta.');
+      return;
     }
 
-    if (paymentMethod === 'credito' && !selectedCustomer) {
-      toast.error('Selecciona un cliente para registrar el fiado.');
+    if (requiresCustomerForDebt && !selectedCustomer) {
+      toast.error('Selecciona un cliente para registrar el saldo pendiente como fiado.');
       return;
     }
 
     keepPaymentDialogOpenRef.current = true;
-    const sale = await completeSale(
-      paymentMethod,
-      paymentMethod === 'efectivo'
-        ? roundToHundred(parseFloat(cashReceived) || 0)
-        : paymentMethod === 'credito'
-          ? 0
-          : payableTotal
-    );
+    const sale = await completeSale({
+      primaryMethod: paymentMethod,
+      primaryAmount: roundToHundred(parseFloat(cashReceived) || 0),
+      secondaryMethod: hasSecondaryPayment ? secondaryPaymentMethod as PaymentMethodOption : undefined,
+      secondaryAmount: hasSecondaryPayment ? roundToHundred(parseFloat(secondaryPaymentAmount) || 0) : 0,
+    });
 
     if (!sale) {
       keepPaymentDialogOpenRef.current = false;
@@ -317,6 +350,8 @@ export function POS() {
 
     setCompletedSale(sale);
     setCashReceived('');
+    setSecondaryPaymentMethod('none');
+    setSecondaryPaymentAmount('');
     setPaymentMethod('efectivo');
 
     // Simular impresión o envío por WhatsApp
@@ -347,12 +382,25 @@ export function POS() {
     return roundToHundred(sum + lineDiscount);
   }, 0);
   const payableTotal = roundToHundred(cartTotal);
-  const cashValue = Number(cashReceived) || 0;
-  const roundedCashValue = roundToHundred(cashValue);
-  const isCashInsufficient = paymentMethod === 'efectivo' && cashReceived !== '' && roundedCashValue < payableTotal;
-  const change = paymentMethod === 'efectivo' 
-    ? Math.max(0, roundedCashValue - payableTotal)
+  const primaryAmount = roundToHundred(Number(cashReceived) || 0);
+  const hasSecondaryPayment = paymentMethod !== 'credito' && secondaryPaymentMethod !== 'none';
+  const secondaryAmount = hasSecondaryPayment ? roundToHundred(Number(secondaryPaymentAmount) || 0) : 0;
+  const paidPreview = paymentMethod === 'credito'
+    ? 0
+    : roundToHundred(primaryAmount + secondaryAmount);
+  const isCashOnlyPayment = paymentMethod === 'efectivo' && !hasSecondaryPayment;
+  const isMixedOverpay = !isCashOnlyPayment && paidPreview > payableTotal;
+  const change = isCashOnlyPayment
+    ? Math.max(0, roundToHundred(primaryAmount - payableTotal))
     : 0;
+  const coveredByPayment = isCashOnlyPayment
+    ? Math.min(payableTotal, primaryAmount)
+    : Math.min(payableTotal, paidPreview);
+  const debtPreview = paymentMethod === 'credito'
+    ? payableTotal
+    : roundToHundred(Math.max(0, payableTotal - coveredByPayment));
+  const requiresCustomerForDebt = debtPreview > 0;
+  const showCashInputWarning = isCashOnlyPayment && cashReceived !== '' && primaryAmount < payableTotal;
   const cannotChargeReason = !currentCashSession
     ? 'Debes abrir una caja para habilitar Cobrar.'
     : cart.length === 0
@@ -680,6 +728,10 @@ export function POS() {
           className="h-16 bg-[#2ECC71] hover:bg-[#27AE60] text-white text-xl font-bold"
           onClick={() => {
             setCompletedSale(null);
+            setPaymentMethod('efectivo');
+            setCashReceived('');
+            setSecondaryPaymentMethod('none');
+            setSecondaryPaymentAmount('');
             setShowPaymentDialog(true);
           }}
           disabled={Boolean(cannotChargeReason)}
@@ -754,7 +806,15 @@ export function POS() {
               <>
                 <div>
                   <Label>Método de Pago</Label>
-                  <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                  <Select value={paymentMethod} onValueChange={(value) => {
+                    const nextMethod = value as PaymentMethodOption;
+                    setPaymentMethod(nextMethod);
+                    if (nextMethod === 'credito') {
+                      setCashReceived('');
+                      setSecondaryPaymentMethod('none');
+                      setSecondaryPaymentAmount('');
+                    }
+                  }}>
                     <SelectTrigger className="h-12">
                       <SelectValue />
                     </SelectTrigger>
@@ -789,45 +849,109 @@ export function POS() {
                   </Select>
                 </div>
 
-                {paymentMethod === 'efectivo' && (
-                  <div>
-                    <Label>Efectivo Recibido</Label>
-                    <Input
-                      type="text"
-                      inputMode="numeric"
-                      value={formatInputCurrency(cashReceived)}
-                      onChange={(e) => {
-                        const digits = e.target.value.replace(/\D/g, '');
-                        setCashReceived(digits);
-                      }}
-                      placeholder="$0"
-                      className={`h-12 text-lg ${isCashInsufficient ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
-                      autoFocus
-                      aria-invalid={isCashInsufficient}
-                      aria-describedby="pos-cash-help"
-                    />
-                    {isCashInsufficient ? (
-                      <p id="pos-cash-help" className="text-xs text-red-600 mt-1">
-                        El efectivo debe ser igual o mayor al total.
-                      </p>
-                    ) : (
-                      <p id="pos-cash-help" className="text-xs text-gray-500 mt-1">
-                        Ingresa el valor recibido para calcular el cambio.
-                      </p>
-                    )}
-                    {cashReceived && (
-                      <div className="mt-2 p-3 bg-blue-50 rounded-lg">
-                        <p className="text-sm text-gray-600">Cambio a Devolver</p>
-                        <p className="text-xl font-bold text-blue-600">
-                          {formatRoundedCurrency(change)}
+                {paymentMethod !== 'credito' && (
+                  <>
+                    <div>
+                      <Label>
+                        Monto por {formatPaymentMethodLabel(paymentMethod)}
+                        {paymentMethod === 'efectivo' ? ' (recibido)' : ''}
+                      </Label>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={formatInputCurrency(cashReceived)}
+                        onChange={(e) => {
+                          const digits = e.target.value.replace(/\D/g, '');
+                          setCashReceived(digits);
+                        }}
+                        placeholder="$0"
+                        className={`h-12 text-lg ${showCashInputWarning ? 'border-red-500 focus-visible:ring-red-500' : ''}`}
+                        autoFocus
+                        aria-invalid={showCashInputWarning}
+                        aria-describedby="pos-payment-help"
+                      />
+                      {showCashInputWarning ? (
+                        <p id="pos-payment-help" className="text-xs text-red-600 mt-1">
+                          Si no cubre el total, el saldo pasará a fiado del cliente.
                         </p>
+                      ) : (
+                        <p id="pos-payment-help" className="text-xs text-gray-500 mt-1">
+                          Puedes dejarlo en 0 para cobrar el total con este método.
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <Label>Segundo método (opcional)</Label>
+                      <Select
+                        value={secondaryPaymentMethod}
+                        onValueChange={(value) => {
+                          const nextSecondary = value as PaymentMethodOption | 'none';
+                          setSecondaryPaymentMethod(nextSecondary);
+                          if (nextSecondary === 'none') {
+                            setSecondaryPaymentAmount('');
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="h-12">
+                          <SelectValue placeholder="Sin segundo método" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Sin segundo método</SelectItem>
+                          {paymentMethod !== 'efectivo' && <SelectItem value="efectivo">Efectivo</SelectItem>}
+                          {paymentMethod !== 'tarjeta' && <SelectItem value="tarjeta">Tarjeta/Datáfono</SelectItem>}
+                          {paymentMethod !== 'transferencia' && <SelectItem value="transferencia">Transferencia</SelectItem>}
+                          {paymentMethod !== 'nequi' && <SelectItem value="nequi">Nequi</SelectItem>}
+                          {paymentMethod !== 'daviplata' && <SelectItem value="daviplata">Daviplata</SelectItem>}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {hasSecondaryPayment && (
+                      <div>
+                        <Label>Monto por {formatPaymentMethodLabel(secondaryPaymentMethod)}</Label>
+                        <Input
+                          type="text"
+                          inputMode="numeric"
+                          value={formatInputCurrency(secondaryPaymentAmount)}
+                          onChange={(e) => {
+                            const digits = e.target.value.replace(/\D/g, '');
+                            setSecondaryPaymentAmount(digits);
+                          }}
+                          placeholder="$0"
+                          className="h-12 text-lg"
+                        />
                       </div>
                     )}
-                  </div>
+
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-1">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-600">Abono total</span>
+                        <span className="font-semibold text-slate-900">{formatRoundedCurrency(coveredByPayment)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-600">Saldo a fiado</span>
+                        <span className={`font-semibold ${debtPreview > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                          {formatRoundedCurrency(debtPreview)}
+                        </span>
+                      </div>
+                      {isCashOnlyPayment && cashReceived && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-slate-600">Cambio</span>
+                          <span className="font-semibold text-blue-700">{formatRoundedCurrency(change)}</span>
+                        </div>
+                      )}
+                      {isMixedOverpay && (
+                        <p className="text-xs text-red-600 pt-1">
+                          El pago mixto no puede exceder el total de la venta.
+                        </p>
+                      )}
+                    </div>
+                  </>
                 )}
 
                 <div>
-                  <Label>Cliente {paymentMethod === 'credito' ? '*' : '(Opcional)'}</Label>
+                  <Label>Cliente {requiresCustomerForDebt ? '*' : '(Opcional)'}</Label>
                   <Select value={selectedCustomer} onValueChange={(value) => setActiveDraftCustomerId(value || null)}>
                     <SelectTrigger className="h-12">
                       <SelectValue placeholder="Seleccionar cliente" />
@@ -840,9 +964,9 @@ export function POS() {
                       ))}
                     </SelectContent>
                   </Select>
-                  {paymentMethod === 'credito' && !selectedCustomer && (
+                  {requiresCustomerForDebt && !selectedCustomer && (
                     <p className="text-xs text-red-600 mt-1">
-                      El fiado requiere seleccionar un cliente.
+                      El saldo pendiente requiere seleccionar un cliente.
                     </p>
                   )}
                 </div>
@@ -850,11 +974,15 @@ export function POS() {
                 <div className="flex gap-2 pt-4">
                   <Button
                     onClick={handlePayment}
-                    disabled={paymentMethod === 'credito' && !selectedCustomer}
+                    disabled={(requiresCustomerForDebt && !selectedCustomer) || isMixedOverpay}
                     className="flex-1 h-12 bg-[#2ECC71] hover:bg-[#27AE60] text-white"
                   >
                     <DollarSign className="w-5 h-5 mr-2" />
-                    {paymentMethod === 'credito' ? 'Registrar Fiado' : 'Completar Venta'}
+                    {paymentMethod === 'credito'
+                      ? 'Registrar Fiado'
+                      : debtPreview > 0
+                        ? 'Registrar Venta + Fiado'
+                        : 'Completar Venta'}
                   </Button>
                 </div>
               </>
