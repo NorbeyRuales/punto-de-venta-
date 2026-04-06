@@ -6,7 +6,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { User, Lock, AlertCircle, Loader2 } from 'lucide-react';
+import { Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
 
@@ -300,7 +300,7 @@ export function Login() {
           <div>
             <Label htmlFor="username" className="text-base">Email</Label>
             <div className="relative mt-2">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--muted-foreground)]" />
+              <Mail className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 w-5 h-5 text-[var(--muted-foreground)]" />
               <Input
                 id="username"
                 type="text"
@@ -316,7 +316,7 @@ export function Login() {
           <div>
             <Label htmlFor="password" className="text-base">Contraseña</Label>
             <div className="relative mt-2">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--muted-foreground)]" />
+              <Lock className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 w-5 h-5 text-[var(--muted-foreground)]" />
               <Input
                 id="password"
                 type="password"

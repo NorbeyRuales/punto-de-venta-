@@ -109,7 +109,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
       )}
       {/* Sidebar Desktop */}
-      <aside className="hidden lg:flex lg:flex-col w-64 bg-white border-r border-border lg:sticky lg:top-0 lg:h-screen">
+      <aside className="glass-surface hidden lg:flex lg:flex-col w-64 bg-white border-r border-border lg:sticky lg:top-0 lg:h-screen">
         <div className="p-6 border-b border-border">
           <div className="flex flex-col items-center text-center gap-2">
             <div className="relative w-16 h-16">
@@ -177,7 +177,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             className="absolute inset-0 bg-black/50"
             onClick={() => setIsSidebarOpen(false)}
           />
-          <aside className="absolute left-0 top-0 bottom-0 w-64 bg-white flex flex-col">
+          <aside className="glass-surface absolute left-0 top-0 bottom-0 w-64 bg-white flex flex-col">
             <div className="p-4 border-b border-border flex items-center justify-between">
               <div className="flex flex-col items-center text-center gap-2">
                 <div className="relative w-12 h-12">
@@ -232,7 +232,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               })}
             </nav>
 
-            <div className="p-3 border-t border-border bg-white">
+            <div className="glass-surface p-3 border-t border-border bg-white">
               <Button
                 onClick={handleLogout}
                 variant="outline"
@@ -249,7 +249,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-h-screen">
         {/* Header Mobile */}
-        <header className="lg:hidden bg-white border-b border-border p-4 flex items-center justify-between">
+        <header className="glass-surface lg:hidden bg-white border-b border-border p-4 flex items-center justify-between">
           <button onClick={() => setIsSidebarOpen(true)}>
             <Menu className="w-6 h-6" />
           </button>
