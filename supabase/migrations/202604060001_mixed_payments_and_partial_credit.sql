@@ -120,7 +120,11 @@ begin
 
   v_has_breakdown := p_payment_breakdown is not null
     and jsonb_typeof(p_payment_breakdown) = 'object'
-    and jsonb_object_length(p_payment_breakdown) > 0;
+    and exists (
+      select 1
+      from jsonb_object_keys(p_payment_breakdown)
+      limit 1
+    );
 
   if v_has_breakdown then
     begin

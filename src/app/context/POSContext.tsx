@@ -2908,7 +2908,6 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return newSale;
     } catch (error) {
       console.error('No se pudo registrar venta en Supabase', error);
-      markPendingSync();
       toast.error(error instanceof Error ? error.message : 'No se pudo registrar la venta.');
       return null;
     }
