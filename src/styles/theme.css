@@ -5,8 +5,8 @@
   --font-size: 16px;
   --background: #edf2ff;
   --foreground: #0f172a;
-  --glass-surface: rgba(255, 255, 255, 0.5);
-  --glass-surface-strong: rgba(255, 255, 255, 0.68);
+  --glass-surface: rgba(255, 255, 255, 0.62);
+  --glass-surface-strong: rgba(255, 255, 255, 0.8);
   --glass-fallback-surface: rgba(255, 255, 255, 0.9);
   --glass-border: rgba(192, 208, 255, 0.62);
   --glass-blur: 14px;
@@ -19,11 +19,11 @@
   --primary-hover: #6694ff;
   --primary-soft: rgba(128, 168, 255, 0.14);
   --primary-foreground: #0a1020;
-  --secondary: rgba(206, 181, 255, 0.46);
+  --secondary: rgba(206, 181, 255, 0.56);
   --secondary-hover: rgba(181, 156, 243, 0.62);
   --secondary-soft: rgba(206, 181, 255, 0.24);
   --secondary-foreground: #1a1033;
-  --muted: rgba(230, 236, 255, 0.58);
+  --muted: rgba(230, 236, 255, 0.68);
   --muted-foreground: #4b5563;
   --accent: #8ec1de;
   --accent-hover: #76b2d5;
@@ -35,7 +35,7 @@
   --success-foreground: #062011;
   --border: rgba(192, 208, 255, 0.62);
   --input: var(--glass-surface-strong);
-  --input-background: rgba(255, 255, 255, 0.64);
+  --input-background: rgba(255, 255, 255, 0.78);
   --switch-background: #c8d4ff;
   --shadow-soft: 0 12px 36px rgba(67, 91, 154, 0.2);
   --shadow-card: var(--glass-shadow);
@@ -48,7 +48,7 @@
   --chart-4: #d3d3ff;
   --chart-5: #b59cf3;
   --radius: 0.625rem;
-  --sidebar: rgba(238, 241, 255, 0.62);
+  --sidebar: rgba(238, 241, 255, 0.74);
   --sidebar-foreground: #0f172a;
   --sidebar-primary: #80a8ff;
   --sidebar-primary-foreground: #0a1020;
@@ -61,8 +61,8 @@
 .dark {
   --background: #0b1120;
   --foreground: #e8ecff;
-  --glass-surface: rgba(17, 24, 39, 0.58);
-  --glass-surface-strong: rgba(17, 24, 39, 0.74);
+  --glass-surface: rgba(17, 24, 39, 0.68);
+  --glass-surface-strong: rgba(17, 24, 39, 0.84);
   --glass-fallback-surface: rgba(15, 23, 42, 0.92);
   --glass-border: rgba(136, 157, 219, 0.34);
   --glass-blur: 14px;
@@ -75,11 +75,11 @@
   --primary-hover: #6694ff;
   --primary-soft: rgba(128, 168, 255, 0.2);
   --primary-foreground: #0a1020;
-  --secondary: rgba(99, 102, 241, 0.28);
+  --secondary: rgba(99, 102, 241, 0.38);
   --secondary-hover: rgba(129, 140, 248, 0.42);
   --secondary-soft: rgba(129, 140, 248, 0.24);
   --secondary-foreground: #ecf1ff;
-  --muted: rgba(36, 49, 80, 0.54);
+  --muted: rgba(36, 49, 80, 0.62);
   --muted-foreground: #c5cae5;
   --accent: #8ec1de;
   --accent-hover: #76b2d5;
@@ -88,8 +88,8 @@
   --destructive: #e06757;
   --destructive-foreground: #0f1220;
   --border: rgba(92, 115, 180, 0.42);
-  --input: rgba(23, 31, 53, 0.76);
-  --input-background: rgba(23, 31, 53, 0.7);
+  --input: rgba(23, 31, 53, 0.84);
+  --input-background: rgba(23, 31, 53, 0.8);
   --ring: #80a8ff;
   --font-weight-medium: 500;
   --font-weight-normal: 400;
@@ -98,11 +98,11 @@
   --chart-3: #ceb5ff;
   --chart-4: #d3d3ff;
   --chart-5: #b59cf3;
-  --sidebar: rgba(16, 20, 40, 0.7);
+  --sidebar: rgba(16, 20, 40, 0.8);
   --sidebar-foreground: #e8ecff;
   --sidebar-primary: #80a8ff;
   --sidebar-primary-foreground: #0a1020;
-  --sidebar-accent: rgba(31, 37, 55, 0.66);
+  --sidebar-accent: rgba(31, 37, 55, 0.74);
   --sidebar-accent-foreground: #e8ecff;
   --sidebar-border: rgba(92, 115, 180, 0.38);
   --sidebar-ring: #80a8ff;
