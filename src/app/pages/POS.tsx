@@ -401,21 +401,26 @@ export function POS() {
     : roundToHundred(Math.max(0, payableTotal - coveredByPayment));
   const requiresCustomerForDebt = debtPreview > 0;
   const showCashInputWarning = isCashOnlyPayment && cashReceived !== '' && primaryAmount < payableTotal;
+  const isCashOpenForSales = currentCashSession?.status === 'open';
   const cannotChargeReason = !currentCashSession
     ? 'Debes abrir una caja para habilitar Cobrar.'
-    : cart.length === 0
-      ? 'Agrega productos al carrito para habilitar Cobrar.'
-      : null;
+    : !isCashOpenForSales
+      ? 'La caja está en arqueo. Finaliza el cierre para habilitar Cobrar.'
+      : cart.length === 0
+        ? 'Agrega productos al carrito para habilitar Cobrar.'
+        : null;
 
   return (
     <div className="space-y-4">
-      {!currentCashSession && (
+      {!isCashOpenForSales && (
         <Card className="p-4 border border-amber-200 bg-amber-50">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <p className="text-sm font-semibold text-amber-800">Caja cerrada</p>
+              <p className="text-sm font-semibold text-amber-800">{currentCashSession ? 'Caja en arqueo' : 'Caja cerrada'}</p>
               <p className="text-sm text-amber-700">
-                Abre una sesión de caja para registrar ventas.
+                {currentCashSession
+                  ? 'Finaliza el cierre de caja para volver a registrar ventas.'
+                  : 'Abre una sesión de caja para registrar ventas.'}
               </p>
             </div>
             <Button

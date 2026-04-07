@@ -221,6 +221,17 @@ export interface SaleDraft {
 
 export type PaymentMethodOption = 'efectivo' | 'tarjeta' | 'transferencia' | 'nequi' | 'daviplata' | 'credito' | 'otro';
 export type PaymentBreakdown = Partial<Record<PaymentMethodOption, number>>;
+export type CashMovementCategory =
+  | 'manual'
+  | 'opening'
+  | 'sale'
+  | 'manual_income'
+  | 'manual_expense'
+  | 'return'
+  | 'credit_payment'
+  | 'adjustment'
+  | 'other';
+export type CashMovementReferenceType = 'sale' | 'cash_session' | 'customer' | 'manual' | 'system' | 'other';
 
 export interface SalePaymentInput {
   primaryMethod: PaymentMethodOption;
@@ -303,6 +314,35 @@ const getSaleCreditedAmount = (sale: Sale): number => {
   return roundMoney(Math.max(0, toNumber(breakdown.credito)));
 };
 
+const CASH_MOVEMENT_CATEGORIES: CashMovementCategory[] = [
+  'manual',
+  'opening',
+  'sale',
+  'manual_income',
+  'manual_expense',
+  'return',
+  'credit_payment',
+  'adjustment',
+  'other',
+];
+
+const isCashMovementCategory = (value: unknown): value is CashMovementCategory =>
+  typeof value === 'string' && CASH_MOVEMENT_CATEGORIES.includes(value as CashMovementCategory);
+
+const normalizeMovementCategory = (
+  value: unknown,
+  fallback: CashMovementCategory = 'manual',
+): CashMovementCategory => (isCashMovementCategory(value) ? value : fallback);
+
+const normalizeMovementPaymentMethod = (value: unknown): PaymentMethodOption | undefined => {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.toLowerCase();
+  if (PAYMENT_METHOD_OPTIONS.includes(normalized as PaymentMethodOption)) {
+    return normalized as PaymentMethodOption;
+  }
+  return undefined;
+};
+
 export interface Customer {
   id: string;
   name: string;
@@ -379,13 +419,18 @@ export interface CashSession {
   id: string;
   storeId?: string;
   userId?: string;
+  openedBy?: string;
+  closedBy?: string;
   openedAt: string;
   closedAt?: string;
+  openingNote?: string;
   openingCash: number;
   expectedCash?: number;
   countedCash?: number;
+  countedAt?: string;
+  closingNote?: string;
   difference?: number;
-  status: 'open' | 'closed';
+  status: 'open' | 'closed' | 'counting' | 'closed_with_difference';
 }
 
 export interface CashMovement {
@@ -395,6 +440,12 @@ export interface CashMovement {
   type: 'cash_in' | 'cash_out';
   amount: number;
   reason?: string;
+  category?: CashMovementCategory;
+  subtype?: string;
+  paymentMethod?: PaymentMethodOption;
+  referenceType?: CashMovementReferenceType;
+  referenceId?: string;
+  metadata?: Record<string, unknown>;
   date: string;
 }
 
@@ -515,9 +566,25 @@ interface POSContextType {
   cashSessions: CashSession[];
   cashMovements: CashMovement[];
   currentCashSession: CashSession | null;
-  openCashSession: (openingCash: number) => Promise<boolean>;
-  closeCashSession: (countedCash: number) => Promise<CashSession | null>;
-  addCashMovement: (type: 'cash_in' | 'cash_out', amount: number, reason?: string) => Promise<CashMovement | null>;
+  openCashSession: (openingCash: number, openingNote?: string) => Promise<boolean>;
+  startCashCounting: () => Promise<boolean>;
+  closeCashSession: (countedCash: number, closingNote?: string) => Promise<CashSession | null>;
+  addCashMovement: (
+    type: 'cash_in' | 'cash_out',
+    amount: number,
+    reason?: string,
+    options?: {
+      category?: CashMovementCategory;
+      subtype?: string;
+      paymentMethod?: PaymentMethodOption;
+      referenceType?: CashMovementReferenceType;
+      referenceId?: string;
+      metadata?: Record<string, unknown>;
+      silent?: boolean;
+      sessionId?: string;
+      date?: string;
+    }
+  ) => Promise<CashMovement | null>;
   getCashSessionReport: (sessionId: string) => CashSessionReport;
 
   // Kardex
@@ -1059,11 +1126,16 @@ export function POSProvider({ children }: { children: ReactNode }) {
         id: row.id,
         storeId: row.store_id,
         userId: row.user_id ?? undefined,
+        openedBy: row.opened_by ?? undefined,
+        closedBy: row.closed_by ?? undefined,
         openedAt: row.opened_at,
         closedAt: row.closed_at ?? undefined,
+        openingNote: row.opening_note ?? undefined,
         openingCash: toNumber(row.opening_cash),
         expectedCash: row.expected_cash == null ? undefined : toNumber(row.expected_cash),
         countedCash: row.counted_cash == null ? undefined : toNumber(row.counted_cash),
+        countedAt: row.counted_at ?? undefined,
+        closingNote: row.closing_note ?? undefined,
         difference: row.difference == null ? undefined : toNumber(row.difference),
         status: row.status,
       })));
@@ -1075,6 +1147,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
         type: row.type,
         amount: toNumber(row.amount),
         reason: row.reason ?? undefined,
+        category: normalizeMovementCategory(row.category, row.type === 'cash_in' ? 'manual_income' : 'manual_expense'),
+        subtype: row.subtype ?? undefined,
+        paymentMethod: normalizeMovementPaymentMethod(row.payment_method),
+        referenceType: row.reference_type == null ? undefined : row.reference_type as CashMovementReferenceType,
+        referenceId: row.reference_id ?? undefined,
+        metadata: row.metadata ?? {},
         date: row.created_at,
       })));
 
@@ -2339,7 +2417,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const currentCashSession = [...cashSessions]
-    .filter((session) => session.status === 'open')
+    .filter((session) => session.status === 'open' || session.status === 'counting')
     .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime())[0] ?? null;
 
   const cartTotal = cart.reduce((total, item) => {
@@ -2399,17 +2477,36 @@ export function POSProvider({ children }: { children: ReactNode }) {
     });
 
     const sessionMovements = cashMovements.filter(movement => movement.cashSessionId === sessionId);
-    const isReturnMovement = (movement: CashMovement) =>
+    const isLegacyReturnMovement = (movement: CashMovement) =>
       movement.type === 'cash_out' && movement.reason?.startsWith('Devolución venta ');
+    const resolveCategory = (movement: CashMovement): CashMovementCategory => {
+      if (movement.category) return movement.category;
+      if (isLegacyReturnMovement(movement)) return 'return';
+      return movement.type === 'cash_in' ? 'manual_income' : 'manual_expense';
+    };
+    const affectsPhysicalCash = (movement: CashMovement): boolean => {
+      if (!movement.paymentMethod) return true;
+      return movement.paymentMethod === 'efectivo';
+    };
     const salesReturnedTotal = returnedSales.reduce((sum, sale) => sum + sale.total, 0);
     const cashReturnTotal = sessionMovements
-      .filter((movement) => isReturnMovement(movement))
+      .filter((movement) => movement.type === 'cash_out' && resolveCategory(movement) === 'return' && affectsPhysicalCash(movement))
       .reduce((sum, movement) => sum + movement.amount, 0);
     const cashInTotal = sessionMovements
-      .filter(movement => movement.type === 'cash_in')
+      .filter((movement) => {
+        if (movement.type !== 'cash_in') return false;
+        if (!affectsPhysicalCash(movement)) return false;
+        const category = resolveCategory(movement);
+        return category === 'manual_income' || category === 'credit_payment' || category === 'adjustment';
+      })
       .reduce((sum, movement) => sum + movement.amount, 0);
     const cashOutTotal = sessionMovements
-      .filter(movement => movement.type === 'cash_out' && !isReturnMovement(movement))
+      .filter((movement) => {
+        if (movement.type !== 'cash_out') return false;
+        if (!affectsPhysicalCash(movement)) return false;
+        const category = resolveCategory(movement);
+        return category === 'manual_expense' || category === 'adjustment';
+      })
       .reduce((sum, movement) => sum + movement.amount, 0);
 
     const roundedSalesByMethod: Record<string, number> = Object.fromEntries(
@@ -2431,13 +2528,15 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   // Funciones de caja
-  const openCashSession = async (openingCash: number): Promise<boolean> => {
+  const openCashSession = async (openingCash: number, openingNote?: string): Promise<boolean> => {
     if (currentCashSession) {
-      toast.info('Ya existe una caja abierta en esta tienda.');
+      const statusLabel = currentCashSession.status === 'counting' ? 'en arqueo' : 'abierta';
+      toast.info(`Ya existe una caja ${statusLabel} en esta tienda.`);
       return false;
     }
 
     const safeOpeningCash = roundMoney(Number.isFinite(openingCash) ? Math.max(0, openingCash) : 0);
+    const normalizedOpeningNote = openingNote?.trim() || undefined;
     const openedAt = new Date().toISOString();
     let sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -2446,6 +2545,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         const remoteId = await createCashSession(session.access_token, currentStoreId, {
           userId: session.user.id,
           openingCash: safeOpeningCash,
+          openingNote: normalizedOpeningNote,
           openedAt,
         });
         if (remoteId) {
@@ -2462,12 +2562,34 @@ export function POSProvider({ children }: { children: ReactNode }) {
       id: sessionId,
       storeId: currentStoreId ?? undefined,
       userId: session?.user.id,
+      openedBy: session?.user.id,
       openedAt,
+      openingNote: normalizedOpeningNote,
       openingCash: safeOpeningCash,
       status: 'open',
     };
 
     setCashSessions(prev => [...prev, newSession]);
+
+    if (safeOpeningCash > 0) {
+      await addCashMovement(
+        'cash_in',
+        safeOpeningCash,
+        'Apertura de caja',
+        {
+          category: 'opening',
+          subtype: 'initial_float',
+          paymentMethod: 'efectivo',
+          referenceType: 'cash_session',
+          referenceId: uuidLike(sessionId) ? sessionId : undefined,
+          metadata: { auto: true },
+          silent: true,
+          sessionId,
+          date: openedAt,
+        },
+      );
+    }
+
     toast.success('Caja abierta correctamente.');
     return true;
   };
@@ -2476,29 +2598,61 @@ export function POSProvider({ children }: { children: ReactNode }) {
     type: 'cash_in' | 'cash_out',
     amount: number,
     reason?: string,
+    options?: {
+      category?: CashMovementCategory;
+      subtype?: string;
+      paymentMethod?: PaymentMethodOption;
+      referenceType?: CashMovementReferenceType;
+      referenceId?: string;
+      metadata?: Record<string, unknown>;
+      silent?: boolean;
+      sessionId?: string;
+      date?: string;
+    },
   ): Promise<CashMovement | null> => {
-    if (!currentCashSession) {
-      toast.error('No hay una caja abierta.');
+    const targetSessionId = options?.sessionId ?? currentCashSession?.id;
+    if (!targetSessionId) {
+      if (!options?.silent) {
+        toast.error('No hay una caja abierta.');
+      }
+      return null;
+    }
+
+    const targetSession = cashSessions.find((session) => session.id === targetSessionId);
+    if (!options?.silent && targetSession && targetSession.status !== 'open') {
+      toast.error('Solo puedes registrar movimientos manuales con la caja abierta.');
       return null;
     }
 
     const safeAmount = roundMoney(Number.isFinite(amount) ? Math.max(0, amount) : 0);
     if (safeAmount <= 0) {
-      toast.error('El monto debe ser mayor a 0.');
+      if (!options?.silent) {
+        toast.error('El monto debe ser mayor a 0.');
+      }
       return null;
     }
 
-    const movementDate = new Date().toISOString();
+    const fallbackCategory = type === 'cash_in' ? 'manual_income' : 'manual_expense';
+    const movementCategory = normalizeMovementCategory(options?.category, fallbackCategory);
+    const movementPaymentMethod = options?.paymentMethod
+      ?? (movementCategory === 'sale' ? undefined : 'efectivo');
+    const movementDate = options?.date || new Date().toISOString();
     let movementId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    if (isConnectedToSupabase && session && currentStoreId && uuidLike(currentCashSession.id)) {
+    if (isConnectedToSupabase && session && currentStoreId && uuidLike(targetSessionId)) {
       try {
         const remoteId = await createCashMovement(session.access_token, currentStoreId, {
-          cashSessionId: currentCashSession.id,
+          cashSessionId: targetSessionId,
           userId: session.user.id,
           type,
           amount: safeAmount,
           reason,
+          category: movementCategory,
+          subtype: options?.subtype,
+          paymentMethod: movementPaymentMethod,
+          referenceType: options?.referenceType,
+          referenceId: options?.referenceId,
+          metadata: options?.metadata,
           createdAt: movementDate,
         });
         if (remoteId) {
@@ -2507,28 +2661,79 @@ export function POSProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         console.error('No se pudo guardar movimiento de caja en Supabase', error);
         markPendingSync();
-        toast.error('Movimiento guardado localmente, pero falló en Supabase.');
+        if (!options?.silent) {
+          toast.error('Movimiento guardado localmente, pero falló en Supabase.');
+        }
       }
     }
 
     const movement: CashMovement = {
       id: movementId,
-      cashSessionId: currentCashSession.id,
+      cashSessionId: targetSessionId,
       userId: session?.user.id,
       type,
       amount: safeAmount,
       reason: reason?.trim() ? reason.trim() : undefined,
+      category: movementCategory,
+      subtype: options?.subtype,
+      paymentMethod: movementPaymentMethod,
+      referenceType: options?.referenceType,
+      referenceId: options?.referenceId,
+      metadata: options?.metadata ?? {},
       date: movementDate,
     };
 
     setCashMovements(prev => [...prev, movement]);
-    toast.success(type === 'cash_in' ? 'Ingreso registrado.' : 'Retiro registrado.');
+    if (!options?.silent) {
+      toast.success(type === 'cash_in' ? 'Ingreso registrado.' : 'Retiro registrado.');
+    }
     return movement;
   };
 
-  const closeCashSession = async (countedCash: number): Promise<CashSession | null> => {
+  const startCashCounting = async (): Promise<boolean> => {
     if (!currentCashSession) {
-      toast.error('No hay una caja abierta para cerrar.');
+      toast.error('No hay una caja activa para iniciar arqueo.');
+      return false;
+    }
+
+    if (currentCashSession.status === 'counting') {
+      toast.info('La caja ya está en arqueo.');
+      return true;
+    }
+
+    if (currentCashSession.status !== 'open') {
+      toast.error('Solo una caja abierta puede pasar a arqueo.');
+      return false;
+    }
+
+    const updated: CashSession = {
+      ...currentCashSession,
+      status: 'counting',
+    };
+
+    setCashSessions((prev) => prev.map((sessionItem) => (
+      sessionItem.id === currentCashSession.id ? updated : sessionItem
+    )));
+
+    if (isConnectedToSupabase && session && currentStoreId && uuidLike(currentCashSession.id)) {
+      try {
+        await updateCashSession(session.access_token, currentStoreId, currentCashSession.id, {
+          status: 'counting',
+        });
+      } catch (error) {
+        console.error('No se pudo iniciar arqueo en Supabase', error);
+        markPendingSync();
+        toast.error('Arqueo iniciado localmente, pero falló en Supabase.');
+      }
+    }
+
+    toast.success('Arqueo iniciado. Las ventas quedan bloqueadas hasta cerrar caja.');
+    return true;
+  };
+
+  const closeCashSession = async (countedCash: number, closingNote?: string): Promise<CashSession | null> => {
+    if (!currentCashSession) {
+      toast.error('No hay una caja activa para cerrar.');
       return null;
     }
 
@@ -2537,14 +2742,19 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const expectedCash = roundMoney(report.expectedCash);
     const difference = roundMoney(safeCounted - expectedCash);
     const closedAt = new Date().toISOString();
+    const normalizedClosingNote = closingNote?.trim() || undefined;
+    const nextStatus: CashSession['status'] = difference === 0 ? 'closed' : 'closed_with_difference';
 
     const closedSession: CashSession = {
       ...currentCashSession,
       closedAt,
       expectedCash,
       countedCash: safeCounted,
+      countedAt: closedAt,
+      closingNote: normalizedClosingNote,
+      closedBy: session?.user.id,
       difference,
-      status: 'closed',
+      status: nextStatus,
     };
 
     setCashSessions(prev => prev.map(sessionItem => sessionItem.id === currentCashSession.id ? closedSession : sessionItem));
@@ -2555,8 +2765,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
           closedAt,
           expectedCash,
           countedCash: safeCounted,
+          countedAt: closedAt,
+          closingNote: normalizedClosingNote,
+          closedBy: session.user.id,
           difference,
-          status: 'closed',
+          status: nextStatus,
         });
       } catch (error) {
         console.error('No se pudo cerrar caja en Supabase', error);
@@ -2565,14 +2778,53 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    toast.success('Caja cerrada correctamente.');
+    if (difference === 0) {
+      toast.success('Caja cerrada correctamente.');
+    } else {
+      toast.warning('Caja cerrada con diferencia. Revisa el arqueo para auditoría.');
+    }
     return closedSession;
+  };
+
+  const registerSaleMovements = async (sale: Sale, sessionId: string, movementDate: string) => {
+    const breakdown = getSalePaymentBreakdown(sale);
+    const entries = Object.entries(breakdown)
+      .map(([method, amount]) => [method as PaymentMethodOption, roundMoney(toNumber(amount))] as const)
+      .filter(([, amount]) => amount > 0);
+
+    for (const [method, amount] of entries) {
+      await addCashMovement(
+        'cash_in',
+        amount,
+        `Venta ${sale.invoiceNumber || sale.id} - ${method}`,
+        {
+          category: 'sale',
+          subtype: `sale_${method}`,
+          paymentMethod: method,
+          referenceType: 'sale',
+          referenceId: sale.id,
+          metadata: {
+            auto: true,
+            saleId: sale.id,
+            invoiceNumber: sale.invoiceNumber ?? null,
+          },
+          silent: true,
+          sessionId,
+          date: movementDate,
+        },
+      );
+    }
   };
 
   // Funciones de ventas
   const completeSale = async (paymentInput: SalePaymentInput): Promise<Sale | null> => {
     if (!currentCashSession) {
       toast.error('Debes abrir una caja antes de registrar ventas.');
+      return null;
+    }
+
+    if (currentCashSession.status !== 'open') {
+      toast.error('La caja está en arqueo. Finaliza el cierre para volver a vender.');
       return null;
     }
 
@@ -2742,6 +2994,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
       setSales(prev => [...prev, newSale]);
 
+      await registerSaleMovements(newSale, currentCashSession.id, saleDate);
+
       setProducts(prev => prev.map((product) => {
         const item = cart.find(cartItem => cartItem.product.id === product.id);
         if (!item) return product;
@@ -2845,6 +3099,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
       setSales(prev => [...prev, newSale]);
 
+      await registerSaleMovements(newSale, currentCashSession.id, saleRow.created_at);
+
       if (result.product_updates?.length) {
         const updates = new Map(result.product_updates.map((update) => [update.product_id, update.stock_after]));
         setProducts(prev => prev.map((product) => {
@@ -2920,6 +3176,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
+    const saleBreakdown = getSalePaymentBreakdown(sale);
+    const cashRefund = roundMoney(toNumber(saleBreakdown.efectivo));
+    if (cashRefund > 0 && (!currentCashSession || currentCashSession.status !== 'open')) {
+      toast.error('Debes abrir la caja para registrar una devolución con reembolso en efectivo.');
+      return false;
+    }
+
     const reference = `DEV-${sale.id}`;
     const alreadyReturned = Boolean(sale.returnedAt)
       || kardexMovements.some(movement => movement.reference === reference);
@@ -2969,8 +3232,6 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const saleBreakdown = getSalePaymentBreakdown(sale);
-    const cashRefund = roundMoney(toNumber(saleBreakdown.efectivo));
     const creditedRefund = getSaleCreditedAmount(sale);
 
     if (cashRefund > 0) {
@@ -2978,6 +3239,18 @@ export function POSProvider({ children }: { children: ReactNode }) {
         'cash_out',
         cashRefund,
         `Devolución venta ${sale.invoiceNumber || sale.id}`,
+        {
+          category: 'return',
+          subtype: 'sale_return',
+          paymentMethod: 'efectivo',
+          referenceType: 'sale',
+          referenceId: sale.id,
+          metadata: {
+            auto: true,
+            saleId: sale.id,
+            invoiceNumber: sale.invoiceNumber ?? null,
+          },
+        },
       );
     }
 
@@ -3191,6 +3464,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      if (registerCashIn && currentCashSession.status !== 'open') {
+        toast.error('La caja debe estar abierta para registrar pagos de fiados.');
+        return;
+      }
+
       const newDebt = roundMoney(Math.max(0, customer.debt - paidAmount));
       const transaction: DebtTransaction = {
         id: Date.now().toString(),
@@ -3210,6 +3488,17 @@ export function POSProvider({ children }: { children: ReactNode }) {
           'cash_in',
           paidAmount,
           `Abono fiado ${customer.name}`,
+          {
+            category: 'credit_payment',
+            subtype: 'customer_debt_payment',
+            paymentMethod: 'efectivo',
+            referenceType: 'customer',
+            referenceId: customer.id,
+            metadata: {
+              auto: true,
+              customerId: customer.id,
+            },
+          },
         );
       }
 
@@ -3565,6 +3854,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       cashMovements,
       currentCashSession,
       openCashSession,
+      startCashCounting,
       closeCashSession,
       addCashMovement,
       getCashSessionReport,

@@ -37,7 +37,7 @@ type ProductRow = {
 
 type PaymentMethod = 'efectivo' | 'tarjeta' | 'transferencia' | 'credito' | 'otro';
 type RechargeType = 'mobile' | 'service' | 'pin';
-type CashSessionStatus = 'open' | 'closed';
+type CashSessionStatus = 'open' | 'closed' | 'counting' | 'closed_with_difference';
 type CashMovementType = 'cash_in' | 'cash_out';
 
 type CustomerDebtRow = {
@@ -186,10 +186,15 @@ type CashSessionRow = {
   opened_at: string;
   closed_at: string | null;
   opening_cash: number;
+  opening_note: string | null;
   expected_cash: number | null;
   counted_cash: number | null;
+  counted_at: string | null;
+  closing_note: string | null;
   difference: number | null;
   status: CashSessionStatus;
+  opened_by: string | null;
+  closed_by: string | null;
   created_at: string;
 };
 
@@ -201,6 +206,12 @@ type CashMovementRow = {
   type: CashMovementType;
   amount: number;
   reason: string | null;
+  category: string | null;
+  subtype: string | null;
+  payment_method: string | null;
+  reference_type: string | null;
+  reference_id: string | null;
+  metadata: Record<string, unknown> | null;
   created_at: string;
 };
 
@@ -932,13 +943,16 @@ export async function createCashSession(
   payload: {
     userId?: string;
     openingCash: number;
+    openingNote?: string;
     openedAt?: string;
   },
 ): Promise<string | null> {
   const rows = await insertRows<{ id: string }>('cash_sessions', [{
     store_id: storeId,
     user_id: uuidLike(payload.userId) ? payload.userId : null,
+    opened_by: uuidLike(payload.userId) ? payload.userId : null,
     opening_cash: payload.openingCash,
+    opening_note: payload.openingNote || null,
     opened_at: payload.openedAt || new Date().toISOString(),
     status: 'open',
   }], token);
@@ -954,6 +968,9 @@ export async function updateCashSession(
     closedAt?: string;
     expectedCash?: number;
     countedCash?: number;
+    countedAt?: string;
+    closingNote?: string;
+    closedBy?: string;
     difference?: number;
     status?: CashSessionStatus;
   },
@@ -963,6 +980,9 @@ export async function updateCashSession(
   if (patch.closedAt !== undefined) dbPatch.closed_at = patch.closedAt;
   if (patch.expectedCash !== undefined) dbPatch.expected_cash = patch.expectedCash;
   if (patch.countedCash !== undefined) dbPatch.counted_cash = patch.countedCash;
+  if (patch.countedAt !== undefined) dbPatch.counted_at = patch.countedAt;
+  if (patch.closingNote !== undefined) dbPatch.closing_note = patch.closingNote || null;
+  if (patch.closedBy !== undefined) dbPatch.closed_by = uuidLike(patch.closedBy) ? patch.closedBy : null;
   if (patch.difference !== undefined) dbPatch.difference = patch.difference;
   if (patch.status !== undefined) dbPatch.status = patch.status;
   if (Object.keys(dbPatch).length === 0) return;
@@ -979,6 +999,12 @@ export async function createCashMovement(
     type: CashMovementType;
     amount: number;
     reason?: string;
+    category?: string;
+    subtype?: string;
+    paymentMethod?: string;
+    referenceType?: string;
+    referenceId?: string;
+    metadata?: Record<string, unknown>;
     createdAt?: string;
   },
 ): Promise<string | null> {
@@ -989,6 +1015,12 @@ export async function createCashMovement(
     type: movement.type,
     amount: movement.amount,
     reason: movement.reason || null,
+    category: movement.category || 'manual',
+    subtype: movement.subtype || null,
+    payment_method: movement.paymentMethod || null,
+    reference_type: movement.referenceType || null,
+    reference_id: uuidLike(movement.referenceId) ? movement.referenceId : null,
+    metadata: movement.metadata ?? {},
     created_at: movement.createdAt || new Date().toISOString(),
   }], token);
   return rows[0]?.id ?? null;
@@ -1046,7 +1078,7 @@ export async function loadRecharges(token: string, storeId: string): Promise<Rec
 export async function loadCashSessions(token: string, storeId: string): Promise<CashSessionRow[]> {
   return selectRows<CashSessionRow>(
     'cash_sessions',
-    'select=id,store_id,user_id,opened_at,closed_at,opening_cash,expected_cash,counted_cash,difference,status,created_at'
+    'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_at,closing_note,difference,status,opened_by,closed_by,created_at'
       + `&store_id=eq.${storeId}&order=opened_at.asc`,
     token,
   );
@@ -1055,7 +1087,7 @@ export async function loadCashSessions(token: string, storeId: string): Promise<
 export async function loadCashMovements(token: string, storeId: string): Promise<CashMovementRow[]> {
   return selectRows<CashMovementRow>(
     'cash_movements',
-    'select=id,store_id,cash_session_id,user_id,type,amount,reason,created_at'
+    'select=id,store_id,cash_session_id,user_id,type,amount,reason,category,subtype,payment_method,reference_type,reference_id,metadata,created_at'
       + `&store_id=eq.${storeId}&order=created_at.asc`,
     token,
   );

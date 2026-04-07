@@ -31,23 +31,55 @@ const formatMethodLabel = (method: string) => {
   return map[normalized] || normalized.toUpperCase();
 };
 
+const getSessionStatusMeta = (status?: string | null) => {
+  if (status === 'open') {
+    return { label: 'Sesión abierta', className: 'bg-emerald-100 text-emerald-700' };
+  }
+  if (status === 'counting') {
+    return { label: 'En arqueo', className: 'bg-blue-100 text-blue-700' };
+  }
+  return { label: 'Sin sesión activa', className: 'bg-amber-100 text-amber-700' };
+};
+
+const getMovementCategoryLabel = (movement: { category?: string; type: 'cash_in' | 'cash_out'; reason?: string }) => {
+  const category = movement.category;
+  if (category === 'opening') return 'Apertura';
+  if (category === 'sale') return 'Venta';
+  if (category === 'manual_income') return 'Ingreso manual';
+  if (category === 'manual_expense') return 'Egreso manual';
+  if (category === 'return') return 'Devolución';
+  if (category === 'credit_payment') return 'Abono fiado';
+  if (category === 'adjustment') return 'Ajuste';
+  if (movement.type === 'cash_out' && movement.reason?.startsWith('Devolución venta ')) return 'Devolución';
+  return movement.type === 'cash_in' ? 'Ingreso' : 'Retiro';
+};
+
 export function CashRegister() {
   const {
     currentCashSession,
     cashSessions,
     cashMovements,
     openCashSession,
+    startCashCounting,
     closeCashSession,
     addCashMovement,
     getCashSessionReport,
   } = usePOS();
 
   const [openingCash, setOpeningCash] = useState('');
+  const [openingNote, setOpeningNote] = useState('');
   const [movementType, setMovementType] = useState<'cash_in' | 'cash_out'>('cash_in');
+  const [movementPaymentMethod, setMovementPaymentMethod] = useState<'efectivo' | 'tarjeta' | 'transferencia' | 'nequi' | 'daviplata' | 'otro'>('efectivo');
   const [movementAmount, setMovementAmount] = useState('');
   const [movementReason, setMovementReason] = useState('');
+  const [movementReference, setMovementReference] = useState('');
   const [countedCash, setCountedCash] = useState('');
+  const [closingNote, setClosingNote] = useState('');
   const [lastClosedId, setLastClosedId] = useState<string | null>(null);
+
+  const currentStatus = currentCashSession?.status;
+  const isOpen = currentStatus === 'open';
+  const isCounting = currentStatus === 'counting';
 
   const activeReport = currentCashSession ? getCashSessionReport(currentCashSession.id) : null;
   const activeMovements = currentCashSession
@@ -58,7 +90,9 @@ export function CashRegister() {
     if (lastClosedId) {
       return cashSessions.find(session => session.id === lastClosedId) ?? null;
     }
-    const closedSessions = cashSessions.filter(session => session.status === 'closed');
+    const closedSessions = cashSessions.filter(
+      (session) => session.status === 'closed' || session.status === 'closed_with_difference'
+    );
     return closedSessions.sort((a, b) => new Date(b.closedAt || b.openedAt).getTime() - new Date(a.closedAt || a.openedAt).getTime())[0] ?? null;
   }, [cashSessions, lastClosedId]);
 
@@ -66,26 +100,41 @@ export function CashRegister() {
 
   const handleOpen = async () => {
     const amount = roundToHundred(parseFloat(openingCash) || 0);
-    const ok = await openCashSession(amount);
+    const ok = await openCashSession(amount, openingNote);
     if (ok) {
       setOpeningCash('');
+      setOpeningNote('');
     }
   };
 
   const handleMovement = async () => {
     const amount = roundToHundred(parseFloat(movementAmount) || 0);
-    const movement = await addCashMovement(movementType, amount, movementReason);
+    const movement = await addCashMovement(movementType, amount, movementReason, {
+      category: movementType === 'cash_in' ? 'manual_income' : 'manual_expense',
+      paymentMethod: movementPaymentMethod,
+      referenceType: 'manual',
+      metadata: {
+        reference: movementReference?.trim() || null,
+      },
+    });
     if (movement) {
       setMovementAmount('');
       setMovementReason('');
+      setMovementReference('');
+      setMovementPaymentMethod('efectivo');
     }
+  };
+
+  const handleStartCounting = async () => {
+    await startCashCounting();
   };
 
   const handleClose = async () => {
     const amount = roundToHundred(parseFloat(countedCash) || 0);
-    const closed = await closeCashSession(amount);
+    const closed = await closeCashSession(amount, closingNote);
     if (closed) {
       setCountedCash('');
+      setClosingNote('');
       setLastClosedId(closed.id);
     }
   };
@@ -95,6 +144,7 @@ export function CashRegister() {
   const manualFlowTotal = activeReport
     ? roundToHundred(activeReport.cashInTotal - activeReport.cashOutTotal - activeReport.cashReturnTotal)
     : 0;
+  const statusMeta = getSessionStatusMeta(currentStatus);
 
   return (
     <div className="space-y-6">
@@ -103,15 +153,9 @@ export function CashRegister() {
           <h1 className="text-3xl font-bold">Caja</h1>
           <p className="text-gray-600">Control de apertura, movimientos y cierre</p>
         </div>
-        <div
-          className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium ${
-            currentCashSession
-              ? 'bg-emerald-100 text-emerald-700'
-              : 'bg-amber-100 text-amber-700'
-          }`}
-        >
+        <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium ${statusMeta.className}`}>
           <Wallet className="w-4 h-4" />
-          {currentCashSession ? 'Sesión abierta' : 'Sin sesión activa'}
+          {statusMeta.label}
         </div>
       </div>
 
@@ -121,7 +165,7 @@ export function CashRegister() {
             <Unlock className="w-5 h-5 text-emerald-600" />
             <h2 className="text-lg font-bold">Apertura de Caja</h2>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
             <div className="md:col-span-2">
               <Label>Base inicial</Label>
               <Input
@@ -134,6 +178,15 @@ export function CashRegister() {
                 className="h-12"
               />
               <p className="text-xs text-gray-500 mt-1">Dinero disponible para dar cambio al iniciar turno.</p>
+            </div>
+            <div>
+              <Label>Observación (opcional)</Label>
+              <Input
+                value={openingNote}
+                onChange={(e) => setOpeningNote(e.target.value)}
+                placeholder="Ej: turno mañana"
+                className="h-12"
+              />
             </div>
             <Button className="h-12 bg-[#2ECC71] hover:bg-[#27AE60]" onClick={handleOpen}>
               Abrir caja
@@ -223,6 +276,11 @@ export function CashRegister() {
             <p className="mb-4 text-sm text-gray-600">
               Registra ingresos o retiros manuales para mantener el esperado de caja actualizado.
             </p>
+            {isCounting && (
+              <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                Caja en arqueo: los movimientos manuales quedan bloqueados hasta finalizar el cierre.
+              </div>
+            )}
             <div className="space-y-3">
               <div>
                 <Label>Tipo de movimiento</Label>
@@ -233,6 +291,22 @@ export function CashRegister() {
                   <SelectContent>
                     <SelectItem value="cash_in">Ingreso de caja</SelectItem>
                     <SelectItem value="cash_out">Retiro de caja</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Medio de pago</Label>
+                <Select value={movementPaymentMethod} onValueChange={(value) => setMovementPaymentMethod(value as 'efectivo' | 'tarjeta' | 'transferencia' | 'nequi' | 'daviplata' | 'otro')}>
+                  <SelectTrigger className="h-11">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="efectivo">Efectivo</SelectItem>
+                    <SelectItem value="tarjeta">Tarjeta</SelectItem>
+                    <SelectItem value="transferencia">Transferencia</SelectItem>
+                    <SelectItem value="nequi">Nequi</SelectItem>
+                    <SelectItem value="daviplata">Daviplata</SelectItem>
+                    <SelectItem value="otro">Otro</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -249,6 +323,15 @@ export function CashRegister() {
                 />
               </div>
               <div>
+                <Label>Referencia (opcional)</Label>
+                <Input
+                  value={movementReference}
+                  onChange={(e) => setMovementReference(e.target.value)}
+                  placeholder="Ej: comprobante, recibo o consecutivo"
+                  className="h-11"
+                />
+              </div>
+              <div>
                 <Label>Motivo</Label>
                 <Input
                   value={movementReason}
@@ -257,7 +340,7 @@ export function CashRegister() {
                   className="h-11"
                 />
               </div>
-              <Button onClick={handleMovement} className="w-full h-11 bg-[#2ECC71] hover:bg-[#27AE60]">
+              <Button onClick={handleMovement} className="w-full h-11 bg-[#2ECC71] hover:bg-[#27AE60]" disabled={!isOpen}>
                 Registrar movimiento
               </Button>
             </div>
@@ -277,6 +360,16 @@ export function CashRegister() {
               <p className="text-lg font-bold text-slate-800">{formatCurrency(activeReport.expectedCash)}</p>
             </div>
             <div className="space-y-4">
+              {isOpen && (
+                <Button className="h-11 w-full bg-blue-600 hover:bg-blue-700 text-white" onClick={handleStartCounting}>
+                  Iniciar arqueo
+                </Button>
+              )}
+              {isCounting && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  Arqueo en curso: ingresa el dinero contado para cerrar la sesión.
+                </div>
+              )}
               <div>
                 <Label>Dinero contado</Label>
                 <Input
@@ -286,6 +379,15 @@ export function CashRegister() {
                   value={countedCash}
                   onChange={(e) => setCountedCash(e.target.value)}
                   placeholder="0"
+                  className="h-12"
+                />
+              </div>
+              <div>
+                <Label>Observación de cierre (opcional)</Label>
+                <Input
+                  value={closingNote}
+                  onChange={(e) => setClosingNote(e.target.value)}
+                  placeholder="Ej: faltante por cambio no registrado"
                   className="h-12"
                 />
               </div>
@@ -300,7 +402,7 @@ export function CashRegister() {
                   {differencePreview === 0 && 'El conteo coincide con el esperado.'}
                 </p>
               </div>
-              <Button className="h-12 bg-[#0f172a] hover:bg-[#111827] text-white" onClick={handleClose}>
+              <Button className="h-12 bg-[#0f172a] hover:bg-[#111827] text-white" onClick={handleClose} disabled={!isCounting}>
                 <Lock className="w-4 h-4 mr-2" />
                 Cerrar caja
               </Button>
@@ -333,17 +435,17 @@ export function CashRegister() {
             <FileText className="w-5 h-5 text-gray-500" />
             <h2 className="text-lg font-bold">Movimientos registrados</h2>
           </div>
-          <p className="mb-4 text-sm text-gray-600">Se muestran los últimos 10 movimientos manuales de la sesión actual.</p>
+          <p className="mb-4 text-sm text-gray-600">Se muestran los últimos 10 movimientos de caja de la sesión actual.</p>
           {activeMovements.length === 0 ? (
-            <p className="text-sm text-gray-500">No hay movimientos manuales en esta sesión.</p>
+            <p className="text-sm text-gray-500">No hay movimientos registrados en esta sesión.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-secondary border-b">
                   <tr>
                     <th className="text-left p-3">Fecha</th>
-                    <th className="text-left p-3">Tipo</th>
-                    <th className="text-left p-3">Motivo</th>
+                    <th className="text-left p-3">Categoría</th>
+                    <th className="text-left p-3">Detalle</th>
                     <th className="text-right p-3">Monto</th>
                   </tr>
                 </thead>
@@ -360,10 +462,18 @@ export function CashRegister() {
                           }`}
                         >
                           {movement.type === 'cash_in' ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
-                          {movement.type === 'cash_in' ? 'Ingreso' : 'Retiro'}
+                            {getMovementCategoryLabel(movement)}
                         </span>
                       </td>
-                      <td className="p-3">{movement.reason || 'Sin motivo'}</td>
+                        <td className="p-3">
+                          <p>{movement.reason || 'Sin motivo'}</p>
+                          <div className="text-xs text-gray-500">
+                            {movement.paymentMethod ? `Medio: ${formatMethodLabel(movement.paymentMethod)}` : 'Medio: n/a'}
+                            {typeof movement.metadata?.reference === 'string' && movement.metadata.reference.trim() !== ''
+                              ? ` | Ref: ${movement.metadata.reference}`
+                              : ''}
+                          </div>
+                        </td>
                       <td className={`p-3 text-right font-semibold ${movement.type === 'cash_in' ? 'text-emerald-700' : 'text-red-700'}`}>
                         {movement.type === 'cash_out' ? '-' : ''}{formatCurrency(movement.amount)}
                       </td>
