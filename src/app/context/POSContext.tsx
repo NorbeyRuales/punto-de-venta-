@@ -571,6 +571,7 @@ interface POSContextType {
   login: (username: string, password: string) => Promise<boolean>;
   loginOffline: (pin: string, role: 'admin' | 'cashier', username?: string) => Promise<boolean>;
   logout: () => void;
+  verifyAdminPasswordForCriticalAction: (password: string) => Promise<boolean>;
   setOfflinePin: (pin: string) => Promise<boolean>;
   setOfflineDefaultRole: (role: 'admin' | 'cashier') => void;
   createStore: (store: { name: string; nit?: string; address?: string; phone?: string; email?: string }) => Promise<boolean>;
@@ -1667,6 +1668,33 @@ export function POSProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(OFFLINE_AUTH_KEY);
     setSaleDrafts([]);
     setActiveDraftId(null);
+  };
+
+  const verifyAdminPasswordForCriticalAction = async (password: string): Promise<boolean> => {
+    if (storeConfig.userRole !== 'admin') {
+      toast.error('Solo un administrador puede ejecutar esta acción.');
+      return false;
+    }
+
+    const trimmedPassword = password.trim();
+    if (!trimmedPassword) {
+      toast.error('Ingresa tu contraseña para continuar.');
+      return false;
+    }
+
+    if (!session?.user?.email) {
+      toast.error('No se pudo validar la contraseña con la sesión actual.');
+      return false;
+    }
+
+    try {
+      await signInWithPassword(session.user.email, trimmedPassword);
+      return true;
+    } catch (error) {
+      console.error('Validación de contraseña crítica fallida', error);
+      toast.error('Contraseña incorrecta.');
+      return false;
+    }
   };
 
   const createStore = async (store: { name: string; nit?: string; address?: string; phone?: string; email?: string }): Promise<boolean> => {
@@ -3993,6 +4021,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       login,
       loginOffline,
       logout,
+      verifyAdminPasswordForCriticalAction,
       setOfflinePin,
       setOfflineDefaultRole,
       createStore,

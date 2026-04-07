@@ -93,6 +93,7 @@ export function CashRegister() {
     startCashCounting,
     closeCashSession,
     clearSelectedCashReports,
+    verifyAdminPasswordForCriticalAction,
     addCashMovement,
     getCashSessionReport,
     storeConfig,
@@ -114,6 +115,7 @@ export function CashRegister() {
   const [selectedClosedSessionIds, setSelectedClosedSessionIds] = useState<string[]>([]);
   const [showDeleteSelectedDialog, setShowDeleteSelectedDialog] = useState(false);
   const [isDeletingSelectedReports, setIsDeletingSelectedReports] = useState(false);
+  const [deleteConfirmationPassword, setDeleteConfirmationPassword] = useState('');
 
   const currentStatus = currentCashSession?.status;
   const isOpen = currentStatus === 'open';
@@ -161,6 +163,7 @@ export function CashRegister() {
   const selectedClosedSet = useMemo(() => new Set(selectedClosedSessionIds), [selectedClosedSessionIds]);
   const allClosedSelected = closedSessions.length > 0 && selectedClosedSessionIds.length === closedSessions.length;
   const selectedClosedCount = selectedClosedSessionIds.length;
+  const isDeleteConfirmationValid = deleteConfirmationPassword.trim().length > 0;
 
   useEffect(() => {
     const validIds = new Set(closedSessions.map((session) => session.id));
@@ -192,6 +195,13 @@ export function CashRegister() {
   const handleDeleteSelectedReports = async () => {
     if (isDeletingSelectedReports) return;
     setIsDeletingSelectedReports(true);
+
+    const isPasswordValid = await verifyAdminPasswordForCriticalAction(deleteConfirmationPassword);
+    if (!isPasswordValid) {
+      setIsDeletingSelectedReports(false);
+      return;
+    }
+
     const ok = await clearSelectedCashReports(selectedClosedSessionIds);
     if (ok) {
       if (selectedClosedSessionId && selectedClosedSet.has(selectedClosedSessionId)) {
@@ -202,6 +212,7 @@ export function CashRegister() {
         setLastClosedId(null);
       }
       setSelectedClosedSessionIds([]);
+      setDeleteConfirmationPassword('');
       setShowDeleteSelectedDialog(false);
     }
     setIsDeletingSelectedReports(false);
@@ -1004,7 +1015,13 @@ export function CashRegister() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={showDeleteSelectedDialog} onOpenChange={setShowDeleteSelectedDialog}>
+      <AlertDialog
+        open={showDeleteSelectedDialog}
+        onOpenChange={(open) => {
+          setShowDeleteSelectedDialog(open);
+          if (!open) setDeleteConfirmationPassword('');
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>¿Eliminar reportes de caja seleccionados?</AlertDialogTitle>
@@ -1013,11 +1030,28 @@ export function CashRegister() {
               Esta acción no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            Acción crítica e irreversible. Para confirmar, ingresa tu contraseña de administrador.
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="delete-report-confirmation">Confirmación de borrado</Label>
+            <Input
+              id="delete-report-confirmation"
+              type="password"
+              value={deleteConfirmationPassword}
+              onChange={(event) => setDeleteConfirmationPassword(event.target.value)}
+              placeholder="Ingresa tu contraseña"
+              autoComplete="off"
+            />
+          </div>
+
           <AlertDialogFooter>
             <AlertDialogCancel disabled={isDeletingSelectedReports}>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDeleteSelectedReports}
-              disabled={isDeletingSelectedReports}
+              disabled={isDeletingSelectedReports || selectedClosedCount === 0 || !isDeleteConfirmationValid}
               className="bg-[#E74C3C] hover:bg-[#C0392B]"
             >
               {isDeletingSelectedReports ? 'Eliminando...' : 'Sí, eliminar seleccionados'}
