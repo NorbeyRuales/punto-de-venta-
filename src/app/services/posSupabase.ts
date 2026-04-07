@@ -1047,6 +1047,28 @@ export async function createCashMovement(
   return rows[0]?.id ?? null;
 }
 
+export async function deleteCashReportsByStore(
+  token: string,
+  storeId: string,
+): Promise<void> {
+  await deleteRows('cash_sessions', `store_id=eq.${storeId}`, token);
+}
+
+export async function deleteCashReportsByIds(
+  token: string,
+  storeId: string,
+  sessionIds: string[],
+): Promise<void> {
+  if (sessionIds.length === 0) return;
+  const normalizedIds = sessionIds
+    .filter((id) => uuidLike(id))
+    .map((id) => id.trim());
+  if (normalizedIds.length === 0) return;
+
+  const inClause = normalizedIds.join(',');
+  await deleteRows('cash_sessions', `store_id=eq.${storeId}&id=in.(${inClause})`, token);
+}
+
 // Consultas de sincronización remota.
 export async function loadCustomersWithDebt(token: string, storeId: string): Promise<CustomerRow[]> {
   return selectRows<CustomerRow>(

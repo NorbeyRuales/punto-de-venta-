@@ -1,11 +1,22 @@
 // Control de caja: apertura, movimientos y cierre.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Checkbox } from '../components/ui/checkbox';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -81,8 +92,10 @@ export function CashRegister() {
     openCashSession,
     startCashCounting,
     closeCashSession,
+    clearSelectedCashReports,
     addCashMovement,
     getCashSessionReport,
+    storeConfig,
   } = usePOS();
 
   const [openingCash, setOpeningCash] = useState('');
@@ -98,6 +111,9 @@ export function CashRegister() {
   const [lastClosedId, setLastClosedId] = useState<string | null>(null);
   const [showCloseReportDialog, setShowCloseReportDialog] = useState(false);
   const [selectedClosedSessionId, setSelectedClosedSessionId] = useState<string | null>(null);
+  const [selectedClosedSessionIds, setSelectedClosedSessionIds] = useState<string[]>([]);
+  const [showDeleteSelectedDialog, setShowDeleteSelectedDialog] = useState(false);
+  const [isDeletingSelectedReports, setIsDeletingSelectedReports] = useState(false);
 
   const currentStatus = currentCashSession?.status;
   const isOpen = currentStatus === 'open';
@@ -142,9 +158,53 @@ export function CashRegister() {
       .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [cashMovements, selectedClosedSession]);
 
+  const selectedClosedSet = useMemo(() => new Set(selectedClosedSessionIds), [selectedClosedSessionIds]);
+  const allClosedSelected = closedSessions.length > 0 && selectedClosedSessionIds.length === closedSessions.length;
+  const selectedClosedCount = selectedClosedSessionIds.length;
+
+  useEffect(() => {
+    const validIds = new Set(closedSessions.map((session) => session.id));
+    setSelectedClosedSessionIds((prev) => prev.filter((id) => validIds.has(id)));
+  }, [closedSessions]);
+
   const openCloseReport = (sessionId: string) => {
     setSelectedClosedSessionId(sessionId);
     setShowCloseReportDialog(true);
+  };
+
+  const toggleClosedSessionSelection = (sessionId: string, checked: boolean) => {
+    setSelectedClosedSessionIds((prev) => {
+      if (checked) {
+        return prev.includes(sessionId) ? prev : [...prev, sessionId];
+      }
+      return prev.filter((id) => id !== sessionId);
+    });
+  };
+
+  const toggleSelectAllClosedSessions = (checked: boolean) => {
+    if (checked) {
+      setSelectedClosedSessionIds(closedSessions.map((session) => session.id));
+      return;
+    }
+    setSelectedClosedSessionIds([]);
+  };
+
+  const handleDeleteSelectedReports = async () => {
+    if (isDeletingSelectedReports) return;
+    setIsDeletingSelectedReports(true);
+    const ok = await clearSelectedCashReports(selectedClosedSessionIds);
+    if (ok) {
+      if (selectedClosedSessionId && selectedClosedSet.has(selectedClosedSessionId)) {
+        setShowCloseReportDialog(false);
+        setSelectedClosedSessionId(null);
+      }
+      if (lastClosedId && selectedClosedSet.has(lastClosedId)) {
+        setLastClosedId(null);
+      }
+      setSelectedClosedSessionIds([]);
+      setShowDeleteSelectedDialog(false);
+    }
+    setIsDeletingSelectedReports(false);
   };
 
   const handleOpen = async () => {
@@ -678,14 +738,48 @@ export function CashRegister() {
 
       {closedSessions.length > 0 && (
         <Card className="p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <FileText className="w-5 h-5 text-[var(--primary)]" />
-            <h2 className="text-lg font-bold">Historial de cierres de caja</h2>
+          <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-2">
+              <FileText className="w-5 h-5 text-[var(--primary)]" />
+              <h2 className="text-lg font-bold">Historial de cierres de caja</h2>
+            </div>
+
+            {storeConfig.userRole === 'admin' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => toggleSelectAllClosedSessions(!allClosedSelected)}
+                >
+                  {allClosedSelected ? 'Quitar selección' : 'Seleccionar todos'}
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={selectedClosedCount === 0 || isDeletingSelectedReports}
+                  onClick={() => setShowDeleteSelectedDialog(true)}
+                >
+                  {isDeletingSelectedReports
+                    ? 'Eliminando...'
+                    : `Eliminar seleccionados (${selectedClosedCount})`}
+                </Button>
+              </div>
+            )}
           </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-secondary border-b">
                 <tr>
+                  {storeConfig.userRole === 'admin' && (
+                    <th className="p-3 text-center">
+                      <Checkbox
+                        checked={allClosedSelected ? true : selectedClosedCount > 0 ? 'indeterminate' : false}
+                        onCheckedChange={(checked) => toggleSelectAllClosedSessions(checked === true)}
+                        aria-label="Seleccionar todos los cierres"
+                      />
+                    </th>
+                  )}
                   <th className="text-left p-3">Fecha cierre</th>
                   <th className="text-right p-3">Esperado</th>
                   <th className="text-right p-3">Contado</th>
@@ -695,7 +789,7 @@ export function CashRegister() {
                 </tr>
               </thead>
               <tbody>
-                {closedSessions.slice(0, 20).map((session) => {
+                {closedSessions.map((session) => {
                   const report = getCashSessionReport(session.id);
                   const expected = session.expectedCash ?? report.expectedCash;
                   const counted = session.countedCash ?? 0;
@@ -703,6 +797,15 @@ export function CashRegister() {
 
                   return (
                     <tr key={session.id} className="border-b">
+                      {storeConfig.userRole === 'admin' && (
+                        <td className="p-3 text-center">
+                          <Checkbox
+                            checked={selectedClosedSet.has(session.id)}
+                            onCheckedChange={(checked) => toggleClosedSessionSelection(session.id, checked === true)}
+                            aria-label={`Seleccionar cierre ${session.id}`}
+                          />
+                        </td>
+                      )}
                       <td className="p-3">
                         {session.closedAt
                           ? format(new Date(session.closedAt), "d MMM yyyy, HH:mm", { locale: es })
@@ -900,6 +1003,28 @@ export function CashRegister() {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={showDeleteSelectedDialog} onOpenChange={setShowDeleteSelectedDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar reportes de caja seleccionados?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminarán {selectedClosedCount} reporte(s) seleccionados en el sistema y en la base de datos.
+              Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingSelectedReports}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteSelectedReports}
+              disabled={isDeletingSelectedReports}
+              className="bg-[#E74C3C] hover:bg-[#C0392B]"
+            >
+              {isDeletingSelectedReports ? 'Eliminando...' : 'Sí, eliminar seleccionados'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

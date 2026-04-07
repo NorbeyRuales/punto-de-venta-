@@ -11,6 +11,8 @@ import {
 import {
   bootstrapStore,
   createCategory,
+  deleteCashReportsByIds,
+  deleteCashReportsByStore,
   createCustomer,
   createCashMovement,
   createCashSession,
@@ -638,6 +640,8 @@ interface POSContextType {
     closingNote?: string,
     countedCashBreakdown?: CashCountBreakdown,
   ) => Promise<CashSession | null>;
+  clearSelectedCashReports: (sessionIds: string[]) => Promise<boolean>;
+  clearCashReports: () => Promise<boolean>;
   addCashMovement: (
     type: 'cash_in' | 'cash_out',
     amount: number,
@@ -2871,6 +2875,96 @@ export function POSProvider({ children }: { children: ReactNode }) {
     return closedSession;
   };
 
+  const clearCashReports = async (): Promise<boolean> => {
+    if (storeConfig.userRole !== 'admin') {
+      toast.error('Solo un administrador puede limpiar reportes de caja.');
+      return false;
+    }
+
+    if (currentCashSession) {
+      toast.error('Cierra o finaliza la caja activa antes de limpiar reportes.');
+      return false;
+    }
+
+    if (!isConnectedToSupabase || !session || !currentStoreId) {
+      toast.error('Para limpiar sistema y base de datos necesitas conexión activa a Supabase.');
+      return false;
+    }
+
+    try {
+      await deleteCashReportsByStore(session.access_token, currentStoreId);
+    } catch (error) {
+      console.error('No se pudieron limpiar reportes de caja en Supabase', error);
+      toast.error('No se pudo limpiar en base de datos. No se aplicaron cambios locales.');
+      return false;
+    }
+
+    setCashSessions([]);
+    setCashMovements([]);
+    setSales((prev) => prev.map((sale) => (
+      sale.cashSessionId
+        ? { ...sale, cashSessionId: undefined }
+        : sale
+    )));
+    setSaleDrafts((prev) => prev.map((draft) => (
+      draft.cashSessionId
+        ? { ...draft, cashSessionId: undefined }
+        : draft
+    )));
+
+    toast.success('Reportes de caja eliminados en sistema y base de datos.');
+    return true;
+  };
+
+  const clearSelectedCashReports = async (sessionIds: string[]): Promise<boolean> => {
+    if (storeConfig.userRole !== 'admin') {
+      toast.error('Solo un administrador puede eliminar reportes de caja.');
+      return false;
+    }
+
+    const selectedUniqueIds = Array.from(new Set(sessionIds.filter((id) => typeof id === 'string' && id.trim().length > 0)));
+    if (selectedUniqueIds.length === 0) {
+      toast.error('Selecciona al menos un reporte para eliminar.');
+      return false;
+    }
+
+    if (currentCashSession && selectedUniqueIds.includes(currentCashSession.id)) {
+      toast.error('No puedes eliminar una caja activa. Cierra o finaliza esa caja primero.');
+      return false;
+    }
+
+    if (!isConnectedToSupabase || !session || !currentStoreId) {
+      toast.error('Para eliminar reportes en sistema y base de datos necesitas conexión activa a Supabase.');
+      return false;
+    }
+
+    try {
+      await deleteCashReportsByIds(session.access_token, currentStoreId, selectedUniqueIds);
+    } catch (error) {
+      console.error('No se pudieron eliminar reportes de caja seleccionados en Supabase', error);
+      toast.error('No se pudo eliminar en base de datos. No se aplicaron cambios locales.');
+      return false;
+    }
+
+    const selectedSet = new Set(selectedUniqueIds);
+
+    setCashSessions((prev) => prev.filter((cashSession) => !selectedSet.has(cashSession.id)));
+    setCashMovements((prev) => prev.filter((movement) => !selectedSet.has(movement.cashSessionId)));
+    setSales((prev) => prev.map((sale) => (
+      sale.cashSessionId && selectedSet.has(sale.cashSessionId)
+        ? { ...sale, cashSessionId: undefined }
+        : sale
+    )));
+    setSaleDrafts((prev) => prev.map((draft) => (
+      draft.cashSessionId && selectedSet.has(draft.cashSessionId)
+        ? { ...draft, cashSessionId: undefined }
+        : draft
+    )));
+
+    toast.success(`Se eliminaron ${selectedUniqueIds.length} reporte(s) de caja.`);
+    return true;
+  };
+
   const registerSaleMovements = async (sale: Sale, sessionId: string, movementDate: string) => {
     const breakdown = getSalePaymentBreakdown(sale);
     const entries = Object.entries(breakdown)
@@ -3941,6 +4035,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
       openCashSession,
       startCashCounting,
       closeCashSession,
+      clearSelectedCashReports,
+      clearCashReports,
       addCashMovement,
       getCashSessionReport,
       kardexMovements,
