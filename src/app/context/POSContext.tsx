@@ -101,6 +101,41 @@ const roundMoney = (value: number): number => {
   return Math.round(value / 100) * 100;
 };
 
+const CASH_COUNT_BILL_VALUES = [1000, 2000, 5000, 10000, 20000, 50000, 100000] as const;
+const CASH_COUNT_COIN_VALUES = [50, 100, 200, 500, 1000] as const;
+
+const toNonNegativeInteger = (value: unknown): number => {
+  const normalized = Math.trunc(toNumber(value));
+  return normalized > 0 ? normalized : 0;
+};
+
+const sanitizeCashDenominationMap = (
+  value: unknown,
+  allowedValues: readonly number[],
+): Record<string, number> => {
+  const source = value && typeof value === 'object'
+    ? value as Record<string, unknown>
+    : {};
+  const result: Record<string, number> = {};
+
+  allowedValues.forEach((denomination) => {
+    result[String(denomination)] = toNonNegativeInteger(source[String(denomination)]);
+  });
+
+  return result;
+};
+
+const sumCashDenominationMap = (
+  map: Record<string, number>,
+  allowedValues: readonly number[],
+): number => {
+  let total = 0;
+  allowedValues.forEach((denomination) => {
+    total += denomination * toNonNegativeInteger(map[String(denomination)]);
+  });
+  return total;
+};
+
 const computeLineMoney = (unitSalePrice: number, quantity: number, discountPercent: number, ivaPercent: number) => {
   const roundedUnitSalePrice = roundMoney(unitSalePrice);
   const lineSubtotal = roundMoney(roundedUnitSalePrice * quantity);
@@ -427,11 +462,41 @@ export interface CashSession {
   openingCash: number;
   expectedCash?: number;
   countedCash?: number;
+  countedCashBreakdown?: CashCountBreakdown;
   countedAt?: string;
   closingNote?: string;
   difference?: number;
   status: 'open' | 'closed' | 'counting' | 'closed_with_difference';
 }
+
+export interface CashCountBreakdown {
+  bills: Record<string, number>;
+  coins: Record<string, number>;
+  billsTotal: number;
+  coinsTotal: number;
+  total: number;
+  currency: 'COP';
+}
+
+const sanitizeCashCountBreakdown = (value: unknown): CashCountBreakdown | undefined => {
+  if (!value || typeof value !== 'object') return undefined;
+
+  const source = value as Record<string, unknown>;
+  const bills = sanitizeCashDenominationMap(source.bills, CASH_COUNT_BILL_VALUES);
+  const coins = sanitizeCashDenominationMap(source.coins, CASH_COUNT_COIN_VALUES);
+  const billsTotal = sumCashDenominationMap(bills, CASH_COUNT_BILL_VALUES);
+  const coinsTotal = sumCashDenominationMap(coins, CASH_COUNT_COIN_VALUES);
+  const total = billsTotal + coinsTotal;
+
+  return {
+    bills,
+    coins,
+    billsTotal,
+    coinsTotal,
+    total,
+    currency: 'COP',
+  };
+};
 
 export interface CashMovement {
   id: string;
@@ -568,7 +633,11 @@ interface POSContextType {
   currentCashSession: CashSession | null;
   openCashSession: (openingCash: number, openingNote?: string) => Promise<boolean>;
   startCashCounting: () => Promise<boolean>;
-  closeCashSession: (countedCash: number, closingNote?: string) => Promise<CashSession | null>;
+  closeCashSession: (
+    countedCash: number,
+    closingNote?: string,
+    countedCashBreakdown?: CashCountBreakdown,
+  ) => Promise<CashSession | null>;
   addCashMovement: (
     type: 'cash_in' | 'cash_out',
     amount: number,
@@ -1134,6 +1203,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         openingCash: toNumber(row.opening_cash),
         expectedCash: row.expected_cash == null ? undefined : toNumber(row.expected_cash),
         countedCash: row.counted_cash == null ? undefined : toNumber(row.counted_cash),
+        countedCashBreakdown: sanitizeCashCountBreakdown(row.counted_cash_breakdown),
         countedAt: row.counted_at ?? undefined,
         closingNote: row.closing_note ?? undefined,
         difference: row.difference == null ? undefined : toNumber(row.difference),
@@ -1298,7 +1368,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
       setSuppliers(initialSuppliers);
     }
     if (loadedRecharges) setRecharges(JSON.parse(loadedRecharges));
-    if (loadedCashSessions) setCashSessions(JSON.parse(loadedCashSessions));
+    if (loadedCashSessions) {
+      const parsedCashSessions = JSON.parse(loadedCashSessions) as CashSession[];
+      setCashSessions(parsedCashSessions.map((sessionItem) => ({
+        ...sessionItem,
+        countedCashBreakdown: sanitizeCashCountBreakdown(sessionItem.countedCashBreakdown),
+      })));
+    }
     if (loadedCashMovements) setCashMovements(JSON.parse(loadedCashMovements));
     if (loadedConfig) {
       const parsedConfig = JSON.parse(loadedConfig) as Partial<StoreConfig>;
@@ -2731,13 +2807,20 @@ export function POSProvider({ children }: { children: ReactNode }) {
     return true;
   };
 
-  const closeCashSession = async (countedCash: number, closingNote?: string): Promise<CashSession | null> => {
+  const closeCashSession = async (
+    countedCash: number,
+    closingNote?: string,
+    countedCashBreakdown?: CashCountBreakdown,
+  ): Promise<CashSession | null> => {
     if (!currentCashSession) {
       toast.error('No hay una caja activa para cerrar.');
       return null;
     }
 
-    const safeCounted = roundMoney(Number.isFinite(countedCash) ? Math.max(0, countedCash) : 0);
+    const sanitizedBreakdown = sanitizeCashCountBreakdown(countedCashBreakdown);
+    const safeCounted = sanitizedBreakdown
+      ? Math.max(0, Math.round(sanitizedBreakdown.total))
+      : roundMoney(Number.isFinite(countedCash) ? Math.max(0, countedCash) : 0);
     const report = getCashSessionReport(currentCashSession.id);
     const expectedCash = roundMoney(report.expectedCash);
     const difference = roundMoney(safeCounted - expectedCash);
@@ -2750,6 +2833,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       closedAt,
       expectedCash,
       countedCash: safeCounted,
+      countedCashBreakdown: sanitizedBreakdown,
       countedAt: closedAt,
       closingNote: normalizedClosingNote,
       closedBy: session?.user.id,
@@ -2765,6 +2849,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           closedAt,
           expectedCash,
           countedCash: safeCounted,
+          countedCashBreakdown: sanitizedBreakdown,
           countedAt: closedAt,
           closingNote: normalizedClosingNote,
           closedBy: session.user.id,

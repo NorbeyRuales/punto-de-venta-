@@ -10,6 +10,18 @@ import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { AlertTriangle, ArrowDownCircle, ArrowUpCircle, CheckCircle2, FileText, Lock, Unlock, Wallet } from 'lucide-react';
 
+const CASH_BILL_DENOMINATIONS = [1000, 2000, 5000, 10000, 20000, 50000, 100000] as const;
+const CASH_COIN_DENOMINATIONS = [50, 100, 200, 500, 1000] as const;
+
+const buildCountInputState = (denominations: readonly number[]) =>
+  Object.fromEntries(denominations.map((denomination) => [String(denomination), ''])) as Record<string, string>;
+
+const parseCountInput = (value: string | undefined): number => {
+  const parsed = Number.parseInt(value ?? '', 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.trunc(parsed);
+};
+
 const roundToHundred = (value: number) => {
   if (!Number.isFinite(value)) return 0;
   return Math.round(value / 100) * 100;
@@ -73,7 +85,8 @@ export function CashRegister() {
   const [movementAmount, setMovementAmount] = useState('');
   const [movementReason, setMovementReason] = useState('');
   const [movementReference, setMovementReference] = useState('');
-  const [countedCash, setCountedCash] = useState('');
+  const [billCounts, setBillCounts] = useState<Record<string, string>>(() => buildCountInputState(CASH_BILL_DENOMINATIONS));
+  const [coinCounts, setCoinCounts] = useState<Record<string, string>>(() => buildCountInputState(CASH_COIN_DENOMINATIONS));
   const [closingNote, setClosingNote] = useState('');
   const [lastClosedId, setLastClosedId] = useState<string | null>(null);
 
@@ -129,17 +142,51 @@ export function CashRegister() {
     await startCashCounting();
   };
 
+  const billRows = useMemo(() => CASH_BILL_DENOMINATIONS.map((denomination) => {
+    const quantity = parseCountInput(billCounts[String(denomination)]);
+    return {
+      denomination,
+      quantity,
+      subtotal: denomination * quantity,
+    };
+  }), [billCounts]);
+
+  const coinRows = useMemo(() => CASH_COIN_DENOMINATIONS.map((denomination) => {
+    const quantity = parseCountInput(coinCounts[String(denomination)]);
+    return {
+      denomination,
+      quantity,
+      subtotal: denomination * quantity,
+    };
+  }), [coinCounts]);
+
+  const billsTotal = billRows.reduce((sum, row) => sum + row.subtotal, 0);
+  const coinsTotal = coinRows.reduce((sum, row) => sum + row.subtotal, 0);
+  const countedPreview = billsTotal + coinsTotal;
+
   const handleClose = async () => {
-    const amount = roundToHundred(parseFloat(countedCash) || 0);
-    const closed = await closeCashSession(amount, closingNote);
+    const bills = Object.fromEntries(
+      billRows.map((row) => [String(row.denomination), row.quantity])
+    );
+    const coins = Object.fromEntries(
+      coinRows.map((row) => [String(row.denomination), row.quantity])
+    );
+    const closed = await closeCashSession(countedPreview, closingNote, {
+      bills,
+      coins,
+      billsTotal,
+      coinsTotal,
+      total: countedPreview,
+      currency: 'COP',
+    });
     if (closed) {
-      setCountedCash('');
+      setBillCounts(buildCountInputState(CASH_BILL_DENOMINATIONS));
+      setCoinCounts(buildCountInputState(CASH_COIN_DENOMINATIONS));
       setClosingNote('');
       setLastClosedId(closed.id);
     }
   };
 
-  const countedPreview = roundToHundred(parseFloat(countedCash) || 0);
   const differencePreview = activeReport ? roundToHundred(countedPreview - activeReport.expectedCash) : 0;
   const manualFlowTotal = activeReport
     ? roundToHundred(activeReport.cashInTotal - activeReport.cashOutTotal - activeReport.cashReturnTotal)
@@ -367,21 +414,70 @@ export function CashRegister() {
               )}
               {isCounting && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                  Arqueo en curso: ingresa el dinero contado para cerrar la sesión.
+                  Arqueo en curso: ingresa la cantidad por denominación para calcular el total contado.
                 </div>
               )}
-              <div>
-                <Label>Dinero contado</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={countedCash}
-                  onChange={(e) => setCountedCash(e.target.value)}
-                  placeholder="0"
-                  className="h-12"
-                />
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs text-slate-600">Total contado (billetes + monedas)</p>
+                <p className="text-lg font-bold text-slate-800">{formatCurrency(countedPreview)}</p>
               </div>
+              {isCounting && (
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <p className="mb-2 text-sm font-semibold text-slate-700">Billetes</p>
+                    <div className="space-y-2">
+                      {billRows.map((row) => (
+                        <div key={row.denomination} className="grid grid-cols-[90px_1fr_120px] items-center gap-2">
+                          <span className="text-sm text-slate-700">{formatCurrency(row.denomination)}</span>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={billCounts[String(row.denomination)]}
+                            onChange={(event) => setBillCounts((prev) => ({
+                              ...prev,
+                              [String(row.denomination)]: event.target.value,
+                            }))}
+                            placeholder="0"
+                            className="h-9"
+                          />
+                          <span className="text-right text-sm font-medium text-slate-800">{formatCurrency(row.subtotal)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 border-t border-slate-200 pt-2 text-sm font-semibold text-slate-800">
+                      Total billetes: {formatCurrency(billsTotal)}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <p className="mb-2 text-sm font-semibold text-slate-700">Monedas</p>
+                    <div className="space-y-2">
+                      {coinRows.map((row) => (
+                        <div key={row.denomination} className="grid grid-cols-[90px_1fr_120px] items-center gap-2">
+                          <span className="text-sm text-slate-700">{formatCurrency(row.denomination)}</span>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={coinCounts[String(row.denomination)]}
+                            onChange={(event) => setCoinCounts((prev) => ({
+                              ...prev,
+                              [String(row.denomination)]: event.target.value,
+                            }))}
+                            placeholder="0"
+                            className="h-9"
+                          />
+                          <span className="text-right text-sm font-medium text-slate-800">{formatCurrency(row.subtotal)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-3 border-t border-slate-200 pt-2 text-sm font-semibold text-slate-800">
+                      Total monedas: {formatCurrency(coinsTotal)}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div>
                 <Label>Observación de cierre (opcional)</Label>
                 <Input
@@ -523,6 +619,18 @@ export function CashRegister() {
               <p className="text-xs text-gray-600">Ventas en efectivo</p>
               <p className="text-sm font-semibold">{formatCurrency(lastClosedReport.cashSalesTotal)}</p>
             </div>
+            {lastClosedSession.countedCashBreakdown && (
+              <>
+                <div>
+                  <p className="text-xs text-gray-600">Billetes contados</p>
+                  <p className="text-sm font-semibold">{formatCurrency(lastClosedSession.countedCashBreakdown.billsTotal)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-600">Monedas contadas</p>
+                  <p className="text-sm font-semibold">{formatCurrency(lastClosedSession.countedCashBreakdown.coinsTotal)}</p>
+                </div>
+              </>
+            )}
           </div>
         </Card>
       )}

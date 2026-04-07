@@ -189,6 +189,7 @@ type CashSessionRow = {
   opening_note: string | null;
   expected_cash: number | null;
   counted_cash: number | null;
+  counted_cash_breakdown: Record<string, unknown> | null;
   counted_at: string | null;
   closing_note: string | null;
   difference: number | null;
@@ -233,6 +234,14 @@ type StoreRow = {
 // Valida UUIDs antes de hacer operaciones sensibles.
 const uuidLike = (value?: string | null): boolean =>
   !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+const isMissingColumnError = (error: unknown, columnName: string): boolean => {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes('column')
+    && message.includes(columnName.toLowerCase())
+    && message.includes('does not exist');
+};
 
 // Devuelve la membresía actual del usuario en una tienda.
 export async function fetchMyStoreMembership(token: string, userId: string): Promise<StoreUserRow | null> {
@@ -968,6 +977,7 @@ export async function updateCashSession(
     closedAt?: string;
     expectedCash?: number;
     countedCash?: number;
+    countedCashBreakdown?: Record<string, unknown>;
     countedAt?: string;
     closingNote?: string;
     closedBy?: string;
@@ -980,13 +990,24 @@ export async function updateCashSession(
   if (patch.closedAt !== undefined) dbPatch.closed_at = patch.closedAt;
   if (patch.expectedCash !== undefined) dbPatch.expected_cash = patch.expectedCash;
   if (patch.countedCash !== undefined) dbPatch.counted_cash = patch.countedCash;
+  if (patch.countedCashBreakdown !== undefined) dbPatch.counted_cash_breakdown = patch.countedCashBreakdown;
   if (patch.countedAt !== undefined) dbPatch.counted_at = patch.countedAt;
   if (patch.closingNote !== undefined) dbPatch.closing_note = patch.closingNote || null;
   if (patch.closedBy !== undefined) dbPatch.closed_by = uuidLike(patch.closedBy) ? patch.closedBy : null;
   if (patch.difference !== undefined) dbPatch.difference = patch.difference;
   if (patch.status !== undefined) dbPatch.status = patch.status;
   if (Object.keys(dbPatch).length === 0) return;
-  await updateRows('cash_sessions', `store_id=eq.${storeId}&id=eq.${sessionId}`, dbPatch, token);
+  try {
+    await updateRows('cash_sessions', `store_id=eq.${storeId}&id=eq.${sessionId}`, dbPatch, token);
+  } catch (error) {
+    if (patch.countedCashBreakdown !== undefined && isMissingColumnError(error, 'counted_cash_breakdown')) {
+      const legacyPatch = { ...dbPatch };
+      delete legacyPatch.counted_cash_breakdown;
+      await updateRows('cash_sessions', `store_id=eq.${storeId}&id=eq.${sessionId}`, legacyPatch, token);
+      return;
+    }
+    throw error;
+  }
 }
 
 // Movimiento manual de caja.
@@ -1076,12 +1097,28 @@ export async function loadRecharges(token: string, storeId: string): Promise<Rec
 }
 
 export async function loadCashSessions(token: string, storeId: string): Promise<CashSessionRow[]> {
-  return selectRows<CashSessionRow>(
-    'cash_sessions',
-    'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_at,closing_note,difference,status,opened_by,closed_by,created_at'
-      + `&store_id=eq.${storeId}&order=opened_at.asc`,
-    token,
-  );
+  try {
+    return await selectRows<CashSessionRow>(
+      'cash_sessions',
+      'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_cash_breakdown,counted_at,closing_note,difference,status,opened_by,closed_by,created_at'
+        + `&store_id=eq.${storeId}&order=opened_at.asc`,
+      token,
+    );
+  } catch (error) {
+    if (isMissingColumnError(error, 'counted_cash_breakdown')) {
+      const legacyRows = await selectRows<CashSessionRow>(
+        'cash_sessions',
+        'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_at,closing_note,difference,status,opened_by,closed_by,created_at'
+          + `&store_id=eq.${storeId}&order=opened_at.asc`,
+        token,
+      );
+      return legacyRows.map((row) => ({
+        ...row,
+        counted_cash_breakdown: null,
+      }));
+    }
+    throw error;
+  }
 }
 
 export async function loadCashMovements(token: string, storeId: string): Promise<CashMovementRow[]> {
