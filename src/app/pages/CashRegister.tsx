@@ -6,6 +6,7 @@ import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { AlertTriangle, ArrowDownCircle, ArrowUpCircle, CheckCircle2, FileText, Lock, Unlock, Wallet } from 'lucide-react';
@@ -66,6 +67,12 @@ const getMovementCategoryLabel = (movement: { category?: string; type: 'cash_in'
   return movement.type === 'cash_in' ? 'Ingreso' : 'Retiro';
 };
 
+const getClosedStatusLabel = (status: string) => {
+  if (status === 'closed_with_difference') return 'Cerrada con diferencia';
+  if (status === 'closed') return 'Cerrada exacta';
+  return 'Cerrada';
+};
+
 export function CashRegister() {
   const {
     currentCashSession,
@@ -89,6 +96,8 @@ export function CashRegister() {
   const [coinCounts, setCoinCounts] = useState<Record<string, string>>(() => buildCountInputState(CASH_COIN_DENOMINATIONS));
   const [closingNote, setClosingNote] = useState('');
   const [lastClosedId, setLastClosedId] = useState<string | null>(null);
+  const [showCloseReportDialog, setShowCloseReportDialog] = useState(false);
+  const [selectedClosedSessionId, setSelectedClosedSessionId] = useState<string | null>(null);
 
   const currentStatus = currentCashSession?.status;
   const isOpen = currentStatus === 'open';
@@ -98,6 +107,10 @@ export function CashRegister() {
   const activeMovements = currentCashSession
     ? cashMovements.filter(movement => movement.cashSessionId === currentCashSession.id)
     : [];
+
+  const closedSessions = useMemo(() => cashSessions
+    .filter((session) => session.status === 'closed' || session.status === 'closed_with_difference')
+    .sort((a, b) => new Date(b.closedAt || b.openedAt).getTime() - new Date(a.closedAt || a.openedAt).getTime()), [cashSessions]);
 
   const lastClosedSession = useMemo(() => {
     if (lastClosedId) {
@@ -110,6 +123,29 @@ export function CashRegister() {
   }, [cashSessions, lastClosedId]);
 
   const lastClosedReport = lastClosedSession ? getCashSessionReport(lastClosedSession.id) : null;
+
+  const selectedClosedSession = useMemo(() => {
+    if (selectedClosedSessionId) {
+      return closedSessions.find((session) => session.id === selectedClosedSessionId) ?? null;
+    }
+    return lastClosedSession;
+  }, [closedSessions, selectedClosedSessionId, lastClosedSession]);
+
+  const selectedClosedReport = selectedClosedSession
+    ? getCashSessionReport(selectedClosedSession.id)
+    : null;
+
+  const selectedClosedMovements = useMemo(() => {
+    if (!selectedClosedSession) return [];
+    return cashMovements
+      .filter((movement) => movement.cashSessionId === selectedClosedSession.id)
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [cashMovements, selectedClosedSession]);
+
+  const openCloseReport = (sessionId: string) => {
+    setSelectedClosedSessionId(sessionId);
+    setShowCloseReportDialog(true);
+  };
 
   const handleOpen = async () => {
     const amount = roundToHundred(parseFloat(openingCash) || 0);
@@ -632,8 +668,238 @@ export function CashRegister() {
               </>
             )}
           </div>
+          <div className="mt-4">
+            <Button variant="outline" onClick={() => openCloseReport(lastClosedSession.id)}>
+              Ver tirilla detallada
+            </Button>
+          </div>
         </Card>
       )}
+
+      {closedSessions.length > 0 && (
+        <Card className="p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <FileText className="w-5 h-5 text-[var(--primary)]" />
+            <h2 className="text-lg font-bold">Historial de cierres de caja</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-secondary border-b">
+                <tr>
+                  <th className="text-left p-3">Fecha cierre</th>
+                  <th className="text-right p-3">Esperado</th>
+                  <th className="text-right p-3">Contado</th>
+                  <th className="text-right p-3">Diferencia</th>
+                  <th className="text-left p-3">Estado</th>
+                  <th className="text-right p-3">Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {closedSessions.slice(0, 20).map((session) => {
+                  const report = getCashSessionReport(session.id);
+                  const expected = session.expectedCash ?? report.expectedCash;
+                  const counted = session.countedCash ?? 0;
+                  const difference = session.difference ?? roundToHundred(counted - expected);
+
+                  return (
+                    <tr key={session.id} className="border-b">
+                      <td className="p-3">
+                        {session.closedAt
+                          ? format(new Date(session.closedAt), "d MMM yyyy, HH:mm", { locale: es })
+                          : format(new Date(session.openedAt), "d MMM yyyy, HH:mm", { locale: es })}
+                      </td>
+                      <td className="p-3 text-right font-medium">{formatCurrency(expected)}</td>
+                      <td className="p-3 text-right font-medium">{formatCurrency(counted)}</td>
+                      <td className={`p-3 text-right font-semibold ${difference >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {formatCurrency(difference)}
+                      </td>
+                      <td className="p-3">{getClosedStatusLabel(session.status)}</td>
+                      <td className="p-3 text-right">
+                        <Button variant="outline" size="sm" onClick={() => openCloseReport(session.id)}>
+                          Ver tirilla
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      <Dialog open={showCloseReportDialog && !!selectedClosedSession && !!selectedClosedReport} onOpenChange={setShowCloseReportDialog}>
+        <DialogContent className="w-[96vw] max-w-[96vw] sm:max-w-5xl max-h-[92vh] overflow-y-auto p-4 sm:p-6">
+          <DialogHeader>
+            <DialogTitle>Tirilla detallada de cierre</DialogTitle>
+          </DialogHeader>
+
+          {selectedClosedSession && selectedClosedReport && (
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Apertura</p>
+                  <p className="text-sm font-semibold">
+                    {format(new Date(selectedClosedSession.openedAt), "d MMM yyyy, HH:mm", { locale: es })}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-600">Base: {formatCurrency(selectedClosedSession.openingCash)}</p>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Cierre</p>
+                  <p className="text-sm font-semibold">
+                    {selectedClosedSession.closedAt
+                      ? format(new Date(selectedClosedSession.closedAt), "d MMM yyyy, HH:mm", { locale: es })
+                      : 'Sin fecha de cierre'}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-600">Estado: {getClosedStatusLabel(selectedClosedSession.status)}</p>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Sesión</p>
+                  <p className="text-sm font-semibold break-all">{selectedClosedSession.id}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
+                  <p className="text-xs text-violet-700">Esperado</p>
+                  <p className="text-lg font-bold text-violet-700">{formatCurrency(selectedClosedSession.expectedCash ?? selectedClosedReport.expectedCash)}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-600">Contado</p>
+                  <p className="text-lg font-bold text-slate-800">{formatCurrency(selectedClosedSession.countedCash ?? 0)}</p>
+                </div>
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                  <p className="text-xs text-emerald-700">Ventas totales</p>
+                  <p className="text-lg font-bold text-emerald-700">{formatCurrency(selectedClosedReport.salesTotal)}</p>
+                </div>
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                  <p className="text-xs text-blue-700">Ventas efectivo</p>
+                  <p className="text-lg font-bold text-blue-700">{formatCurrency(selectedClosedReport.cashSalesTotal)}</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-3">
+                <p className="mb-2 text-sm font-semibold text-slate-700">Ventas por método</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {Object.keys(selectedClosedReport.salesByMethod).length === 0 && (
+                    <p className="text-sm text-gray-500">No hubo ventas registradas en esta sesión.</p>
+                  )}
+                  {Object.entries(selectedClosedReport.salesByMethod).map(([method, total]) => (
+                    <div key={method} className="flex items-center justify-between rounded border border-slate-200 bg-slate-50 px-3 py-2">
+                      <span className="text-sm text-slate-700">{formatMethodLabel(method)}</span>
+                      <span className="text-sm font-semibold text-slate-900">{formatCurrency(total)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {selectedClosedSession.countedCashBreakdown && (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <p className="mb-2 text-sm font-semibold text-slate-700">Detalle de billetes</p>
+                    <div className="space-y-2">
+                      {CASH_BILL_DENOMINATIONS
+                        .filter((denomination) => (selectedClosedSession.countedCashBreakdown?.bills[String(denomination)] ?? 0) > 0)
+                        .map((denomination) => {
+                          const qty = selectedClosedSession.countedCashBreakdown?.bills[String(denomination)] ?? 0;
+                          const subtotal = denomination * qty;
+                          return (
+                            <div key={denomination} className="grid grid-cols-[110px_1fr_120px] items-center gap-2 text-sm">
+                              <span>{formatCurrency(denomination)}</span>
+                              <span>Cantidad: {qty}</span>
+                              <span className="text-right font-semibold">{formatCurrency(subtotal)}</span>
+                            </div>
+                          );
+                        })}
+                      {CASH_BILL_DENOMINATIONS.every((denomination) => (selectedClosedSession.countedCashBreakdown?.bills[String(denomination)] ?? 0) === 0) && (
+                        <p className="text-sm text-gray-500">No se registraron billetes en el desglose.</p>
+                      )}
+                    </div>
+                    <div className="mt-3 border-t border-slate-200 pt-2 text-sm font-semibold text-slate-800">
+                      Total billetes: {formatCurrency(selectedClosedSession.countedCashBreakdown.billsTotal)}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200 p-3">
+                    <p className="mb-2 text-sm font-semibold text-slate-700">Detalle de monedas</p>
+                    <div className="space-y-2">
+                      {CASH_COIN_DENOMINATIONS
+                        .filter((denomination) => (selectedClosedSession.countedCashBreakdown?.coins[String(denomination)] ?? 0) > 0)
+                        .map((denomination) => {
+                          const qty = selectedClosedSession.countedCashBreakdown?.coins[String(denomination)] ?? 0;
+                          const subtotal = denomination * qty;
+                          return (
+                            <div key={denomination} className="grid grid-cols-[110px_1fr_120px] items-center gap-2 text-sm">
+                              <span>{formatCurrency(denomination)}</span>
+                              <span>Cantidad: {qty}</span>
+                              <span className="text-right font-semibold">{formatCurrency(subtotal)}</span>
+                            </div>
+                          );
+                        })}
+                      {CASH_COIN_DENOMINATIONS.every((denomination) => (selectedClosedSession.countedCashBreakdown?.coins[String(denomination)] ?? 0) === 0) && (
+                        <p className="text-sm text-gray-500">No se registraron monedas en el desglose.</p>
+                      )}
+                    </div>
+                    <div className="mt-3 border-t border-slate-200 pt-2 text-sm font-semibold text-slate-800">
+                      Total monedas: {formatCurrency(selectedClosedSession.countedCashBreakdown.coinsTotal)}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <p className="text-xs text-slate-500">Nota de apertura</p>
+                  <p className="text-sm text-slate-700">{selectedClosedSession.openingNote || 'Sin observación'}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 p-3">
+                  <p className="text-xs text-slate-500">Nota de cierre</p>
+                  <p className="text-sm text-slate-700">{selectedClosedSession.closingNote || 'Sin observación'}</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-3">
+                <p className="mb-2 text-sm font-semibold text-slate-700">Movimientos de caja de la sesión</p>
+                {selectedClosedMovements.length === 0 ? (
+                  <p className="text-sm text-gray-500">No hay movimientos registrados para esta sesión.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-secondary border-b">
+                        <tr>
+                          <th className="text-left p-2">Fecha</th>
+                          <th className="text-left p-2">Categoría</th>
+                          <th className="text-left p-2">Detalle</th>
+                          <th className="text-right p-2">Monto</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedClosedMovements.map((movement) => (
+                          <tr key={movement.id} className="border-b">
+                            <td className="p-2">{format(new Date(movement.date), "d MMM yyyy, HH:mm", { locale: es })}</td>
+                            <td className="p-2">{getMovementCategoryLabel(movement)}</td>
+                            <td className="p-2">
+                              {movement.reason || 'Sin motivo'}
+                              <div className="text-xs text-gray-500">
+                                {movement.paymentMethod ? `Medio: ${formatMethodLabel(movement.paymentMethod)}` : 'Medio: n/a'}
+                              </div>
+                            </td>
+                            <td className={`p-2 text-right font-semibold ${movement.type === 'cash_in' ? 'text-emerald-700' : 'text-red-700'}`}>
+                              {movement.type === 'cash_out' ? '-' : ''}{formatCurrency(movement.amount)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
