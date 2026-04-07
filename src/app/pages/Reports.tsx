@@ -1,5 +1,5 @@
 // Reportes de ventas con gráficos y ranking.
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { usePOS } from '../context/POSContext';
 import type { Sale } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -12,7 +12,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { toast } from 'sonner';
 
 export function Reports() {
-  const { getSalesInRange, kardexMovements, registerReturn, customers, storeConfig } = usePOS();
+  const { getSalesInRange, kardexMovements, registerReturn, customers, storeConfig, products } = usePOS();
   const [period, setPeriod] = useState('today');
 
   // Calcula rango de fechas según periodo seleccionado.
@@ -83,6 +83,106 @@ export function Reports() {
     return Math.round(value / 100) * 100;
   };
   const formatRoundedCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
+  const formatTaxLabel = (ivaPercent: number, ipucPercent: number) => {
+    const normalizedIva = Number.isFinite(ivaPercent) ? ivaPercent : 0;
+    const normalizedIpuc = Number.isFinite(ipucPercent) ? ipucPercent : 0;
+    if (normalizedIva <= 0 && normalizedIpuc <= 0) return 'Sin impuesto';
+    if (normalizedIva > 0 && normalizedIpuc > 0) return `IVA ${normalizedIva}% + IPUC ${normalizedIpuc}%`;
+    if (normalizedIva > 0) return `IVA ${normalizedIva}%`;
+    return `IPUC ${normalizedIpuc}%`;
+  };
+
+  const inventoryTaxDetails = useMemo(() => {
+    return products
+      .filter((product) => Number(product.stock) > 0)
+      .map((product) => {
+        const stock = Number(product.stock) || 0;
+        const unitsPerPurchaseRaw = Number(product.unitsPerPurchase ?? 1);
+        const unitsPerPurchase = unitsPerPurchaseRaw > 0 ? unitsPerPurchaseRaw : 1;
+        const packageCost = Number(product.costPrice) || 0;
+        const ivaPercent = Number(product.iva) || 0;
+        const ipucPercent = Number(product.ipuc ?? 0) || 0;
+        const totalTaxPercent = ivaPercent + ipucPercent;
+        const unitBaseCost = unitsPerPurchase > 0 ? packageCost / unitsPerPurchase : 0;
+        const unitTaxValue = unitBaseCost * (totalTaxPercent / 100);
+        const unitCostWithTax = unitBaseCost + unitTaxValue;
+        const inventoryBaseCost = unitBaseCost * stock;
+        const inventoryTaxValue = unitTaxValue * stock;
+        const inventoryTotalCost = inventoryBaseCost + inventoryTaxValue;
+
+        return {
+          id: product.id,
+          name: product.name,
+          category: product.category,
+          stock,
+          unitsPerPurchase,
+          ivaPercent,
+          ipucPercent,
+          totalTaxPercent,
+          unitBaseCost,
+          unitTaxValue,
+          unitCostWithTax,
+          inventoryBaseCost,
+          inventoryTaxValue,
+          inventoryTotalCost,
+          taxLabel: formatTaxLabel(ivaPercent, ipucPercent),
+        };
+      })
+      .sort((a, b) => b.inventoryTotalCost - a.inventoryTotalCost);
+  }, [products]);
+
+  const inventoryTotals = useMemo(() => {
+    return inventoryTaxDetails.reduce((acc, detail) => {
+      acc.base += detail.inventoryBaseCost;
+      acc.tax += detail.inventoryTaxValue;
+      acc.total += detail.inventoryTotalCost;
+      return acc;
+    }, { base: 0, tax: 0, total: 0 });
+  }, [inventoryTaxDetails]);
+
+  const inventoryTaxSummary = useMemo(() => {
+    const grouped = new Map<string, {
+      key: string;
+      label: string;
+      ivaPercent: number;
+      ipucPercent: number;
+      totalTaxPercent: number;
+      productsCount: number;
+      unitsInStock: number;
+      baseCost: number;
+      taxValue: number;
+      totalCost: number;
+    }>();
+
+    inventoryTaxDetails.forEach((detail) => {
+      const key = `${detail.ivaPercent}|${detail.ipucPercent}`;
+      const current = grouped.get(key);
+      if (current) {
+        current.productsCount += 1;
+        current.unitsInStock += detail.stock;
+        current.baseCost += detail.inventoryBaseCost;
+        current.taxValue += detail.inventoryTaxValue;
+        current.totalCost += detail.inventoryTotalCost;
+        return;
+      }
+
+      grouped.set(key, {
+        key,
+        label: detail.taxLabel,
+        ivaPercent: detail.ivaPercent,
+        ipucPercent: detail.ipucPercent,
+        totalTaxPercent: detail.totalTaxPercent,
+        productsCount: 1,
+        unitsInStock: detail.stock,
+        baseCost: detail.inventoryBaseCost,
+        taxValue: detail.inventoryTaxValue,
+        totalCost: detail.inventoryTotalCost,
+      });
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => b.totalCost - a.totalCost);
+  }, [inventoryTaxDetails]);
+
   const formatPaymentMethodLabel = (method: string) => {
     const normalized = method?.toLowerCase?.() || 'otro';
     const labels: Record<string, string> = {
@@ -272,6 +372,107 @@ export function Reports() {
           </div>
         </Card>
       </div>
+
+      {/* Reporte de costos e impuestos del inventario */}
+      <Card className="p-6 space-y-4">
+        <div className="flex flex-col gap-1">
+          <h3 className="text-lg font-bold">Costo de Inventario con Impuestos</h3>
+          <p className="text-sm text-gray-600">
+            Desglose por producto según impuestos registrados (IVA, IPUC y combinaciones).
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="rounded-lg border bg-secondary/40 p-4">
+            <p className="text-sm text-gray-600">Valor Base Inventario</p>
+            <p className="text-xl font-bold">{formatCurrency(inventoryTotals.base)}</p>
+          </div>
+          <div className="rounded-lg border bg-secondary/40 p-4">
+            <p className="text-sm text-gray-600">Valor Impuestos Inventario</p>
+            <p className="text-xl font-bold text-amber-700">{formatCurrency(inventoryTotals.tax)}</p>
+          </div>
+          <div className="rounded-lg border bg-secondary/40 p-4">
+            <p className="text-sm text-gray-600">Valor Total con Impuestos</p>
+            <p className="text-xl font-bold text-[#2ECC71]">{formatCurrency(inventoryTotals.total)}</p>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full min-w-[760px]">
+            <thead className="bg-secondary border-b">
+              <tr>
+                <th className="text-left p-3">Impuesto</th>
+                <th className="text-right p-3">Productos</th>
+                <th className="text-right p-3">Unidades</th>
+                <th className="text-right p-3">Base</th>
+                <th className="text-right p-3">Impuesto</th>
+                <th className="text-right p-3">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inventoryTaxSummary.length === 0 ? (
+                <tr>
+                  <td className="p-4 text-center text-gray-500" colSpan={6}>No hay inventario con stock disponible.</td>
+                </tr>
+              ) : (
+                inventoryTaxSummary.map((row) => (
+                  <tr key={row.key} className="border-b">
+                    <td className="p-3 font-medium">{row.label}</td>
+                    <td className="p-3 text-right">{row.productsCount}</td>
+                    <td className="p-3 text-right">{row.unitsInStock.toLocaleString('es-CO')}</td>
+                    <td className="p-3 text-right">{formatCurrency(row.baseCost)}</td>
+                    <td className="p-3 text-right text-amber-700">{formatCurrency(row.taxValue)}</td>
+                    <td className="p-3 text-right font-semibold">{formatCurrency(row.totalCost)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full min-w-[1200px]">
+            <thead className="bg-secondary border-b">
+              <tr>
+                <th className="text-left p-3">Producto</th>
+                <th className="text-left p-3">Categoría</th>
+                <th className="text-right p-3">Stock</th>
+                <th className="text-right p-3">Costo Base Unit.</th>
+                <th className="text-right p-3">IVA</th>
+                <th className="text-right p-3">IPUC</th>
+                <th className="text-right p-3">Impuesto Unit.</th>
+                <th className="text-right p-3">Costo Unit. + Imp.</th>
+                <th className="text-right p-3">Base Inventario</th>
+                <th className="text-right p-3">Impuesto Inventario</th>
+                <th className="text-right p-3">Total Inventario</th>
+              </tr>
+            </thead>
+            <tbody>
+              {inventoryTaxDetails.length === 0 ? (
+                <tr>
+                  <td className="p-4 text-center text-gray-500" colSpan={11}>No hay inventario con stock disponible.</td>
+                </tr>
+              ) : (
+                inventoryTaxDetails.map((detail) => (
+                  <tr key={detail.id} className="border-b align-top">
+                    <td className="p-3 font-medium">{detail.name}</td>
+                    <td className="p-3">{detail.category}</td>
+                    <td className="p-3 text-right">{detail.stock.toLocaleString('es-CO')}</td>
+                    <td className="p-3 text-right">{formatCurrency(detail.unitBaseCost)}</td>
+                    <td className="p-3 text-right">{detail.ivaPercent}%</td>
+                    <td className="p-3 text-right">{detail.ipucPercent}%</td>
+                    <td className="p-3 text-right text-amber-700">{formatCurrency(detail.unitTaxValue)}</td>
+                    <td className="p-3 text-right">{formatCurrency(detail.unitCostWithTax)}</td>
+                    <td className="p-3 text-right">{formatCurrency(detail.inventoryBaseCost)}</td>
+                    <td className="p-3 text-right text-amber-700">{formatCurrency(detail.inventoryTaxValue)}</td>
+                    <td className="p-3 text-right font-semibold">{formatCurrency(detail.inventoryTotalCost)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
       {/* Listado de ventas */}
       <Card className="p-6">

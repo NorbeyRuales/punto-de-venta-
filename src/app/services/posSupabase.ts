@@ -977,7 +977,7 @@ export async function updateCashSession(
     closedAt?: string;
     expectedCash?: number;
     countedCash?: number;
-    countedCashBreakdown?: Record<string, unknown>;
+    countedCashBreakdown?: unknown;
     countedAt?: string;
     closingNote?: string;
     closedBy?: string;
