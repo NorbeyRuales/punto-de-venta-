@@ -4,7 +4,7 @@ import { usePOS } from '../context/POSContext';
 import type { Sale } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { FileText, Download, TrendingUp, DollarSign, Share2 } from 'lucide-react';
+import { FileText, Download, TrendingUp, DollarSign, Share2, ChevronDown, ChevronUp } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { startOfDay, endOfDay, subDays, format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -14,6 +14,10 @@ import { toast } from 'sonner';
 export function Reports() {
   const { getSalesInRange, kardexMovements, registerReturn, customers, storeConfig, products } = usePOS();
   const [period, setPeriod] = useState('today');
+  const [showAllLatestSales, setShowAllLatestSales] = useState(false);
+  const [showAllInventoryRows, setShowAllInventoryRows] = useState(false);
+  const latestSalesCollapsedLimit = 3;
+  const inventoryRowsCollapsedLimit = 3;
 
   // Calcula rango de fechas según periodo seleccionado.
   const getDateRange = () => {
@@ -76,6 +80,10 @@ export function Reports() {
   const categoryData = Array.from(categorySales.entries()).map(([name, value]) => ({ name, value }));
   const COLORS = ['#15D9E6', '#E6C915', '#E61595', '#8BE9FD', '#FFD27F', '#2ECC71'];
   const latestSales = periodSales.slice(-20).reverse();
+  const visibleLatestSales = showAllLatestSales
+    ? latestSales
+    : latestSales.slice(0, latestSalesCollapsedLimit);
+  const hiddenLatestSalesCount = Math.max(0, latestSales.length - visibleLatestSales.length);
 
   const formatCurrency = (value: number) => `$${Math.round(value).toLocaleString('es-CO')}`;
   const roundToHundred = (value: number) => {
@@ -182,6 +190,11 @@ export function Reports() {
 
     return Array.from(grouped.values()).sort((a, b) => b.totalCost - a.totalCost);
   }, [inventoryTaxDetails]);
+
+  const visibleInventoryTaxDetails = showAllInventoryRows
+    ? inventoryTaxDetails
+    : inventoryTaxDetails.slice(0, inventoryRowsCollapsedLimit);
+  const hiddenInventoryRowsCount = Math.max(0, inventoryTaxDetails.length - visibleInventoryTaxDetails.length);
 
   const formatPaymentMethodLabel = (method: string) => {
     const normalized = method?.toLowerCase?.() || 'otro';
@@ -373,6 +386,137 @@ export function Reports() {
         </Card>
       </div>
 
+      {/* Listado de ventas */}
+      <Card className="p-6">
+        <h3 className="text-lg font-bold mb-4">Últimas Transacciones</h3>
+        <p className="mb-3 text-sm text-gray-600">
+          Mostrando {visibleLatestSales.length} de {latestSales.length} transacciones.
+        </p>
+        <div className="md:hidden space-y-3">
+          {visibleLatestSales.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">No hay transacciones</div>
+          ) : (
+            visibleLatestSales.map(sale => {
+              const isReturned = isSaleReturned(sale);
+              return (
+                <div key={sale.id} className="rounded-lg border border-border bg-white p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm text-gray-600">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</p>
+                      <p className="font-semibold">{sale.invoiceNumber || sale.id}</p>
+                      <p className="text-xs text-gray-500">{formatSaleItemsSummary(sale)}</p>
+                      <p className="text-xs text-gray-500">{formatSalePaymentBreakdown(sale)}</p>
+                    </div>
+                    <span className="font-bold text-[#2ECC71]">{formatRoundedCurrency(sale.total)}</span>
+                  </div>
+
+                  <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
+                      onClick={() => handleShareWhatsapp(sale)}
+                    >
+                      <Share2 className="w-4 h-4 mr-1" />
+                      WhatsApp
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={isReturned}
+                      onClick={() => handleReturnSale(sale.id, sale.invoiceNumber)}
+                    >
+                      {isReturned ? 'Devuelto' : 'Devolver'}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-secondary border-b">
+              <tr>
+                <th className="text-left p-3">Fecha</th>
+                <th className="text-left p-3">Factura</th>
+                <th className="text-left p-3">Detalle compra</th>
+                <th className="text-left p-3">Método Pago</th>
+                <th className="text-right p-3">Total</th>
+                <th className="text-right p-3">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleLatestSales.map(sale => {
+                const isReturned = isSaleReturned(sale);
+                return (
+                  <tr key={sale.id} className="border-b">
+                    <td className="p-3">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</td>
+                    <td className="p-3">{sale.invoiceNumber || sale.id}</td>
+                    <td className="p-3 align-top">
+                      <div className="space-y-1 text-sm">
+                        {sale.items.length === 0 ? (
+                          <span className="text-gray-500">Sin productos</span>
+                        ) : (
+                          sale.items.map((item, index) => (
+                            <p key={`${item.product.id}-${index}`} className="leading-snug">
+                              {item.product.name} x{item.quantity}
+                            </p>
+                          ))
+                        )}
+                      </div>
+                    </td>
+                    <td className="p-3">{formatSalePaymentBreakdown(sale)}</td>
+                    <td className="p-3 text-right font-bold text-[#2ECC71]">{formatRoundedCurrency(sale.total)}</td>
+                    <td className="p-3 text-right">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
+                          onClick={() => handleShareWhatsapp(sale)}
+                        >
+                          <Share2 className="w-4 h-4 mr-1" />
+                          WhatsApp
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isReturned}
+                          onClick={() => handleReturnSale(sale.id, sale.invoiceNumber)}
+                        >
+                          {isReturned ? 'Devuelto' : 'Devolver'}
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {!showAllLatestSales && hiddenLatestSalesCount > 0 ? (
+          <div className="flex justify-center pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAllLatestSales(true)}
+              className="rounded-full"
+            >
+              <ChevronDown className="w-4 h-4 mr-1" />
+              Ver listado completo
+            </Button>
+          </div>
+        ) : null}
+        {!showAllLatestSales && hiddenLatestSalesCount > 0 ? (
+          <p className="text-sm text-gray-600">
+            {hiddenLatestSalesCount} transacciones ocultas. Usa "Ver listado completo" para desplegarlas.
+          </p>
+        ) : null}
+      </Card>
+
       {/* Reporte de costos e impuestos del inventario */}
       <Card className="p-6 space-y-4">
         <div className="flex flex-col gap-1">
@@ -430,6 +574,15 @@ export function Reports() {
           </table>
         </div>
 
+        <div>
+          <div>
+            <h4 className="font-semibold">Detalle por producto</h4>
+            <p className="text-sm text-gray-600">
+              Mostrando {visibleInventoryTaxDetails.length} de {inventoryTaxDetails.length} productos con stock.
+            </p>
+          </div>
+        </div>
+
         <div className="overflow-x-auto rounded-lg border">
           <table className="w-full min-w-[1200px]">
             <thead className="bg-secondary border-b">
@@ -453,7 +606,7 @@ export function Reports() {
                   <td className="p-4 text-center text-gray-500" colSpan={11}>No hay inventario con stock disponible.</td>
                 </tr>
               ) : (
-                inventoryTaxDetails.map((detail) => (
+                visibleInventoryTaxDetails.map((detail) => (
                   <tr key={detail.id} className="border-b align-top">
                     <td className="p-3 font-medium">{detail.name}</td>
                     <td className="p-3">{detail.category}</td>
@@ -472,116 +625,56 @@ export function Reports() {
             </tbody>
           </table>
         </div>
+        {!showAllInventoryRows && hiddenInventoryRowsCount > 0 ? (
+          <div className="flex justify-center pt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAllInventoryRows(true)}
+              className="rounded-full"
+            >
+              <ChevronDown className="w-4 h-4 mr-1" />
+              Ver listado completo
+            </Button>
+          </div>
+        ) : null}
+        {!showAllInventoryRows && hiddenInventoryRowsCount > 0 ? (
+          <p className="text-sm text-gray-600">
+            {hiddenInventoryRowsCount} productos ocultos. Usa "Ver listado completo" para desplegarlos.
+          </p>
+        ) : null}
       </Card>
 
-      {/* Listado de ventas */}
-      <Card className="p-6">
-        <h3 className="text-lg font-bold mb-4">Últimas Transacciones</h3>
-        <div className="md:hidden space-y-3">
-          {latestSales.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">No hay transacciones</div>
-          ) : (
-            latestSales.map(sale => {
-              const isReturned = isSaleReturned(sale);
-              return (
-                <div key={sale.id} className="rounded-lg border border-border bg-white p-3 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm text-gray-600">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</p>
-                      <p className="font-semibold">{sale.invoiceNumber || sale.id}</p>
-                      <p className="text-xs text-gray-500">{formatSaleItemsSummary(sale)}</p>
-                      <p className="text-xs text-gray-500">{formatSalePaymentBreakdown(sale)}</p>
-                    </div>
-                    <span className="font-bold text-[#2ECC71]">{formatRoundedCurrency(sale.total)}</span>
-                  </div>
-
-                  <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
-                      onClick={() => handleShareWhatsapp(sale)}
-                    >
-                      <Share2 className="w-4 h-4 mr-1" />
-                      WhatsApp
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={isReturned}
-                      onClick={() => handleReturnSale(sale.id, sale.invoiceNumber)}
-                    >
-                      {isReturned ? 'Devuelto' : 'Devolver'}
-                    </Button>
-                  </div>
-                </div>
-              );
-            })
-          )}
+      {(showAllLatestSales && latestSales.length > latestSalesCollapsedLimit)
+      || (showAllInventoryRows && inventoryTaxDetails.length > inventoryRowsCollapsedLimit) ? (
+        <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 flex-col gap-2 sm:left-auto sm:right-6 sm:translate-x-0">
+          {showAllLatestSales && latestSales.length > latestSalesCollapsedLimit ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAllLatestSales(false)}
+              className="rounded-full bg-white/95 shadow-lg backdrop-blur"
+            >
+              <ChevronUp className="w-4 h-4 mr-1" />
+              Ocultar transacciones
+            </Button>
+          ) : null}
+          {showAllInventoryRows && inventoryTaxDetails.length > inventoryRowsCollapsedLimit ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAllInventoryRows(false)}
+              className="rounded-full bg-white/95 shadow-lg backdrop-blur"
+            >
+              <ChevronUp className="w-4 h-4 mr-1" />
+              Ocultar inventario
+            </Button>
+          ) : null}
         </div>
-
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-secondary border-b">
-              <tr>
-                <th className="text-left p-3">Fecha</th>
-                <th className="text-left p-3">Factura</th>
-                <th className="text-left p-3">Detalle compra</th>
-                <th className="text-left p-3">Método Pago</th>
-                <th className="text-right p-3">Total</th>
-                <th className="text-right p-3">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {latestSales.map(sale => {
-                const isReturned = isSaleReturned(sale);
-                return (
-                  <tr key={sale.id} className="border-b">
-                    <td className="p-3">{format(new Date(sale.date), "d MMM, HH:mm", { locale: es })}</td>
-                    <td className="p-3">{sale.invoiceNumber || sale.id}</td>
-                    <td className="p-3 align-top">
-                      <div className="space-y-1 text-sm">
-                        {sale.items.length === 0 ? (
-                          <span className="text-gray-500">Sin productos</span>
-                        ) : (
-                          sale.items.map((item, index) => (
-                            <p key={`${item.product.id}-${index}`} className="leading-snug">
-                              {item.product.name} x{item.quantity}
-                            </p>
-                          ))
-                        )}
-                      </div>
-                    </td>
-                    <td className="p-3">{formatSalePaymentBreakdown(sale)}</td>
-                    <td className="p-3 text-right font-bold text-[#2ECC71]">{formatRoundedCurrency(sale.total)}</td>
-                    <td className="p-3 text-right">
-                      <div className="flex flex-wrap justify-end gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="border-[#25D366] text-[#25D366] hover:bg-[#25D366]/10"
-                          onClick={() => handleShareWhatsapp(sale)}
-                        >
-                          <Share2 className="w-4 h-4 mr-1" />
-                          WhatsApp
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={isReturned}
-                          onClick={() => handleReturnSale(sale.id, sale.invoiceNumber)}
-                        >
-                          {isReturned ? 'Devuelto' : 'Devolver'}
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      ) : null}
     </div>
   );
 }

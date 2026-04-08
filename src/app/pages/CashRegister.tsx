@@ -40,6 +40,8 @@ const roundToHundred = (value: number) => {
 };
 
 const formatCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
+const formatDenomination = (value: number) => `$${Math.trunc(value).toLocaleString('es-CO')}`;
+const formatExactCurrency = (value: number) => `$${Math.round(value).toLocaleString('es-CO')}`;
 
 const formatMethodLabel = (method: string) => {
   const normalized = method?.toLowerCase?.() || 'otro';
@@ -91,6 +93,7 @@ export function CashRegister() {
     cashMovements,
     openCashSession,
     startCashCounting,
+    cancelCashCounting,
     closeCashSession,
     clearSelectedCashReports,
     verifyAdminPasswordForCriticalAction,
@@ -114,8 +117,10 @@ export function CashRegister() {
   const [selectedClosedSessionId, setSelectedClosedSessionId] = useState<string | null>(null);
   const [selectedClosedSessionIds, setSelectedClosedSessionIds] = useState<string[]>([]);
   const [showDeleteSelectedDialog, setShowDeleteSelectedDialog] = useState(false);
+  const [showCancelCountingDialog, setShowCancelCountingDialog] = useState(false);
   const [isDeletingSelectedReports, setIsDeletingSelectedReports] = useState(false);
   const [deleteConfirmationPassword, setDeleteConfirmationPassword] = useState('');
+  const [showAllActiveMovements, setShowAllActiveMovements] = useState(false);
 
   const currentStatus = currentCashSession?.status;
   const isOpen = currentStatus === 'open';
@@ -125,6 +130,15 @@ export function CashRegister() {
   const activeMovements = currentCashSession
     ? cashMovements.filter(movement => movement.cashSessionId === currentCashSession.id)
     : [];
+  const activeMovementsCollapsedLimit = 5;
+  const latestActiveMovements = useMemo(
+    () => activeMovements.slice(-10).reverse(),
+    [activeMovements],
+  );
+  const visibleActiveMovements = showAllActiveMovements
+    ? latestActiveMovements
+    : latestActiveMovements.slice(0, activeMovementsCollapsedLimit);
+  const hiddenActiveMovementsCount = Math.max(0, latestActiveMovements.length - visibleActiveMovements.length);
 
   const closedSessions = useMemo(() => cashSessions
     .filter((session) => session.status === 'closed' || session.status === 'closed_with_difference')
@@ -247,6 +261,13 @@ export function CashRegister() {
 
   const handleStartCounting = async () => {
     await startCashCounting();
+  };
+
+  const handleCancelCounting = async () => {
+    const cancelled = await cancelCashCounting();
+    if (cancelled) {
+      setShowCancelCountingDialog(false);
+    }
   };
 
   const billRows = useMemo(() => CASH_BILL_DENOMINATIONS.map((denomination) => {
@@ -520,22 +541,33 @@ export function CashRegister() {
                 </Button>
               )}
               {isCounting && (
-                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
-                  Arqueo en curso: ingresa la cantidad por denominación para calcular el total contado.
+                <div className="flex flex-col gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-blue-700">
+                    Arqueo en curso: ingresa la cantidad por denominación para calcular el total contado.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowCancelCountingDialog(true)}
+                    className="h-8 border-blue-300 text-blue-700 hover:bg-blue-100"
+                  >
+                    Salir del arqueo
+                  </Button>
                 </div>
               )}
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <p className="text-xs text-slate-600">Total contado (billetes + monedas)</p>
-                <p className="text-lg font-bold text-slate-800">{formatCurrency(countedPreview)}</p>
+                <p className="text-lg font-bold text-slate-800">{formatExactCurrency(countedPreview)}</p>
               </div>
               {isCounting && (
-                <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                  <div className="rounded-lg border border-slate-200 p-3">
+                <div className="flex flex-wrap gap-4">
+                  <div className="min-w-[260px] flex-1 rounded-lg border border-slate-200 p-3">
                     <p className="mb-2 text-sm font-semibold text-slate-700">Billetes</p>
                     <div className="space-y-2">
                       {billRows.map((row) => (
-                        <div key={row.denomination} className="grid grid-cols-[90px_1fr_120px] items-center gap-2">
-                          <span className="text-sm text-slate-700">{formatCurrency(row.denomination)}</span>
+                        <div key={row.denomination} className="grid grid-cols-[68px_84px_minmax(80px,1fr)] items-center gap-2 sm:grid-cols-[88px_96px_minmax(96px,1fr)] sm:gap-3">
+                          <span className="whitespace-nowrap text-sm text-slate-700 tabular-nums">{formatDenomination(row.denomination)}</span>
                           <Input
                             type="number"
                             min="0"
@@ -546,23 +578,23 @@ export function CashRegister() {
                               [String(row.denomination)]: event.target.value,
                             }))}
                             placeholder="0"
-                            className="h-9"
+                            className="h-11 w-full text-center text-base font-semibold tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                           />
-                          <span className="text-right text-sm font-medium text-slate-800">{formatCurrency(row.subtotal)}</span>
+                          <span className="whitespace-nowrap text-right text-xs font-medium text-slate-800 tabular-nums sm:text-sm">{formatExactCurrency(row.subtotal)}</span>
                         </div>
                       ))}
                     </div>
                     <div className="mt-3 border-t border-slate-200 pt-2 text-sm font-semibold text-slate-800">
-                      Total billetes: {formatCurrency(billsTotal)}
+                      Total billetes: {formatExactCurrency(billsTotal)}
                     </div>
                   </div>
 
-                  <div className="rounded-lg border border-slate-200 p-3">
+                  <div className="min-w-[320px] flex-[1.18] rounded-lg border border-slate-200 p-3">
                     <p className="mb-2 text-sm font-semibold text-slate-700">Monedas</p>
                     <div className="space-y-2">
                       {coinRows.map((row) => (
-                        <div key={row.denomination} className="grid grid-cols-[90px_1fr_120px] items-center gap-2">
-                          <span className="text-sm text-slate-700">{formatCurrency(row.denomination)}</span>
+                        <div key={row.denomination} className="grid grid-cols-[68px_84px_minmax(80px,1fr)] items-center gap-2 sm:grid-cols-[88px_96px_minmax(96px,1fr)] sm:gap-3">
+                          <span className="whitespace-nowrap text-sm text-slate-700 tabular-nums">{formatDenomination(row.denomination)}</span>
                           <Input
                             type="number"
                             min="0"
@@ -573,14 +605,14 @@ export function CashRegister() {
                               [String(row.denomination)]: event.target.value,
                             }))}
                             placeholder="0"
-                            className="h-9"
+                            className="h-11 w-full text-center text-base font-semibold tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                           />
-                          <span className="text-right text-sm font-medium text-slate-800">{formatCurrency(row.subtotal)}</span>
+                          <span className="whitespace-nowrap text-right text-xs font-medium text-slate-800 tabular-nums sm:text-sm">{formatExactCurrency(row.subtotal)}</span>
                         </div>
                       ))}
                     </div>
                     <div className="mt-3 border-t border-slate-200 pt-2 text-sm font-semibold text-slate-800">
-                      Total monedas: {formatCurrency(coinsTotal)}
+                      Total monedas: {formatExactCurrency(coinsTotal)}
                     </div>
                   </div>
                 </div>
@@ -597,7 +629,7 @@ export function CashRegister() {
               <div className="p-4 rounded-lg bg-secondary">
                 <p className="text-xs text-gray-600">Diferencia estimada</p>
                 <p className={`text-xl font-bold ${differencePreview >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                  {formatCurrency(differencePreview)}
+                  {formatExactCurrency(differencePreview)}
                 </p>
                 <p className="mt-1 text-xs text-gray-500">
                   {differencePreview > 0 && 'Hay sobrante frente al esperado.'}
@@ -638,8 +670,10 @@ export function CashRegister() {
             <FileText className="w-5 h-5 text-gray-500" />
             <h2 className="text-lg font-bold">Movimientos registrados</h2>
           </div>
-          <p className="mb-4 text-sm text-gray-600">Se muestran los últimos 10 movimientos de caja de la sesión actual.</p>
-          {activeMovements.length === 0 ? (
+          <p className="mb-4 text-sm text-gray-600">
+            Mostrando {visibleActiveMovements.length} de {latestActiveMovements.length} movimientos de la sesión actual.
+          </p>
+          {latestActiveMovements.length === 0 ? (
             <p className="text-sm text-gray-500">No hay movimientos registrados en esta sesión.</p>
           ) : (
             <div className="overflow-x-auto">
@@ -653,7 +687,7 @@ export function CashRegister() {
                   </tr>
                 </thead>
                 <tbody>
-                  {activeMovements.slice(-10).reverse().map((movement) => (
+                  {visibleActiveMovements.map((movement) => (
                     <tr key={movement.id} className="border-b">
                       <td className="p-3">{format(new Date(movement.date), "d MMM, HH:mm", { locale: es })}</td>
                       <td className="p-3">
@@ -686,8 +720,42 @@ export function CashRegister() {
               </table>
             </div>
           )}
+          {!showAllActiveMovements && hiddenActiveMovementsCount > 0 ? (
+            <div className="flex justify-center pt-3">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setShowAllActiveMovements(true)}
+                className="rounded-full"
+              >
+                <ArrowDownCircle className="w-4 h-4 mr-1" />
+                Ver listado completo
+              </Button>
+            </div>
+          ) : null}
+          {!showAllActiveMovements && hiddenActiveMovementsCount > 0 ? (
+            <p className="text-sm text-gray-600">
+              {hiddenActiveMovementsCount} movimientos ocultos. Usa "Ver listado completo" para desplegarlos.
+            </p>
+          ) : null}
         </Card>
       )}
+
+      {showAllActiveMovements && latestActiveMovements.length > activeMovementsCollapsedLimit ? (
+        <div className="fixed bottom-4 left-1/2 z-50 -translate-x-1/2 sm:left-auto sm:right-6 sm:translate-x-0">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAllActiveMovements(false)}
+            className="rounded-full bg-white/95 shadow-lg backdrop-blur"
+          >
+            <ArrowUpCircle className="w-4 h-4 mr-1" />
+            Ocultar listado
+          </Button>
+        </div>
+      ) : null}
 
       {lastClosedSession && lastClosedReport && (
         <Card className="p-6">
@@ -921,9 +989,9 @@ export function CashRegister() {
                           const subtotal = denomination * qty;
                           return (
                             <div key={denomination} className="grid grid-cols-[110px_1fr_120px] items-center gap-2 text-sm">
-                              <span>{formatCurrency(denomination)}</span>
+                              <span>{formatDenomination(denomination)}</span>
                               <span>Cantidad: {qty}</span>
-                              <span className="text-right font-semibold">{formatCurrency(subtotal)}</span>
+                              <span className="text-right font-semibold">{formatExactCurrency(subtotal)}</span>
                             </div>
                           );
                         })}
@@ -932,7 +1000,7 @@ export function CashRegister() {
                       )}
                     </div>
                     <div className="mt-3 border-t border-slate-200 pt-2 text-sm font-semibold text-slate-800">
-                      Total billetes: {formatCurrency(selectedClosedSession.countedCashBreakdown.billsTotal)}
+                      Total billetes: {formatExactCurrency(selectedClosedSession.countedCashBreakdown.billsTotal)}
                     </div>
                   </div>
 
@@ -946,9 +1014,9 @@ export function CashRegister() {
                           const subtotal = denomination * qty;
                           return (
                             <div key={denomination} className="grid grid-cols-[110px_1fr_120px] items-center gap-2 text-sm">
-                              <span>{formatCurrency(denomination)}</span>
+                              <span>{formatDenomination(denomination)}</span>
                               <span>Cantidad: {qty}</span>
-                              <span className="text-right font-semibold">{formatCurrency(subtotal)}</span>
+                              <span className="text-right font-semibold">{formatExactCurrency(subtotal)}</span>
                             </div>
                           );
                         })}
@@ -957,7 +1025,7 @@ export function CashRegister() {
                       )}
                     </div>
                     <div className="mt-3 border-t border-slate-200 pt-2 text-sm font-semibold text-slate-800">
-                      Total monedas: {formatCurrency(selectedClosedSession.countedCashBreakdown.coinsTotal)}
+                      Total monedas: {formatExactCurrency(selectedClosedSession.countedCashBreakdown.coinsTotal)}
                     </div>
                   </div>
                 </div>
@@ -1014,6 +1082,31 @@ export function CashRegister() {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={showCancelCountingDialog}
+        onOpenChange={setShowCancelCountingDialog}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Salir del arqueo?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Volverás la caja al estado abierta y podrás continuar con ventas normales.
+              Los valores que escribiste en billetes y monedas no se guardarán para el cierre.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCancelCounting}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              Sí, salir del arqueo
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={showDeleteSelectedDialog}

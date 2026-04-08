@@ -636,6 +636,7 @@ interface POSContextType {
   currentCashSession: CashSession | null;
   openCashSession: (openingCash: number, openingNote?: string) => Promise<boolean>;
   startCashCounting: () => Promise<boolean>;
+  cancelCashCounting: () => Promise<boolean>;
   closeCashSession: (
     countedCash: number,
     closingNote?: string,
@@ -2839,6 +2840,42 @@ export function POSProvider({ children }: { children: ReactNode }) {
     return true;
   };
 
+  const cancelCashCounting = async (): Promise<boolean> => {
+    if (!currentCashSession) {
+      toast.error('No hay una caja activa.');
+      return false;
+    }
+
+    if (currentCashSession.status !== 'counting') {
+      toast.info('La caja no está en arqueo.');
+      return true;
+    }
+
+    const updated: CashSession = {
+      ...currentCashSession,
+      status: 'open',
+    };
+
+    setCashSessions((prev) => prev.map((sessionItem) => (
+      sessionItem.id === currentCashSession.id ? updated : sessionItem
+    )));
+
+    if (isConnectedToSupabase && session && currentStoreId && uuidLike(currentCashSession.id)) {
+      try {
+        await updateCashSession(session.access_token, currentStoreId, currentCashSession.id, {
+          status: 'open',
+        });
+      } catch (error) {
+        console.error('No se pudo cancelar arqueo en Supabase', error);
+        markPendingSync();
+        toast.error('Se salió del arqueo localmente, pero falló en Supabase.');
+      }
+    }
+
+    toast.success('Saliste del arqueo. La caja vuelve a estado abierta.');
+    return true;
+  };
+
   const closeCashSession = async (
     countedCash: number,
     closingNote?: string,
@@ -4063,6 +4100,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       currentCashSession,
       openCashSession,
       startCashCounting,
+      cancelCashCounting,
       closeCashSession,
       clearSelectedCashReports,
       clearCashReports,
