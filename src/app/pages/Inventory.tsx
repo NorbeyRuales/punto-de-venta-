@@ -17,6 +17,16 @@ import {
   History
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip';
 import { toast } from 'sonner';
@@ -31,6 +41,11 @@ type BarcodeLookupResponse = {
   detalle?: string;
   fuente?: string;
 };
+
+type InventoryConfirmation =
+  | { type: 'discard-add' }
+  | { type: 'discard-edit' }
+  | { type: 'delete-product'; product: Product };
 
 // Endpoint de Edge Function para buscar info por código de barras.
 const barcodeLookupUrl = (barcode: string) =>
@@ -75,6 +90,8 @@ export function Inventory() {
   const [showKardexDialog, setShowKardexDialog] = useState(false);
   const [selectedKardexProduct, setSelectedKardexProduct] = useState<Product | null>(null);
   const [isTopAddButtonVisible, setIsTopAddButtonVisible] = useState(true);
+  const [pendingConfirmation, setPendingConfirmation] = useState<InventoryConfirmation | null>(null);
+  const [isRunningConfirmationAction, setIsRunningConfirmationAction] = useState(false);
   const topAddButtonRef = useRef<HTMLDivElement>(null);
   // Formularios y valores derivados.
   const defaultCategory = categories[0] || 'General';
@@ -100,6 +117,10 @@ export function Inventory() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [visibleRowsCount, setVisibleRowsCount] = useState(120);
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 767px)').matches;
+  });
 
   // Cálculos automáticos de costos/IVA/utilidad.
   const purchaseCost = parseFloat(formData.costPrice) || 0;
@@ -467,17 +488,8 @@ export function Inventory() {
     resetForm();
   };
 
-  const handleDeleteProduct = async (product: Product) => {
-    const confirmed = confirm(`¿Eliminar "${product.name}"? Esta acción no se puede deshacer.`);
-    if (!confirmed) return;
-    const status = await deleteProduct(product.id);
-    if (status === 'failed') return;
-
-    if (status === 'remote-synced') {
-      toast.success('Producto eliminado en la base de datos.');
-    } else {
-      toast.info('Producto eliminado localmente. Quedó pendiente de sincronización manual.');
-    }
+  const handleDeleteProduct = (product: Product) => {
+    setPendingConfirmation({ type: 'delete-product', product });
   };
 
   const openEditDialog = (product: Product) => {
@@ -513,8 +525,8 @@ export function Inventory() {
 
   const handleAddDialogChange = (open: boolean) => {
     if (!open && isAddDirty) {
-      const confirmed = confirm('Tienes cambios sin guardar. ¿Cerrar sin guardar?');
-      if (!confirmed) return;
+      setPendingConfirmation({ type: 'discard-add' });
+      return;
     }
     setShowAddDialog(open);
     if (!open) {
@@ -527,8 +539,8 @@ export function Inventory() {
 
   const handleEditDialogChange = (open: boolean) => {
     if (!open && isEditDirty) {
-      const confirmed = confirm('Tienes cambios sin guardar. ¿Cerrar sin guardar?');
-      if (!confirmed) return;
+      setPendingConfirmation({ type: 'discard-edit' });
+      return;
     }
     setShowEditDialog(open);
     if (!open) {
@@ -537,6 +549,49 @@ export function Inventory() {
       return;
     }
     setFormErrors({});
+  };
+
+  const closeAddDialog = () => {
+    setShowAddDialog(false);
+    resetForm();
+  };
+
+  const closeEditDialog = () => {
+    setShowEditDialog(false);
+    setSelectedProduct(null);
+    resetForm();
+  };
+
+  const handleConfirmationAction = async () => {
+    if (!pendingConfirmation) return;
+
+    if (pendingConfirmation.type === 'discard-add') {
+      closeAddDialog();
+      setPendingConfirmation(null);
+      return;
+    }
+
+    if (pendingConfirmation.type === 'discard-edit') {
+      closeEditDialog();
+      setPendingConfirmation(null);
+      return;
+    }
+
+    setIsRunningConfirmationAction(true);
+    try {
+      const status = await deleteProduct(pendingConfirmation.product.id);
+      if (status === 'failed') return;
+
+      if (status === 'remote-synced') {
+        toast.success('Producto eliminado en la base de datos.');
+      } else {
+        toast.info('Producto eliminado localmente. Quedó pendiente de sincronización manual.');
+      }
+
+      setPendingConfirmation(null);
+    } finally {
+      setIsRunningConfirmationAction(false);
+    }
   };
 
   // Exportación rápida de inventario a CSV.
@@ -752,6 +807,25 @@ export function Inventory() {
     observer.observe(topButtonNode);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mediaQuery = window.matchMedia('(max-width: 767px)');
+    const handleViewportChange = (event: MediaQueryListEvent) => {
+      setIsMobileViewport(event.matches);
+    };
+
+    setIsMobileViewport(mediaQuery.matches);
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', handleViewportChange);
+      return () => mediaQuery.removeEventListener('change', handleViewportChange);
+    }
+
+    mediaQuery.addListener(handleViewportChange);
+    return () => mediaQuery.removeListener(handleViewportChange);
+  }, []);
 return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -849,212 +923,216 @@ return (
 
       {/* Tabla de productos */}
       <Card className="overflow-hidden rounded-2xl bg-[var(--card)] border-[var(--border)] shadow-[0_14px_34px_rgba(67,91,154,0.16)]">
-        <div className="md:hidden p-4 space-y-3">
-          {filteredProducts.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <Package className="w-10 h-10 mx-auto mb-3 opacity-50" />
-              <p>No se encontraron productos</p>
-            </div>
-          ) : (
-            visibleProducts.map(product => {
-              const metrics = productMetricsById.get(product.id);
-              if (!metrics) return null;
-              return (
-              <div key={product.id} className="rounded-lg border border-border bg-white p-3 space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold">{product.name}</p>
-                    <p className="text-xs text-gray-600">
-                      {product.category}
-                      {product.supplierName ? ` · ${product.supplierName}` : ''}
-                    </p>
-                  </div>
-                  <span className="text-sm font-semibold text-[#2ECC71]">
-                    ${metrics.roundedSalePrice.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
-                  <div>
-                    <p>Stock</p>
-                    <p className={`font-semibold ${
-                      metrics.isLowStock ? 'text-red-600' : 'text-gray-900'
-                    }`}>
-                      {product.stock} {product.unit}
-                    </p>
-                  </div>
-                  <div>
-                    <p>Utilidad</p>
-                    <p className="font-semibold text-[#8E44AD]">
-                      {metrics.profitMargin.toFixed(2)}%
-                    </p>
-                  </div>
-                  <div>
-                    <p>Precio c/IVA</p>
-                    <p className="font-semibold text-gray-900">
-                      ${metrics.costWithIva.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
-                    </p>
-                  </div>
-                  <div>
-                    <p>Costo uni</p>
-                    <p className="font-semibold text-gray-900">
-                      ${metrics.unitCost.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => openKardexDialog(product)}
-                    aria-label="Ver kardex"
-                    title="Ver kardex"
-                  >
-                    <History className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => openEditDialog(product)}
-                    aria-label="Editar producto"
-                    title="Editar producto"
-                  >
-                    <Edit className="w-4 h-4" />
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="text-red-600 hover:text-red-700"
-                    onClick={() => handleDeleteProduct(product)}
-                    aria-label="Eliminar producto"
-                    title="Eliminar producto"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
-                </div>
+        {isMobileViewport ? (
+          <div className="md:hidden p-4 space-y-3">
+            {filteredProducts.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <Package className="w-10 h-10 mx-auto mb-3 opacity-50" />
+                <p>No se encontraron productos</p>
               </div>
-            )})
-          )}
-        </div>
+            ) : (
+              visibleProducts.map(product => {
+                const metrics = productMetricsById.get(product.id);
+                if (!metrics) return null;
+                return (
+                  <div key={product.id} className="rounded-lg border border-border bg-white p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold">{product.name}</p>
+                        <p className="text-xs text-gray-600">
+                          {product.category}
+                          {product.supplierName ? ` · ${product.supplierName}` : ''}
+                        </p>
+                      </div>
+                      <span className="text-sm font-semibold text-[#2ECC71]">
+                        ${metrics.roundedSalePrice.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
 
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full min-w-[980px]">
-            <thead className="bg-[var(--secondary-soft)] border-b border-[var(--border)]">
-              <tr>
-                <th className="text-left p-3 sm:p-4 font-semibold">Detalle</th>
-                <th className="text-center p-3 sm:p-4 font-semibold">Unid</th>
-                <th className="text-right p-3 sm:p-4 font-semibold">Precio con IVA</th>
-                <th className="text-right p-3 sm:p-4 font-semibold">Precio costo uni</th>
-                <th className="text-right p-3 sm:p-4 font-semibold">Precio venta</th>
-                <th className="text-right p-3 sm:p-4 font-semibold">Utilidad (%)</th>
-                <th className="text-center p-3 sm:p-4 font-semibold">Stock</th>
-                <th className="text-center p-3 sm:p-4 font-semibold">Acciones</th>
-                </tr>
-                </thead>
-            <tbody>
-              {filteredProducts.length === 0 ? (
+                    <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
+                      <div>
+                        <p>Stock</p>
+                        <p className={`font-semibold ${
+                          metrics.isLowStock ? 'text-red-600' : 'text-gray-900'
+                        }`}>
+                          {product.stock} {product.unit}
+                        </p>
+                      </div>
+                      <div>
+                        <p>Utilidad</p>
+                        <p className="font-semibold text-[#8E44AD]">
+                          {metrics.profitMargin.toFixed(2)}%
+                        </p>
+                      </div>
+                      <div>
+                        <p>Precio c/IVA</p>
+                        <p className="font-semibold text-gray-900">
+                          ${metrics.costWithIva.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                        </p>
+                      </div>
+                      <div>
+                        <p>Costo uni</p>
+                        <p className="font-semibold text-gray-900">
+                          ${metrics.unitCost.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openKardexDialog(product)}
+                        aria-label="Ver kardex"
+                        title="Ver kardex"
+                      >
+                        <History className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => openEditDialog(product)}
+                        aria-label="Editar producto"
+                        title="Editar producto"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-red-600 hover:text-red-700"
+                        onClick={() => handleDeleteProduct(product)}
+                        aria-label="Eliminar producto"
+                        title="Eliminar producto"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        ) : (
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full min-w-[980px]">
+              <thead className="bg-[var(--secondary-soft)] border-b border-[var(--border)]">
                 <tr>
-                  <td colSpan={8} className="text-center py-12 text-gray-500">
-                    <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                    <p>No se encontraron productos</p>
-                  </td>
+                  <th className="text-left p-3 sm:p-4 font-semibold">Detalle</th>
+                  <th className="text-center p-3 sm:p-4 font-semibold">Unid</th>
+                  <th className="text-right p-3 sm:p-4 font-semibold">Precio con IVA</th>
+                  <th className="text-right p-3 sm:p-4 font-semibold">Precio costo uni</th>
+                  <th className="text-right p-3 sm:p-4 font-semibold">Precio venta</th>
+                  <th className="text-right p-3 sm:p-4 font-semibold">Utilidad (%)</th>
+                  <th className="text-center p-3 sm:p-4 font-semibold">Stock</th>
+                  <th className="text-center p-3 sm:p-4 font-semibold">Acciones</th>
                 </tr>
-              ) : (
-                visibleProducts.map(product => {
+              </thead>
+              <tbody>
+                {filteredProducts.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="text-center py-12 text-gray-500">
+                      <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                      <p>No se encontraron productos</p>
+                    </td>
+                  </tr>
+                ) : (
+                  visibleProducts.map(product => {
                     const metrics = productMetricsById.get(product.id);
                     if (!metrics) return null;
                     return (
-                    <tr key={product.id} className="border-b border-[var(--border)] even:bg-[rgba(206,181,255,0.12)] hover:bg-[rgba(206,181,255,0.22)] transition-colors">
-                    <td className="p-3 sm:p-4">
-                      <p className="font-semibold">{product.name}</p>
-                      <p className="text-sm text-gray-600">
-                        {product.category}
-                        {product.supplierName ? ` · ${product.supplierName}` : ''}
-                      </p>
-                    </td>
-                    <td className="p-3 sm:p-4 text-center font-medium">{metrics.unitsPerPurchase}</td>
-                    <td className="p-3 sm:p-4 text-right">
-                      ${metrics.costWithIva.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
-                    </td>
-                    <td className="p-3 sm:p-4 text-right">
-                      ${metrics.unitCost.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
-                    </td>
-                    <td className="p-3 sm:p-4 text-right font-semibold text-[#2ECC71]">
-                      ${metrics.roundedSalePrice.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
-                    </td>
-                    <td className="p-3 sm:p-4 text-right">
-                      <span className="font-semibold text-[#8E44AD]">
-                        {metrics.profitMargin.toFixed(2)}%
-                      </span>
-                    </td>
-                    <td className="p-3 sm:p-4 text-center">
-                      <span className={`font-semibold ${
-                        metrics.isLowStock
-                          ? 'text-red-600'
-                          : 'text-gray-900'
-                      }`}>
-                        {product.stock} {product.unit}
-                      </span>
-                      {metrics.isLowStock && (
-                        <p className="text-xs text-red-600">¡Stock bajo!</p>
-                      )}
-                    </td>
-                    <td className="p-3 sm:p-4"> {/* Acciones */}
-                      <div className="flex items-center justify-center gap-1 sm:gap-2">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => openKardexDialog(product)}
-                              aria-label="Ver kardex"
-                              title="Ver kardex"
-                            >
-                              <History className="w-4 h-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Ver kardex (historial)</TooltipContent>
-                        </Tooltip>
+                      <tr key={product.id} className="border-b border-[var(--border)] even:bg-[rgba(206,181,255,0.12)] hover:bg-[rgba(206,181,255,0.22)] transition-colors">
+                        <td className="p-3 sm:p-4">
+                          <p className="font-semibold">{product.name}</p>
+                          <p className="text-sm text-gray-600">
+                            {product.category}
+                            {product.supplierName ? ` · ${product.supplierName}` : ''}
+                          </p>
+                        </td>
+                        <td className="p-3 sm:p-4 text-center font-medium">{metrics.unitsPerPurchase}</td>
+                        <td className="p-3 sm:p-4 text-right">
+                          ${metrics.costWithIva.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="p-3 sm:p-4 text-right">
+                          ${metrics.unitCost.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="p-3 sm:p-4 text-right font-semibold text-[#2ECC71]">
+                          ${metrics.roundedSalePrice.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                        </td>
+                        <td className="p-3 sm:p-4 text-right">
+                          <span className="font-semibold text-[#8E44AD]">
+                            {metrics.profitMargin.toFixed(2)}%
+                          </span>
+                        </td>
+                        <td className="p-3 sm:p-4 text-center">
+                          <span className={`font-semibold ${
+                            metrics.isLowStock
+                              ? 'text-red-600'
+                              : 'text-gray-900'
+                          }`}>
+                            {product.stock} {product.unit}
+                          </span>
+                          {metrics.isLowStock && (
+                            <p className="text-xs text-red-600">¡Stock bajo!</p>
+                          )}
+                        </td>
+                        <td className="p-3 sm:p-4"> {/* Acciones */}
+                          <div className="flex items-center justify-center gap-1 sm:gap-2">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openKardexDialog(product)}
+                                  aria-label="Ver kardex"
+                                  title="Ver kardex"
+                                >
+                                  <History className="w-4 h-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Ver kardex (historial)</TooltipContent>
+                            </Tooltip>
 
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => openEditDialog(product)}
-                              aria-label="Editar producto"
-                              title="Editar producto"
-                            >
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Editar producto</TooltipContent>
-                        </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => openEditDialog(product)}
+                                  aria-label="Editar producto"
+                                  title="Editar producto"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Editar producto</TooltipContent>
+                            </Tooltip>
 
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="text-red-600 hover:text-red-700"
-                              onClick={() => handleDeleteProduct(product)}
-                              aria-label="Eliminar producto"
-                              title="Eliminar producto"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Eliminar producto</TooltipContent>
-                        </Tooltip>
-                      </div>
-                    </td>
-                  </tr>
-                )})
-              )}
-            </tbody>
-          </table>
-        </div>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-red-600 hover:text-red-700"
+                                  onClick={() => handleDeleteProduct(product)}
+                                  aria-label="Eliminar producto"
+                                  title="Eliminar producto"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Eliminar producto</TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {hasMoreProducts && (
@@ -1800,6 +1878,45 @@ return (
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={pendingConfirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && !isRunningConfirmationAction) {
+            setPendingConfirmation(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingConfirmation?.type === 'delete-product'
+                ? '¿Eliminar producto?'
+                : '¿Descartar cambios?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingConfirmation?.type === 'delete-product'
+                ? `Vas a eliminar "${pendingConfirmation.product.name}". Esta acción no se puede deshacer.`
+                : 'Tienes cambios sin guardar. Si continúas, se perderán los cambios realizados en este formulario.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isRunningConfirmationAction}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleConfirmationAction()}
+              disabled={isRunningConfirmationAction}
+              className={pendingConfirmation?.type === 'delete-product' ? 'bg-red-600 hover:bg-red-700' : undefined}
+            >
+              {isRunningConfirmationAction
+                ? 'Procesando...'
+                : pendingConfirmation?.type === 'delete-product'
+                  ? 'Sí, eliminar'
+                  : 'Sí, descartar'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
