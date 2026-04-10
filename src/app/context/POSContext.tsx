@@ -21,6 +21,7 @@ import {
   createKardexMovementRow,
   createProduct,
   createPurchaseWithItems,
+  deletePurchaseWithItems,
   createRechargeRow,
   createSaleDraftRow,
   createSupplierRow,
@@ -50,6 +51,7 @@ import {
   renameCategory,
   updateCashSession,
   updateManagedStoreUser,
+  updatePurchasePaid,
   updateSaleRow,
   updateSaleDraftRow,
   updateCustomerRow,
@@ -430,6 +432,8 @@ export interface Purchase {
   paid: boolean;
 }
 
+export type PurchaseInputItem = { productId: string; quantity: number; cost: number; unitsPerPackage?: number };
+
 export type PurchasePricePolicy = 'automatic' | 'manual';
 
 export interface KardexMovement {
@@ -707,9 +711,11 @@ interface POSContextType {
   deleteSupplier: (id: string) => Promise<ProductWriteStatus>;
   registerPurchase: (
     supplierId: string,
-    items: { productId: string; quantity: number; cost: number; unitsPerPackage?: number }[],
+    items: PurchaseInputItem[],
     options?: { pricePolicy?: PurchasePricePolicy }
   ) => void;
+  setPurchasePaid: (supplierId: string, purchaseId: string, paid: boolean) => Promise<ProductWriteStatus>;
+  deletePurchase: (supplierId: string, purchaseId: string) => Promise<ProductWriteStatus>;
   
   // Recargas
   recharges: RechargeTransaction[];
@@ -4075,7 +4081,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   const registerPurchase = (
     supplierId: string,
-    items: { productId: string; quantity: number; cost: number; unitsPerPackage?: number }[],
+    items: PurchaseInputItem[],
     options?: { pricePolicy?: PurchasePricePolicy }
   ) => {
     if (!requirePermission('purchases:register', 'No tienes permisos para registrar compras.')) {
@@ -4183,12 +4189,181 @@ export function POSProvider({ children }: { children: ReactNode }) {
         reference: purchaseReference,
         createdAt: newPurchase.date,
         items: purchaseItems,
+      }).then((remotePurchaseId) => {
+        if (!remotePurchaseId) {
+          markPendingSync();
+          return;
+        }
+
+        setSuppliers((prev) => prev.map((supplier) => {
+          if (supplier.id !== supplierId) return supplier;
+          return {
+            ...supplier,
+            purchases: supplier.purchases.map((purchase) => (
+              purchase.id === newPurchase.id
+                ? { ...purchase, id: remotePurchaseId }
+                : purchase
+            )),
+          };
+        }));
       }).catch((error) => {
         console.error('No se pudo guardar compra en Supabase', error);
         markPendingSync();
         toast.error('Compra guardada localmente, pero falló en Supabase.');
       });
     }
+  };
+
+  const setPurchasePaid = async (
+    supplierId: string,
+    purchaseId: string,
+    paid: boolean,
+  ): Promise<ProductWriteStatus> => {
+    if (!requirePermission('purchases:register', 'No tienes permisos para gestionar compras.')) {
+      return 'failed';
+    }
+
+    const supplier = suppliers.find((item) => item.id === supplierId);
+    if (!supplier) {
+      toast.error('Proveedor no encontrado.');
+      return 'failed';
+    }
+
+    const targetPurchase = supplier.purchases.find((purchase) => purchase.id === purchaseId);
+    if (!targetPurchase) {
+      toast.error('Compra no encontrada.');
+      return 'failed';
+    }
+
+    if (targetPurchase.paid === paid) {
+      return 'remote-synced';
+    }
+
+    const oldPending = targetPurchase.paid ? 0 : targetPurchase.total;
+    const nextPending = paid ? 0 : targetPurchase.total;
+    const nextDebt = roundMoney(Math.max(0, supplier.debt + (nextPending - oldPending)));
+    const nextPurchases = supplier.purchases.map((purchase) => (
+      purchase.id === purchaseId ? { ...purchase, paid } : purchase
+    ));
+
+    const supplierStatus = await applySupplierPatch(supplierId, {
+      purchases: nextPurchases,
+      debt: nextDebt,
+    });
+
+    if (supplierStatus === 'failed') return 'failed';
+
+    if (isConnectedToSupabase && session && currentStoreId && uuidLike(purchaseId)) {
+      try {
+        await updatePurchasePaid(session.access_token, currentStoreId, purchaseId, paid);
+      } catch (error) {
+        console.error('No se pudo actualizar compra en Supabase', error);
+        markPendingSync();
+        toast.error('Compra actualizada localmente, pero falló en Supabase.');
+        return 'local-pending';
+      }
+    }
+
+    return supplierStatus;
+  };
+
+  const deletePurchase = async (
+    supplierId: string,
+    purchaseId: string,
+  ): Promise<ProductWriteStatus> => {
+    if (!requirePermission('purchases:register', 'No tienes permisos para gestionar compras.')) {
+      return 'failed';
+    }
+
+    const supplier = suppliers.find((item) => item.id === supplierId);
+    if (!supplier) {
+      toast.error('Proveedor no encontrado.');
+      return 'failed';
+    }
+
+    const targetPurchase = supplier.purchases.find((purchase) => purchase.id === purchaseId);
+    if (!targetPurchase) {
+      toast.error('Compra no encontrada.');
+      return 'failed';
+    }
+
+    const unitsByProduct = new Map<string, number>();
+    for (const item of targetPurchase.items) {
+      const product = products.find((row) => row.id === item.productId);
+      if (!product) {
+        toast.error('No se puede eliminar: hay productos de la compra que ya no existen.');
+        return 'failed';
+      }
+
+      const unitsPerPackage = Number(item.unitsPerPackage ?? product.unitsPerPurchase ?? 1) || 1;
+      const enteredUnits = item.quantity * unitsPerPackage;
+      const current = unitsByProduct.get(item.productId) || 0;
+      unitsByProduct.set(item.productId, current + enteredUnits);
+    }
+
+    for (const [productId, enteredUnits] of unitsByProduct.entries()) {
+      const product = products.find((row) => row.id === productId);
+      if (!product) {
+        toast.error('No se puede eliminar: producto no encontrado.');
+        return 'failed';
+      }
+
+      const stockAfter = product.stock - enteredUnits;
+      if (stockAfter < 0) {
+        toast.error(`No puedes eliminar esta compra porque dejaría stock negativo en ${product.name}.`);
+        return 'failed';
+      }
+    }
+
+    for (const [productId, enteredUnits] of unitsByProduct.entries()) {
+      const product = products.find((row) => row.id === productId);
+      if (!product) continue;
+
+      const stockBefore = product.stock;
+      const stockAfter = stockBefore - enteredUnits;
+      const updateStatus = await applyProductPatch(productId, { stock: stockAfter });
+      if (updateStatus === 'failed') {
+        toast.error(`No se pudo actualizar stock para ${product.name}.`);
+        return 'failed';
+      }
+
+      const unitCost = buildUnitCostWithIva(product);
+      appendKardexMovement({
+        productId: product.id,
+        productName: product.name,
+        type: 'adjustment',
+        reference: `ANUL-${purchaseId}`,
+        quantity: -enteredUnits,
+        stockBefore,
+        stockAfter,
+        unitCost,
+        unitSalePrice: product.salePrice,
+        totalCost: -unitCost * enteredUnits,
+      });
+    }
+
+    const pendingValue = targetPurchase.paid ? 0 : targetPurchase.total;
+    const nextDebt = roundMoney(Math.max(0, supplier.debt - pendingValue));
+    const nextPurchases = supplier.purchases.filter((purchase) => purchase.id !== purchaseId);
+    const supplierStatus = await applySupplierPatch(supplierId, {
+      purchases: nextPurchases,
+      debt: nextDebt,
+    });
+
+    if (supplierStatus === 'failed') return 'failed';
+
+    if (isConnectedToSupabase && session && currentStoreId && uuidLike(purchaseId)) {
+      try {
+        await deletePurchaseWithItems(session.access_token, currentStoreId, purchaseId);
+      } catch (error) {
+        console.error('No se pudo eliminar compra en Supabase', error);
+        markPendingSync();
+        toast.error('Compra eliminada localmente, pero falló en Supabase.');
+        return 'local-pending';
+      }
+    }
+
+    return supplierStatus;
   };
 
   // Funciones de recargas
@@ -4353,6 +4528,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
       updateSupplier,
       deleteSupplier,
       registerPurchase,
+      setPurchasePaid,
+      deletePurchase,
       recharges,
       addRecharge,
       storeConfig,

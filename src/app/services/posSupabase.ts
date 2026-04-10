@@ -76,6 +76,7 @@ type PurchaseItemRow = {
   product_id: string | null;
   quantity_packages: number;
   package_cost: number;
+  units_per_package?: number | null;
 };
 
 type PurchaseRow = {
@@ -1014,6 +1015,87 @@ export async function createPurchaseWithItems(
   return purchaseId;
 }
 
+// Actualiza una compra y reemplaza sus ítems.
+export async function updatePurchaseWithItems(
+  token: string,
+  storeId: string,
+  purchaseId: string,
+  payload: {
+    supplierId?: string;
+    total: number;
+    paid: boolean;
+    pricePolicy: 'automatic' | 'manual';
+    reference?: string;
+    createdAt?: string;
+    items: Array<{
+      productId?: string;
+      productName: string;
+      quantityPackages: number;
+      unitsPerPackage: number;
+      enteredUnits: number;
+      packageCost: number;
+      unitCostWithIva: number;
+      subtotal: number;
+      createdAt?: string;
+    }>;
+  },
+): Promise<void> {
+  if (!uuidLike(purchaseId)) return;
+
+  const dbPatch: Record<string, unknown> = {
+    supplier_id: uuidLike(payload.supplierId) ? payload.supplierId : null,
+    total: payload.total,
+    paid: payload.paid,
+    price_policy: payload.pricePolicy,
+    reference: payload.reference || null,
+  };
+
+  if (payload.createdAt) {
+    dbPatch.created_at = payload.createdAt;
+  }
+
+  await updateRows('purchases', `store_id=eq.${storeId}&id=eq.${purchaseId}`, dbPatch, token);
+  await deleteRows('purchase_items', `store_id=eq.${storeId}&purchase_id=eq.${purchaseId}`, token);
+
+  if (payload.items.length === 0) return;
+
+  await insertRows('purchase_items', payload.items.map((item) => ({
+    purchase_id: purchaseId,
+    store_id: storeId,
+    product_id: uuidLike(item.productId) ? item.productId : null,
+    product_name: item.productName,
+    quantity_packages: item.quantityPackages,
+    units_per_package: item.unitsPerPackage,
+    entered_units: item.enteredUnits,
+    package_cost: item.packageCost,
+    unit_cost_with_iva: item.unitCostWithIva,
+    subtotal: item.subtotal,
+    created_at: item.createdAt || new Date().toISOString(),
+  })), token);
+}
+
+// Actualiza solo el estado de pago de una compra.
+export async function updatePurchasePaid(
+  token: string,
+  storeId: string,
+  purchaseId: string,
+  paid: boolean,
+): Promise<void> {
+  if (!uuidLike(purchaseId)) return;
+  await updateRows('purchases', `store_id=eq.${storeId}&id=eq.${purchaseId}`, { paid }, token);
+}
+
+// Elimina una compra y sus ítems asociados.
+export async function deletePurchaseWithItems(
+  token: string,
+  storeId: string,
+  purchaseId: string,
+): Promise<void> {
+  if (!uuidLike(purchaseId)) return;
+  await deleteRows('purchase_items', `store_id=eq.${storeId}&purchase_id=eq.${purchaseId}`, token);
+  await deleteRows('purchases', `store_id=eq.${storeId}&id=eq.${purchaseId}`, token);
+}
+
 // Inserta un movimiento de Kardex (entradas/salidas/ajustes).
 export async function createKardexMovementRow(
   token: string,
@@ -1213,7 +1295,7 @@ export async function loadSuppliersWithPurchases(token: string, storeId: string)
     'suppliers',
     'select=id,name,nit,phone,email,address,bank_accounts,debt,'
       + 'purchases(id,created_at,total,paid,reference,price_policy,'
-      + 'purchase_items(product_id,quantity_packages,package_cost))'
+      + 'purchase_items(product_id,quantity_packages,package_cost,units_per_package))'
       + `&store_id=eq.${storeId}&order=name.asc`,
     token,
   );

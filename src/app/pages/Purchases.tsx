@@ -8,6 +8,7 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Check, Pencil, Plus, ShoppingBasket, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { endOfDay, startOfDay, subDays } from 'date-fns';
 
 type PurchaseItemDraft = {
   productId: string;
@@ -32,9 +33,11 @@ const createPurchaseItemId = () => (
 );
 
 export function Purchases() {
-  const { suppliers, products, registerPurchase, storeConfig } = usePOS();
+  const { suppliers, products, registerPurchase, setPurchasePaid, deletePurchase, storeConfig } = usePOS();
   // Estado del formulario y de los ítems de compra.
   const [supplierId, setSupplierId] = useState('');
+  const [supplierSearch, setSupplierSearch] = useState('');
+  const [showSupplierSuggestions, setShowSupplierSuggestions] = useState(false);
   const [pricePolicy, setPricePolicy] = useState<'automatic' | 'manual'>(storeConfig.purchasePricePolicy || 'automatic');
   const [draft, setDraft] = useState<PurchaseItemDraft>({
     productId: '',
@@ -48,8 +51,29 @@ export function Purchases() {
     quantity: '',
     cost: ''
   });
+  const [updatingPurchaseId, setUpdatingPurchaseId] = useState<string | null>(null);
+  const [deletingPurchaseId, setDeletingPurchaseId] = useState<string | null>(null);
+  const [confirmDeletePurchaseId, setConfirmDeletePurchaseId] = useState<string | null>(null);
+  const [historyPeriod, setHistoryPeriod] = useState<'today' | 'week' | 'month'>('today');
 
   const selectedSupplier = suppliers.find(s => s.id === supplierId) || null;
+  const visibleSuppliers = useMemo(() => {
+    const query = supplierSearch.trim().toLowerCase();
+    if (!query) return suppliers;
+
+    const filtered = suppliers.filter((supplier) => supplier.name.toLowerCase().includes(query));
+    if (!supplierId || filtered.some((supplier) => supplier.id === supplierId)) return filtered;
+
+    const selected = suppliers.find((supplier) => supplier.id === supplierId);
+    return selected ? [selected, ...filtered] : filtered;
+  }, [suppliers, supplierSearch, supplierId]);
+  const supplierSuggestions = useMemo(() => {
+    const query = supplierSearch.trim().toLowerCase();
+    if (!query) return [];
+    return suppliers
+      .filter((supplier) => supplier.name.toLowerCase().includes(query))
+      .slice(0, 8);
+  }, [suppliers, supplierSearch]);
 
   // Productos filtrados por proveedor seleccionado.
   const supplierProducts = useMemo(() => {
@@ -65,6 +89,31 @@ export function Purchases() {
   }, [products]);
 
   const selectedDraftProduct = draft.productId ? productById.get(draft.productId) : undefined;
+  const recentSupplierPurchases = useMemo(
+    () => (selectedSupplier ? selectedSupplier.purchases.slice(-8).reverse() : []),
+    [selectedSupplier],
+  );
+  const historyRange = useMemo(() => {
+    const now = new Date();
+    switch (historyPeriod) {
+      case 'today':
+        return { start: startOfDay(now), end: endOfDay(now) };
+      case 'week':
+        return { start: subDays(startOfDay(now), 7), end: endOfDay(now) };
+      case 'month':
+        return { start: subDays(startOfDay(now), 30), end: endOfDay(now) };
+      default:
+        return { start: startOfDay(now), end: endOfDay(now) };
+    }
+  }, [historyPeriod]);
+  const filteredSupplierPurchases = useMemo(
+    () => recentSupplierPurchases.filter((purchase) => {
+      const purchaseDate = new Date(purchase.date).getTime();
+      if (!Number.isFinite(purchaseDate)) return false;
+      return purchaseDate >= historyRange.start.getTime() && purchaseDate <= historyRange.end.getTime();
+    }),
+    [recentSupplierPurchases, historyRange],
+  );
 
   // Agrega ítems al borrador de compra.
   const addItemToPurchase = () => {
@@ -186,6 +235,46 @@ export function Purchases() {
     setDraft({ productId: '', quantity: '1', cost: '', entryMode: 'package' });
   };
 
+  const handleTogglePurchasePaid = async (
+    purchaseId: string,
+    nextPaid: boolean,
+  ) => {
+    if (!selectedSupplier) return;
+
+    setUpdatingPurchaseId(purchaseId);
+    const result = await setPurchasePaid(selectedSupplier.id, purchaseId, nextPaid);
+    setUpdatingPurchaseId(null);
+
+    if (result === 'failed') return;
+    toast.success(nextPaid ? 'Compra marcada como pagada' : 'Compra marcada como pendiente');
+  };
+
+  const handleDeleteRegisteredPurchase = async (purchaseId: string) => {
+    if (!selectedSupplier) return;
+
+    setDeletingPurchaseId(purchaseId);
+    const result = await deletePurchase(selectedSupplier.id, purchaseId);
+    setDeletingPurchaseId(null);
+    setConfirmDeletePurchaseId(null);
+
+    if (result === 'failed') return;
+    toast.success('Compra eliminada correctamente');
+  };
+
+  const formatMoney = (value: number) => `$${value.toLocaleString('es-CO')}`;
+  const resolveProductName = (productId?: string) => {
+    if (!productId) return 'Sin detalle';
+    return productById.get(productId)?.name || 'Producto';
+  };
+  const handleSelectSupplier = (value: string) => {
+    setSupplierId(value);
+    const selected = suppliers.find((supplier) => supplier.id === value);
+    if (selected) setSupplierSearch(selected.name);
+    setShowSupplierSuggestions(false);
+    setItems([]);
+    setDraft({ productId: '', quantity: '1', cost: '', entryMode: 'package' });
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -198,18 +287,53 @@ export function Purchases() {
       <Card className="p-6 space-y-4">
         <div>
           <Label>Proveedor *</Label>
-          <Select value={supplierId} onValueChange={(value) => {
-            setSupplierId(value);
-            setItems([]);
-            setDraft({ productId: '', quantity: '1', cost: '', entryMode: 'package' });
-          }}>
+          <div className="relative mb-2">
+            <Input
+              value={supplierSearch}
+              onChange={(event) => {
+                setSupplierSearch(event.target.value);
+                setShowSupplierSuggestions(true);
+              }}
+              onFocus={() => setShowSupplierSuggestions(true)}
+              onBlur={() => {
+                window.setTimeout(() => setShowSupplierSuggestions(false), 120);
+              }}
+              placeholder="Buscar proveedor por nombre"
+            />
+            {showSupplierSuggestions && supplierSearch.trim().length > 0 ? (
+              <div className="absolute z-20 mt-1 w-full overflow-hidden rounded-md border bg-white shadow-md">
+                {supplierSuggestions.length === 0 ? (
+                  <div className="px-3 py-2 text-sm text-gray-500">Sin coincidencias</div>
+                ) : (
+                  supplierSuggestions.map((supplier) => (
+                    <button
+                      key={`suggest-${supplier.id}`}
+                      type="button"
+                      className="block w-full px-3 py-2 text-left text-sm hover:bg-secondary"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        handleSelectSupplier(supplier.id);
+                      }}
+                    >
+                      {supplier.name}
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
+          <Select value={supplierId} onValueChange={handleSelectSupplier}>
             <SelectTrigger>
               <SelectValue placeholder="Seleccione proveedor" />
             </SelectTrigger>
             <SelectContent>
-              {suppliers.map(supplier => (
-                <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
-              ))}
+              {visibleSuppliers.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-gray-500">No se encontraron proveedores</div>
+              ) : (
+                visibleSuppliers.map((supplier) => (
+                  <SelectItem key={supplier.id} value={supplier.id}>{supplier.name}</SelectItem>
+                ))
+              )}
             </SelectContent>
           </Select>
         </div>
@@ -511,19 +635,185 @@ export function Purchases() {
 
       {selectedSupplier && (
         <Card className="p-6">
-          <h2 className="text-lg font-bold mb-3">Últimas compras del proveedor</h2>
-          {selectedSupplier.purchases.length === 0 ? (
+          <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-lg font-bold">Compras del proveedor</h2>
+            <Select value={historyPeriod} onValueChange={(value: 'today' | 'week' | 'month') => setHistoryPeriod(value)}>
+              <SelectTrigger className="w-full sm:w-44">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="today">Hoy</SelectItem>
+                <SelectItem value="week">Última Semana</SelectItem>
+                <SelectItem value="month">Último Mes</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="mb-3 text-sm text-gray-600">
+            Mostrando {filteredSupplierPurchases.length} de {recentSupplierPurchases.length} compras.
+          </p>
+          {filteredSupplierPurchases.length === 0 ? (
             <p className="text-sm text-gray-500">Aún no hay compras registradas para este proveedor.</p>
           ) : (
-            <div className="space-y-2">
-              {selectedSupplier.purchases.slice(-8).reverse().map(purchase => (
-                <div key={purchase.id} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between text-sm border-b pb-2">
-                  <span>{new Date(purchase.date).toLocaleString('es-CO')}</span>
-                  <span>{purchase.items.length} ítems</span>
-                  <span className="font-semibold">${purchase.total.toLocaleString('es-CO')}</span>
-                </div>
-              ))}
-            </div>
+            <>
+              <div className="md:hidden space-y-3">
+                {filteredSupplierPurchases.map((purchase) => (
+                  <div key={purchase.id} className="rounded-lg border border-border p-3 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">Fecha: {new Date(purchase.date).toLocaleString('es-CO')}</p>
+                        <p className="text-sm text-gray-600">Proveedor: {selectedSupplier.name}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-semibold">Total: {formatMoney(purchase.total)}</p>
+                        <p className={purchase.paid ? 'text-[#2ECC71] text-sm font-medium' : 'text-amber-700 text-sm font-medium'}>
+                          {purchase.paid ? 'Pagada' : 'Pendiente'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border divide-y">
+                      {(purchase.items.length > 0 ? purchase.items : [{ productId: '', quantity: 1, cost: purchase.total, unitsPerPackage: 1 }]).map((item, index) => (
+                        <div key={`${purchase.id}-mobile-${index}`} className="flex items-center justify-between gap-3 p-2 text-sm">
+                          <span className="truncate">Producto: {resolveProductName(item.productId)}</span>
+                          <span className="font-medium">Valor: {formatMoney(item.quantity * item.cost)}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {confirmDeletePurchaseId === purchase.id ? (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 border-red-300 text-red-700 hover:bg-red-50"
+                          onClick={() => handleDeleteRegisteredPurchase(purchase.id)}
+                          disabled={deletingPurchaseId === purchase.id}
+                        >
+                          Confirmar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8"
+                          onClick={() => setConfirmDeletePurchaseId(null)}
+                          disabled={deletingPurchaseId === purchase.id}
+                        >
+                          Cancelar
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8"
+                          onClick={() => handleTogglePurchasePaid(purchase.id, !purchase.paid)}
+                          disabled={updatingPurchaseId === purchase.id || deletingPurchaseId === purchase.id}
+                        >
+                          {purchase.paid ? 'Marcar pendiente' : 'Marcar pagada'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 border-red-300 text-red-700 hover:bg-red-50"
+                          onClick={() => setConfirmDeletePurchaseId(purchase.id)}
+                          disabled={updatingPurchaseId === purchase.id || deletingPurchaseId === purchase.id}
+                        >
+                          Eliminar
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden md:block overflow-x-auto rounded-lg border">
+                <table className="w-full min-w-[1000px]">
+                  <thead className="bg-secondary border-b">
+                    <tr>
+                      <th className="text-left p-3">Fecha</th>
+                      <th className="text-left p-3">Proveedor</th>
+                      <th className="text-left p-3">Producto</th>
+                      <th className="text-right p-3">Valor</th>
+                      <th className="text-center p-3">Estado</th>
+                      <th className="text-right p-3">Total compra</th>
+                      <th className="text-right p-3">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredSupplierPurchases.map((purchase) => {
+                      const detailItems = purchase.items.length > 0
+                        ? purchase.items
+                        : [{ productId: '', quantity: 1, cost: purchase.total, unitsPerPackage: 1 }];
+
+                      return detailItems.map((item, index) => (
+                        <tr key={`${purchase.id}-${index}`} className="border-b align-top">
+                          <td className="p-3">{index === 0 ? new Date(purchase.date).toLocaleString('es-CO') : ''}</td>
+                          <td className="p-3">{index === 0 ? selectedSupplier.name : ''}</td>
+                          <td className="p-3">{resolveProductName(item.productId)}</td>
+                          <td className="p-3 text-right">{formatMoney(item.quantity * item.cost)}</td>
+                          <td className="p-3 text-center">
+                            {index === 0 ? (
+                              <span className={purchase.paid ? 'text-[#2ECC71] font-medium' : 'text-amber-700 font-medium'}>
+                                {purchase.paid ? 'Pagada' : 'Pendiente'}
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="p-3 text-right font-semibold">{index === 0 ? formatMoney(purchase.total) : ''}</td>
+                          <td className="p-3 text-right">
+                            {index === 0 ? (
+                              confirmDeletePurchaseId === purchase.id ? (
+                                <div className="flex justify-end items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 border-red-300 text-red-700 hover:bg-red-50"
+                                    onClick={() => handleDeleteRegisteredPurchase(purchase.id)}
+                                    disabled={deletingPurchaseId === purchase.id}
+                                  >
+                                    Confirmar
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8"
+                                    onClick={() => setConfirmDeletePurchaseId(null)}
+                                    disabled={deletingPurchaseId === purchase.id}
+                                  >
+                                    Cancelar
+                                  </Button>
+                                </div>
+                              ) : (
+                                <div className="flex justify-end items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8"
+                                    onClick={() => handleTogglePurchasePaid(purchase.id, !purchase.paid)}
+                                    disabled={updatingPurchaseId === purchase.id || deletingPurchaseId === purchase.id}
+                                  >
+                                    {purchase.paid ? 'Marcar pendiente' : 'Marcar pagada'}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 border-red-300 text-red-700 hover:bg-red-50"
+                                    onClick={() => setConfirmDeletePurchaseId(purchase.id)}
+                                    disabled={updatingPurchaseId === purchase.id || deletingPurchaseId === purchase.id}
+                                  >
+                                    Eliminar
+                                  </Button>
+                                </div>
+                              )
+                            ) : null}
+                          </td>
+                        </tr>
+                      ));
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </Card>
       )}

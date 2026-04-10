@@ -1,10 +1,10 @@
 // Reportes de ventas con gráficos y ranking.
 import { useMemo, useState } from 'react';
 import { usePOS } from '../context/POSContext';
-import type { Sale } from '../context/POSContext';
+import type { Purchase, Sale } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { FileText, Download, TrendingUp, DollarSign, Share2, ChevronDown, ChevronUp } from 'lucide-react';
+import { FileText, Download, TrendingUp, DollarSign, Share2, ChevronDown, ChevronUp, ShoppingBag } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { startOfDay, endOfDay, subDays, format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -12,11 +12,14 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { toast } from 'sonner';
 
 export function Reports() {
-  const { getSalesInRange, kardexMovements, registerReturn, customers, storeConfig, products } = usePOS();
+  const { getSalesInRange, kardexMovements, registerReturn, customers, storeConfig, products, suppliers } = usePOS();
   const [period, setPeriod] = useState('today');
+  const [purchaseStatusFilter, setPurchaseStatusFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const [showAllLatestSales, setShowAllLatestSales] = useState(false);
+  const [showAllLatestPurchases, setShowAllLatestPurchases] = useState(false);
   const [showAllInventoryRows, setShowAllInventoryRows] = useState(false);
   const latestSalesCollapsedLimit = 3;
+  const latestPurchasesCollapsedLimit = 5;
   const inventoryRowsCollapsedLimit = 3;
 
   // Calcula rango de fechas según periodo seleccionado.
@@ -40,6 +43,86 @@ export function Reports() {
   const isSaleReturned = (sale: Sale) =>
     Boolean(sale.returnedAt) || returnedReferences.has(`DEV-${sale.id}`);
   const netSales = periodSales.filter((sale) => !isSaleReturned(sale));
+
+  const periodPurchases = useMemo(() => {
+    const startTime = start.getTime();
+    const endTime = end.getTime();
+
+    return suppliers
+      .flatMap((supplier) => supplier.purchases.map((purchase) => ({
+        ...purchase,
+        supplierName: supplier.name,
+      })))
+      .filter((purchase) => {
+        const timestamp = new Date(purchase.date).getTime();
+        return Number.isFinite(timestamp) && timestamp >= startTime && timestamp <= endTime;
+      })
+      .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [suppliers, start, end]);
+
+  const purchaseSupplierTotals = useMemo(() => {
+    const grouped = new Map<string, {
+      supplierId: string;
+      supplierName: string;
+      purchases: number;
+      total: number;
+      pending: number;
+    }>();
+
+    periodPurchases.forEach((purchase) => {
+      const current = grouped.get(purchase.supplierId);
+      if (current) {
+        current.purchases += 1;
+        current.total += purchase.total;
+        if (!purchase.paid) current.pending += purchase.total;
+        return;
+      }
+
+      grouped.set(purchase.supplierId, {
+        supplierId: purchase.supplierId,
+        supplierName: purchase.supplierName,
+        purchases: 1,
+        total: purchase.total,
+        pending: purchase.paid ? 0 : purchase.total,
+      });
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => b.total - a.total).slice(0, 10);
+  }, [periodPurchases]);
+  const filteredPeriodPurchases = useMemo(() => {
+    if (purchaseStatusFilter === 'pending') return periodPurchases.filter((purchase) => !purchase.paid);
+    if (purchaseStatusFilter === 'paid') return periodPurchases.filter((purchase) => purchase.paid);
+    return periodPurchases;
+  }, [periodPurchases, purchaseStatusFilter]);
+  const filteredPurchaseSupplierTotals = useMemo(() => {
+    const grouped = new Map<string, {
+      supplierId: string;
+      supplierName: string;
+      purchases: number;
+      total: number;
+      pending: number;
+    }>();
+
+    filteredPeriodPurchases.forEach((purchase) => {
+      const current = grouped.get(purchase.supplierId);
+      if (current) {
+        current.purchases += 1;
+        current.total += purchase.total;
+        if (!purchase.paid) current.pending += purchase.total;
+        return;
+      }
+
+      grouped.set(purchase.supplierId, {
+        supplierId: purchase.supplierId,
+        supplierName: purchase.supplierName,
+        purchases: 1,
+        total: purchase.total,
+        pending: purchase.paid ? 0 : purchase.total,
+      });
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => b.total - a.total).slice(0, 10);
+  }, [filteredPeriodPurchases]);
   
   // Métricas agregadas del periodo.
   const totalSales = netSales.reduce((sum, s) => sum + s.total, 0);
@@ -48,6 +131,12 @@ export function Reports() {
   }, 0);
   const profit = totalSales - totalCost;
   const transactions = netSales.length;
+  const totalPurchases = periodPurchases.reduce((sum, purchase) => sum + purchase.total, 0);
+  const purchaseTransactions = periodPurchases.length;
+  const pendingPurchasesTotal = periodPurchases.reduce(
+    (sum, purchase) => sum + (purchase.paid ? 0 : purchase.total),
+    0,
+  );
 
   // Productos más vendidos
   const productSales = new Map<string, { name: string; quantity: number; revenue: number }>();
@@ -84,6 +173,14 @@ export function Reports() {
     ? latestSales
     : latestSales.slice(0, latestSalesCollapsedLimit);
   const hiddenLatestSalesCount = Math.max(0, latestSales.length - visibleLatestSales.length);
+  const latestPurchases = filteredPeriodPurchases.slice(-20).reverse();
+  const visibleLatestPurchases = showAllLatestPurchases
+    ? latestPurchases
+    : latestPurchases.slice(0, latestPurchasesCollapsedLimit);
+  const hiddenLatestPurchasesCount = Math.max(0, latestPurchases.length - visibleLatestPurchases.length);
+  const productNameById = useMemo(() => {
+    return new Map(products.map((product) => [product.id, product.name]));
+  }, [products]);
 
   const formatCurrency = (value: number) => `$${Math.round(value).toLocaleString('es-CO')}`;
   const roundToHundred = (value: number) => {
@@ -227,6 +324,13 @@ export function Reports() {
     const firstLabel = `${firstItem.product.name} x${firstItem.quantity}`;
     return restItems.length > 0 ? `${firstLabel} +${restItems.length} más` : firstLabel;
   };
+  const formatPurchaseItemsSummary = (purchase: Purchase) => {
+    if (purchase.items.length === 0) return 'Sin productos';
+    const [firstItem, ...restItems] = purchase.items;
+    const productName = productNameById.get(firstItem.productId) || 'Producto';
+    const firstLabel = `${productName} x${firstItem.quantity}`;
+    return restItems.length > 0 ? `${firstLabel} +${restItems.length} más` : firstLabel;
+  };
 
   const buildWhatsappMessage = (sale: Sale) => {
     const customer = sale.customerId ? customers.find(c => c.id === sale.customerId) : undefined;
@@ -347,6 +451,49 @@ export function Reports() {
               <p className="text-2xl font-bold">${transactions > 0 ? Math.round(totalSales / transactions).toLocaleString('es-CO') : 0}</p>
             </div>
             <DollarSign className="w-10 h-10 text-purple-600" />
+          </div>
+        </Card>
+      </div>
+
+      {/* Resumen de compras */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600 mb-1">Compras Totales</p>
+              <p className="text-2xl font-bold text-[var(--primary)]">{formatCurrency(totalPurchases)}</p>
+            </div>
+            <ShoppingBag className="w-10 h-10 text-[var(--primary)]" />
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600 mb-1">Compras Registradas</p>
+              <p className="text-2xl font-bold">{purchaseTransactions}</p>
+            </div>
+            <FileText className="w-10 h-10 text-blue-600" />
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600 mb-1">Ticket Promedio Compra</p>
+              <p className="text-2xl font-bold">{formatCurrency(purchaseTransactions > 0 ? totalPurchases / purchaseTransactions : 0)}</p>
+            </div>
+            <DollarSign className="w-10 h-10 text-[#2ECC71]" />
+          </div>
+        </Card>
+
+        <Card className="p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600 mb-1">Compras por Pagar</p>
+              <p className="text-2xl font-bold text-red-600">{formatCurrency(pendingPurchasesTotal)}</p>
+            </div>
+            <TrendingUp className="w-10 h-10 text-red-600" />
           </div>
         </Card>
       </div>
@@ -517,6 +664,132 @@ export function Reports() {
         ) : null}
       </Card>
 
+      {/* Reporte de compras */}
+      <Card className="p-6 space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-1">
+            <h3 className="text-lg font-bold">Compras del Período</h3>
+            <p className="text-sm text-gray-600">Mostrando {visibleLatestPurchases.length} de {latestPurchases.length} compras registradas.</p>
+          </div>
+          <Select value={purchaseStatusFilter} onValueChange={(value: 'all' | 'pending' | 'paid') => setPurchaseStatusFilter(value)}>
+            <SelectTrigger className="w-full sm:w-44">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Todas</SelectItem>
+              <SelectItem value="pending">Pendientes</SelectItem>
+              <SelectItem value="paid">Pagadas</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full min-w-[640px]">
+            <thead className="bg-secondary border-b">
+              <tr>
+                <th className="text-left p-3">Proveedor</th>
+                <th className="text-right p-3">Compras</th>
+                <th className="text-right p-3">Total</th>
+                <th className="text-right p-3">Pendiente</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredPurchaseSupplierTotals.length === 0 ? (
+                <tr>
+                  <td className="p-4 text-center text-gray-500" colSpan={4}>No hay compras registradas para este período.</td>
+                </tr>
+              ) : (
+                filteredPurchaseSupplierTotals.map((row) => (
+                  <tr key={row.supplierId || row.supplierName} className="border-b">
+                    <td className="p-3 font-medium">{row.supplierName}</td>
+                    <td className="p-3 text-right">{row.purchases}</td>
+                    <td className="p-3 text-right font-semibold">{formatCurrency(row.total)}</td>
+                    <td className="p-3 text-right text-red-600">{formatCurrency(row.pending)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="md:hidden space-y-3">
+          {visibleLatestPurchases.length === 0 ? (
+            <div className="text-center py-6 text-gray-500">No hay compras registradas</div>
+          ) : (
+            visibleLatestPurchases.map((purchase) => (
+              <div key={purchase.id} className="rounded-lg border border-border bg-white p-3 space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm text-gray-600">{format(new Date(purchase.date), "d MMM, HH:mm", { locale: es })}</p>
+                    <p className="font-semibold">{purchase.supplierName}</p>
+                    <p className="text-xs text-gray-500">{formatPurchaseItemsSummary(purchase)}</p>
+                  </div>
+                  <span className="font-bold text-[var(--primary)]">{formatCurrency(purchase.total)}</span>
+                </div>
+                <p className="text-xs text-gray-600">Estado: {purchase.paid ? 'Pagada' : 'Pendiente'}</p>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto rounded-lg border">
+          <table className="w-full min-w-[920px]">
+            <thead className="bg-secondary border-b">
+              <tr>
+                <th className="text-left p-3">Fecha</th>
+                <th className="text-left p-3">Proveedor</th>
+                <th className="text-left p-3">Detalle</th>
+                <th className="text-right p-3">Ítems</th>
+                <th className="text-right p-3">Estado</th>
+                <th className="text-right p-3">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleLatestPurchases.length === 0 ? (
+                <tr>
+                  <td className="p-4 text-center text-gray-500" colSpan={6}>No hay compras registradas para este período.</td>
+                </tr>
+              ) : (
+                visibleLatestPurchases.map((purchase) => (
+                  <tr key={purchase.id} className="border-b">
+                    <td className="p-3">{format(new Date(purchase.date), "d MMM, HH:mm", { locale: es })}</td>
+                    <td className="p-3 font-medium">{purchase.supplierName}</td>
+                    <td className="p-3">{formatPurchaseItemsSummary(purchase)}</td>
+                    <td className="p-3 text-right">{purchase.items.length}</td>
+                    <td className="p-3 text-right">
+                      <span className={purchase.paid ? 'text-[#2ECC71]' : 'text-amber-700'}>
+                        {purchase.paid ? 'Pagada' : 'Pendiente'}
+                      </span>
+                    </td>
+                    <td className="p-3 text-right font-semibold">{formatCurrency(purchase.total)}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {!showAllLatestPurchases && hiddenLatestPurchasesCount > 0 ? (
+          <div className="flex justify-center pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAllLatestPurchases(true)}
+              className="rounded-full"
+            >
+              <ChevronDown className="w-4 h-4 mr-1" />
+              Ver listado completo
+            </Button>
+          </div>
+        ) : null}
+        {!showAllLatestPurchases && hiddenLatestPurchasesCount > 0 ? (
+          <p className="text-sm text-gray-600">
+            {hiddenLatestPurchasesCount} compras ocultas. Usa "Ver listado completo" para desplegarlas.
+          </p>
+        ) : null}
+      </Card>
+
       {/* Reporte de costos e impuestos del inventario */}
       <Card className="p-6 space-y-4">
         <div className="flex flex-col gap-1">
@@ -647,6 +920,7 @@ export function Reports() {
       </Card>
 
       {(showAllLatestSales && latestSales.length > latestSalesCollapsedLimit)
+      || (showAllLatestPurchases && latestPurchases.length > latestPurchasesCollapsedLimit)
       || (showAllInventoryRows && inventoryTaxDetails.length > inventoryRowsCollapsedLimit) ? (
         <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 flex-col gap-2 sm:left-auto sm:right-6 sm:translate-x-0">
           {showAllLatestSales && latestSales.length > latestSalesCollapsedLimit ? (
@@ -659,6 +933,18 @@ export function Reports() {
             >
               <ChevronUp className="w-4 h-4 mr-1" />
               Ocultar transacciones
+            </Button>
+          ) : null}
+          {showAllLatestPurchases && latestPurchases.length > latestPurchasesCollapsedLimit ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAllLatestPurchases(false)}
+              className="rounded-full bg-white/95 shadow-lg backdrop-blur"
+            >
+              <ChevronUp className="w-4 h-4 mr-1" />
+              Ocultar compras
             </Button>
           ) : null}
           {showAllInventoryRows && inventoryTaxDetails.length > inventoryRowsCollapsedLimit ? (
