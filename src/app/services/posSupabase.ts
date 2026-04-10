@@ -1,11 +1,22 @@
 // Capa de acceso a datos en Supabase (REST + RPC) para el POS.
-import { deleteRows, insertRows, rpc, selectRows, updateRows } from '../../lib/supabaseClient';
+import { deleteRows, insertRows, refreshSession, rpc, selectRows, supabaseAnonKey, supabaseUrl, updateRows } from '../../lib/supabaseClient';
 import type { Product } from '../context/POSContext';
 
 // Tipos "shape" de filas usadas en llamadas REST.
 type StoreUserRow = {
   role: 'admin' | 'cashier';
   store_id: string;
+  is_active?: boolean;
+};
+
+export type StoreManagedUser = {
+  id: string;
+  userId: string;
+  email: string;
+  fullName?: string;
+  role: 'admin' | 'cashier';
+  isActive: boolean;
+  createdAt: string;
 };
 
 type CategoryRow = {
@@ -243,15 +254,133 @@ const isMissingColumnError = (error: unknown, columnName: string): boolean => {
     && message.includes('does not exist');
 };
 
+const MANAGE_USERS_EDGE_BASE_URL = `${supabaseUrl}/functions/v1/server/store-users`;
+
+async function manageUsersEdgeRequest<T>(
+  token: string,
+  path: string,
+  init: RequestInit,
+): Promise<T> {
+  const doFetch = async (authToken: string) => fetch(`${MANAGE_USERS_EDGE_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      apikey: supabaseAnonKey,
+      Authorization: `Bearer ${authToken}`,
+      'Content-Type': 'application/json',
+      ...(init.headers || {}),
+    },
+  });
+
+  let response = await doFetch(token);
+
+  if (response.status === 401) {
+    const refreshed = await refreshSession();
+    if (refreshed?.access_token) {
+      response = await doFetch(refreshed.access_token);
+    }
+  }
+
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error('Tu sesión expiró. Inicia sesión nuevamente.');
+    }
+    const message = json?.error || json?.message || 'No se pudo completar la operación de usuarios.';
+    throw new Error(message);
+  }
+
+  return json as T;
+}
+
 // Devuelve la membresía actual del usuario en una tienda.
 export async function fetchMyStoreMembership(token: string, userId: string): Promise<StoreUserRow | null> {
-  const rows = await selectRows<StoreUserRow>(
-    'store_users',
-    `select=role,store_id&user_id=eq.${encodeURIComponent(userId)}&order=created_at.asc&limit=1`,
-    token,
-  );
+  let rows: StoreUserRow[] = [];
+
+  try {
+    rows = await selectRows<StoreUserRow>(
+      'store_users',
+      `select=role,store_id,is_active&user_id=eq.${encodeURIComponent(userId)}&is_active=eq.true&order=created_at.asc&limit=1`,
+      token,
+    );
+  } catch (error) {
+    // Compatibilidad con bases aún no migradas que no tienen la columna is_active.
+    if (!isMissingColumnError(error, 'is_active')) {
+      throw error;
+    }
+
+    rows = await selectRows<StoreUserRow>(
+      'store_users',
+      `select=role,store_id&user_id=eq.${encodeURIComponent(userId)}&order=created_at.asc&limit=1`,
+      token,
+    );
+  }
 
   return rows[0] ?? null;
+}
+
+export async function listManagedStoreUsers(
+  token: string,
+  storeId: string,
+): Promise<StoreManagedUser[]> {
+  const result = await manageUsersEdgeRequest<{ users: StoreManagedUser[] }>(
+    token,
+    `?storeId=${encodeURIComponent(storeId)}`,
+    { method: 'GET' },
+  );
+  return result.users ?? [];
+}
+
+export async function createManagedStoreUser(
+  token: string,
+  payload: {
+    storeId: string;
+    email: string;
+    password: string;
+    fullName?: string;
+    role: 'admin' | 'cashier';
+  },
+): Promise<StoreManagedUser> {
+  const result = await manageUsersEdgeRequest<{ user: StoreManagedUser }>(
+    token,
+    '',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+  );
+  return result.user;
+}
+
+export async function updateManagedStoreUser(
+  token: string,
+  membershipId: string,
+  payload: {
+    storeId: string;
+    role?: 'admin' | 'cashier';
+    isActive?: boolean;
+  },
+): Promise<StoreManagedUser> {
+  const result = await manageUsersEdgeRequest<{ user: StoreManagedUser }>(
+    token,
+    `/${encodeURIComponent(membershipId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    },
+  );
+  return result.user;
+}
+
+export async function deleteManagedStoreUser(
+  token: string,
+  membershipId: string,
+  storeId: string,
+): Promise<void> {
+  await manageUsersEdgeRequest<{ ok: boolean }>(
+    token,
+    `/${encodeURIComponent(membershipId)}?storeId=${encodeURIComponent(storeId)}`,
+    { method: 'DELETE' },
+  );
 }
 
 export async function bootstrapStore(token: string, payload: {

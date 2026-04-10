@@ -40,7 +40,7 @@ export const router = createBrowserRouter([
     path: "/dashboard",
     element: withSuspense((
       // Todas las rutas internas pasan por el Layout y se protegen por sesión.
-      <ProtectedRoute>
+      <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
           <Dashboard />
         </Layout>
@@ -50,7 +50,7 @@ export const router = createBrowserRouter([
   {
     path: "/pos",
     element: withSuspense((
-      <ProtectedRoute>
+      <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
           <POS />
         </Layout>
@@ -60,7 +60,7 @@ export const router = createBrowserRouter([
   {
     path: "/inventory",
     element: withSuspense((
-      <ProtectedRoute>
+      <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
           <Inventory />
         </Layout>
@@ -70,7 +70,7 @@ export const router = createBrowserRouter([
   {
     path: "/customers",
     element: withSuspense((
-      <ProtectedRoute>
+      <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
           <Customers />
         </Layout>
@@ -80,7 +80,7 @@ export const router = createBrowserRouter([
   {
     path: "/suppliers",
     element: withSuspense((
-      <ProtectedRoute>
+      <ProtectedRoute allowedRoles={['admin']}>
         <Layout>
           <Suppliers />
         </Layout>
@@ -90,7 +90,7 @@ export const router = createBrowserRouter([
   {
     path: "/purchases",
     element: withSuspense((
-      <ProtectedRoute>
+      <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
           <Purchases />
         </Layout>
@@ -100,7 +100,7 @@ export const router = createBrowserRouter([
   {
     path: "/reports",
     element: withSuspense((
-      <ProtectedRoute>
+      <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
           <Reports />
         </Layout>
@@ -110,7 +110,7 @@ export const router = createBrowserRouter([
   {
     path: "/recharges",
     element: withSuspense((
-      <ProtectedRoute>
+      <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
           <Recharges />
         </Layout>
@@ -120,7 +120,7 @@ export const router = createBrowserRouter([
   {
     path: "/cash-register",
     element: withSuspense((
-      <ProtectedRoute>
+      <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
           <CashRegister />
         </Layout>
@@ -130,7 +130,7 @@ export const router = createBrowserRouter([
   {
     path: "/invoice",
     element: withSuspense((
-      <ProtectedRoute>
+      <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
           <Invoice />
         </Layout>
@@ -140,7 +140,7 @@ export const router = createBrowserRouter([
   {
     path: "/configuration",
     element: withSuspense((
-      <ProtectedRoute>
+      <ProtectedRoute allowedRoles={['admin']}>
         <Layout>
           <Configuration />
         </Layout>

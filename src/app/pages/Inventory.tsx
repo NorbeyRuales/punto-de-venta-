@@ -75,8 +75,20 @@ const normalizeText = (value: string) =>
     .trim();
 
 export function Inventory() {
-  const { products, addProduct, updateProduct, deleteProduct, categories, suppliers, getKardexByProduct, adjustStock } = usePOS();
+  const {
+    products,
+    addProduct,
+    updateProduct,
+    deleteProduct,
+    categories,
+    suppliers,
+    getKardexByProduct,
+    adjustStock,
+    currentUser,
+    hasPermission,
+  } = usePOS();
   const navigate = useNavigate();
+  const canManageInventory = hasPermission('inventory:manage');
   // Filtros y estado de UI.
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -255,6 +267,7 @@ export function Inventory() {
       }
 
       if ((event.key === 'n' || event.key === 'N') && event.altKey) {
+        if (!canManageInventory) return;
         event.preventDefault();
         const nextCategory =
           categoryFilter !== 'all' && categories.includes(categoryFilter)
@@ -277,7 +290,7 @@ export function Inventory() {
 
     window.addEventListener('keydown', handleShortcuts);
     return () => window.removeEventListener('keydown', handleShortcuts);
-  }, [categoryFilter, supplierFilter, categories, suppliers, defaultCategory]);
+  }, [categoryFilter, supplierFilter, categories, suppliers, defaultCategory, canManageInventory]);
 
   // Índice de búsqueda cacheado para evitar normalizaciones costosas en cada tecla.
   const productSearchIndex = useMemo(() => {
@@ -374,6 +387,11 @@ export function Inventory() {
 
   // Alta de producto.
   const handleAddProduct = async () => {
+    if (!canManageInventory) {
+      toast.error('Solo un administrador puede crear productos.');
+      return;
+    }
+
     const errors = validateForm();
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) {
@@ -415,6 +433,11 @@ export function Inventory() {
 
   // Edición de producto.
   const handleEditProduct = async () => {
+    if (!canManageInventory) {
+      toast.error('Solo un administrador puede editar productos.');
+      return;
+    }
+
     if (!selectedProduct) return;
     const errors = validateForm();
     setFormErrors(errors);
@@ -489,10 +512,20 @@ export function Inventory() {
   };
 
   const handleDeleteProduct = (product: Product) => {
+    if (!canManageInventory) {
+      toast.error('Solo un administrador puede eliminar productos.');
+      return;
+    }
+
     setPendingConfirmation({ type: 'delete-product', product });
   };
 
   const openEditDialog = (product: Product) => {
+    if (!canManageInventory) {
+      toast.error('Solo un administrador puede editar productos.');
+      return;
+    }
+
     setSelectedProduct(product);
     setFormData(mapProductToForm(product));
     setFormErrors({});
@@ -524,6 +557,11 @@ export function Inventory() {
   };
 
   const handleAddDialogChange = (open: boolean) => {
+    if (open && !canManageInventory) {
+      toast.error('Solo un administrador puede crear productos.');
+      return;
+    }
+
     if (!open && isAddDirty) {
       setPendingConfirmation({ type: 'discard-add' });
       return;
@@ -538,6 +576,11 @@ export function Inventory() {
   };
 
   const handleEditDialogChange = (open: boolean) => {
+    if (open && !canManageInventory) {
+      toast.error('Solo un administrador puede editar productos.');
+      return;
+    }
+
     if (!open && isEditDirty) {
       setPendingConfirmation({ type: 'discard-edit' });
       return;
@@ -832,24 +875,31 @@ return (
         <div>
           <h1 className="text-3xl font-bold">Inventario</h1>
           <p className="text-gray-600">{products.length} productos registrados</p>
+          {currentUser?.role === 'cashier' && (
+            <p className="text-xs text-amber-700 mt-1">Modo consulta: solo administradores pueden editar inventario.</p>
+          )}
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-          <Button
-            variant="outline"
-            onClick={() => navigate('/configuration?tab=categories')}
-            className="w-full sm:w-auto"
-          >
-            Gestionar Categorías
-          </Button>
-          <div ref={topAddButtonRef}>
-            <Button
-              onClick={() => handleAddDialogChange(true)}
-              className="w-full sm:w-auto bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
-            >
-              <Plus className="w-5 h-5 mr-2" />
-              Agregar Producto
-            </Button>
-          </div>
+          {canManageInventory && (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => navigate('/configuration?tab=categories')}
+                className="w-full sm:w-auto"
+              >
+                Gestionar Categorías
+              </Button>
+              <div ref={topAddButtonRef}>
+                <Button
+                  onClick={() => handleAddDialogChange(true)}
+                  className="w-full sm:w-auto bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
+                >
+                  <Plus className="w-5 h-5 mr-2" />
+                  Agregar Producto
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -916,7 +966,7 @@ return (
           </Button>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2 text-xs text-gray-500">
-          <p id="inventory-search-help">Atajos: / buscar · Alt+N agregar producto</p>
+          <p id="inventory-search-help">{canManageInventory ? 'Atajos: / buscar · Alt+N agregar producto' : 'Atajo: / buscar'}</p>
           <p aria-live="polite">Mostrando {filteredProducts.length} de {products.length} productos</p>
         </div>
       </Card>
@@ -988,25 +1038,29 @@ return (
                       >
                         <History className="w-4 h-4" />
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => openEditDialog(product)}
-                        aria-label="Editar producto"
-                        title="Editar producto"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-red-600 hover:text-red-700"
-                        onClick={() => handleDeleteProduct(product)}
-                        aria-label="Eliminar producto"
-                        title="Eliminar producto"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      {canManageInventory && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openEditDialog(product)}
+                            aria-label="Editar producto"
+                            title="Editar producto"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-red-600 hover:text-red-700"
+                            onClick={() => handleDeleteProduct(product)}
+                            aria-label="Eliminar producto"
+                            title="Eliminar producto"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
@@ -1093,36 +1147,40 @@ return (
                               <TooltipContent>Ver kardex (historial)</TooltipContent>
                             </Tooltip>
 
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => openEditDialog(product)}
-                                  aria-label="Editar producto"
-                                  title="Editar producto"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>Editar producto</TooltipContent>
-                            </Tooltip>
+                            {canManageInventory && (
+                              <>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => openEditDialog(product)}
+                                      aria-label="Editar producto"
+                                      title="Editar producto"
+                                    >
+                                      <Edit className="w-4 h-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Editar producto</TooltipContent>
+                                </Tooltip>
 
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="text-red-600 hover:text-red-700"
-                                  onClick={() => handleDeleteProduct(product)}
-                                  aria-label="Eliminar producto"
-                                  title="Eliminar producto"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>Eliminar producto</TooltipContent>
-                            </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="text-red-600 hover:text-red-700"
+                                      onClick={() => handleDeleteProduct(product)}
+                                      aria-label="Eliminar producto"
+                                      title="Eliminar producto"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Eliminar producto</TooltipContent>
+                                </Tooltip>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1146,7 +1204,7 @@ return (
         </div>
       )}
 
-      {!isTopAddButtonVisible && !showAddDialog && (
+      {canManageInventory && !isTopAddButtonVisible && !showAddDialog && (
         <Button
           onClick={() => handleAddDialogChange(true)}
           className="fixed bottom-6 right-6 z-30 h-12 rounded-full px-5 bg-[var(--primary)] shadow-lg hover:bg-[var(--primary-hover)]"

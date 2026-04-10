@@ -10,9 +10,11 @@ import {
 } from '../../lib/supabaseClient';
 import {
   bootstrapStore,
+  createManagedStoreUser,
   createCategory,
   deleteCashReportsByIds,
   deleteCashReportsByStore,
+  deleteManagedStoreUser,
   createCustomer,
   createCashMovement,
   createCashSession,
@@ -40,19 +42,23 @@ import {
   loadSalesWithItems,
   loadStoreDetails,
   loadSuppliersWithPurchases,
+  listManagedStoreUsers,
   patchProduct,
   replaceSaleDraftItems,
   removeCategory,
   removeProduct,
   renameCategory,
   updateCashSession,
+  updateManagedStoreUser,
   updateSaleRow,
   updateSaleDraftRow,
   updateCustomerRow,
   updateSupplierRow,
   updateStoreDetails,
+  type StoreManagedUser,
 } from '../services/posSupabase';
 import { DEFAULT_LOGO_PATH } from '../constants/branding';
+import { hasPermission, type AppPermission, type UserRole } from '../constants/permissions';
 
 const OFFLINE_PIN_KEY = 'pos_offline_pin_hash';
 const OFFLINE_ROLE_KEY = 'pos_offline_role_default';
@@ -542,6 +548,11 @@ export interface StoreConfig {
   userRole: 'admin' | 'cashier';
 }
 
+export type POSUser = {
+  username: string;
+  role: UserRole;
+};
+
 export interface PendingProductSyncPreview {
   canCompare: boolean;
   reason?: string;
@@ -567,7 +578,8 @@ interface POSContextType {
   offlinePinConfigured: boolean;
   offlineDefaultRole: 'admin' | 'cashier';
   hasPendingSync: boolean;
-  currentUser: { username: string; role: 'admin' | 'cashier' } | null;
+  currentUser: POSUser | null;
+  hasPermission: (permission: AppPermission) => boolean;
   login: (username: string, password: string) => Promise<boolean>;
   loginOffline: (pin: string, role: 'admin' | 'cashier', username?: string) => Promise<boolean>;
   logout: () => void;
@@ -578,6 +590,15 @@ interface POSContextType {
   syncWithSupabase: () => Promise<boolean>;
   uploadLocalBackupToSupabase: (clearExisting?: boolean) => Promise<boolean>;
   getPendingProductSyncPreview: () => Promise<PendingProductSyncPreview>;
+  listStoreUsers: () => Promise<StoreManagedUser[]>;
+  createStoreUser: (input: {
+    email: string;
+    password: string;
+    fullName?: string;
+    role: UserRole;
+  }) => Promise<boolean>;
+  updateStoreUserAccess: (membershipId: string, patch: { role?: UserRole; isActive?: boolean }) => Promise<boolean>;
+  removeStoreUser: (membershipId: string) => Promise<boolean>;
   hasConnectedStore: boolean;
   
   // Productos
@@ -839,7 +860,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const [isBrowserOnline, setIsBrowserOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
-  const [currentUser, setCurrentUser] = useState<{ username: string; role: 'admin' | 'cashier' } | null>(null);
+  const [currentUser, setCurrentUser] = useState<POSUser | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [saleDrafts, setSaleDrafts] = useState<SaleDraft[]>([]);
@@ -877,6 +898,37 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const offlinePinConfigured = Boolean(offlinePinHash);
   const canReachSupabase = Boolean(session?.access_token && isBrowserOnline && !isOfflineMode);
   const isConnectedToSupabase = Boolean(canReachSupabase && currentStoreId);
+  const currentRole: UserRole = currentUser?.role ?? 'cashier';
+  const hasRolePermission = (permission: AppPermission): boolean => hasPermission(currentRole, permission);
+  const requirePermission = (permission: AppPermission, message: string): boolean => {
+    if (hasRolePermission(permission)) return true;
+    toast.error(message);
+    return false;
+  };
+  const isSupabaseAuthError = (error: unknown): boolean => {
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return (
+      message.includes('jwt')
+      || message.includes('token')
+      || message.includes('unauthorized')
+      || message.includes('session expired')
+    );
+  };
+  const resetAuthStateByExpiry = () => {
+    storeSession(null);
+    setSession(null);
+    setCurrentStoreId(null);
+    setIsAuthenticated(false);
+    setCurrentUser(null);
+    setIsOfflineMode(false);
+    localStorage.removeItem('pos_auth');
+    localStorage.removeItem(OFFLINE_AUTH_KEY);
+
+    if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+      window.location.assign('/');
+    }
+  };
 
   useEffect(() => {
     const updateOnline = () => setIsBrowserOnline(navigator.onLine);
@@ -919,6 +971,15 @@ export function POSProvider({ children }: { children: ReactNode }) {
       document.head.appendChild(link);
     }
   }, [storeConfig.name, storeConfig.logo]);
+
+  useEffect(() => {
+    if (!currentUser?.role) return;
+    setStoreConfig((prev) => (
+      prev.userRole === currentUser.role
+        ? prev
+        : { ...prev, userRole: currentUser.role }
+    ));
+  }, [currentUser?.role]);
 
   const buildLocalBackupPayload = (): LocalBackupPayload => ({
     products: localStorage.getItem('pos_products'),
@@ -1443,6 +1504,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
       })
       .catch((error) => {
         console.error('No se pudo restaurar la sesión de Supabase', error);
+        if (isSupabaseAuthError(error)) {
+          resetAuthStateByExpiry();
+          toast.error('Tu sesión expiró. Inicia sesión nuevamente.');
+          return;
+        }
         toast.error('No se pudo restaurar la sesión con Supabase');
       })
       .finally(() => {
@@ -1672,8 +1738,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const verifyAdminPasswordForCriticalAction = async (password: string): Promise<boolean> => {
-    if (storeConfig.userRole !== 'admin') {
-      toast.error('Solo un administrador puede ejecutar esta acción.');
+    if (!requirePermission('users:manage', 'Solo un administrador puede ejecutar esta acción.')) {
       return false;
     }
 
@@ -1741,6 +1806,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const uploadLocalBackupToSupabase = async (clearExisting = false): Promise<boolean> => {
+    if (!requirePermission('sync:destructive', 'Solo un administrador puede enviar datos locales a la nube.')) {
+      return false;
+    }
+
     if (!canReachSupabase || !session || !currentStoreId) {
       toast.info('No hay conexión o tienda conectada para sincronizar.');
       return false;
@@ -1938,6 +2007,115 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const listStoreUsers = async (): Promise<StoreManagedUser[]> => {
+    if (!requirePermission('users:manage', 'Solo un administrador puede consultar usuarios.')) {
+      return [];
+    }
+
+    if (!canReachSupabase || !session || !currentStoreId) {
+      toast.error('Necesitas conexión y tienda vinculada para gestionar usuarios.');
+      return [];
+    }
+
+    try {
+      return await listManagedStoreUsers(session.access_token, currentStoreId);
+    } catch (error) {
+      console.error('No se pudieron listar usuarios de tienda', error);
+      if (isSupabaseAuthError(error)) {
+        resetAuthStateByExpiry();
+      }
+      toast.error(error instanceof Error ? error.message : 'No se pudo consultar usuarios de la tienda.');
+      return [];
+    }
+  };
+
+  const createStoreUser = async (input: {
+    email: string;
+    password: string;
+    fullName?: string;
+    role: UserRole;
+  }): Promise<boolean> => {
+    if (!requirePermission('users:manage', 'Solo un administrador puede crear usuarios.')) {
+      return false;
+    }
+
+    if (!canReachSupabase || !session || !currentStoreId) {
+      toast.error('Necesitas conexión y tienda vinculada para crear usuarios.');
+      return false;
+    }
+
+    try {
+      await createManagedStoreUser(session.access_token, {
+        storeId: currentStoreId,
+        email: input.email,
+        password: input.password,
+        fullName: input.fullName,
+        role: input.role,
+      });
+      return true;
+    } catch (error) {
+      console.error('No se pudo crear usuario de tienda', error);
+      if (isSupabaseAuthError(error)) {
+        resetAuthStateByExpiry();
+      }
+      toast.error(error instanceof Error ? error.message : 'No se pudo crear el usuario.');
+      return false;
+    }
+  };
+
+  const updateStoreUserAccess = async (
+    membershipId: string,
+    patch: { role?: UserRole; isActive?: boolean },
+  ): Promise<boolean> => {
+    if (!requirePermission('users:manage', 'Solo un administrador puede editar usuarios.')) {
+      return false;
+    }
+
+    if (!canReachSupabase || !session || !currentStoreId) {
+      toast.error('Necesitas conexión y tienda vinculada para editar usuarios.');
+      return false;
+    }
+
+    try {
+      await updateManagedStoreUser(session.access_token, membershipId, {
+        storeId: currentStoreId,
+        role: patch.role,
+        isActive: patch.isActive,
+      });
+      return true;
+    } catch (error) {
+      console.error('No se pudo actualizar acceso de usuario', error);
+      if (isSupabaseAuthError(error)) {
+        resetAuthStateByExpiry();
+      }
+      toast.error(error instanceof Error ? error.message : 'No se pudo actualizar el usuario.');
+      return false;
+    }
+  };
+
+  const removeStoreUser = async (membershipId: string): Promise<boolean> => {
+    if (!requirePermission('users:manage', 'Solo un administrador puede eliminar usuarios.')) {
+      return false;
+    }
+
+    if (!canReachSupabase || !session || !currentStoreId) {
+      toast.error('Necesitas conexión y tienda vinculada para eliminar usuarios.');
+      return false;
+    }
+
+    try {
+      await deleteManagedStoreUser(session.access_token, membershipId, currentStoreId);
+      return true;
+    } catch (error) {
+      console.error('No se pudo eliminar usuario de tienda', error);
+      if (isSupabaseAuthError(error)) {
+        resetAuthStateByExpiry();
+      }
+      toast.error(error instanceof Error ? error.message : 'No se pudo eliminar el usuario.');
+      return false;
+    }
+  };
+
   // Auto-sync: deshabilitado por seguridad para evitar reimportaciones locales accidentales.
   useEffect(() => {
     if (!hasPendingSync || !canReachSupabase || !session || !currentStoreId) {
@@ -1982,6 +2160,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Funciones de productos
   const addProduct = async (product: Omit<Product, 'id'>): Promise<ProductWriteStatus> => {
+    if (!requirePermission('inventory:manage', 'Solo un administrador puede crear productos.')) {
+      return 'failed';
+    }
+
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
         const created = await createProduct(session.access_token, currentStoreId, product);
@@ -2039,7 +2221,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     return 'local-pending';
   };
 
-  const updateProduct = async (id: string, updatedProduct: Partial<Product>): Promise<ProductWriteStatus> => {
+  const applyProductPatch = async (id: string, updatedProduct: Partial<Product>): Promise<ProductWriteStatus> => {
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
         await patchProduct(session.access_token, currentStoreId, id, updatedProduct);
@@ -2055,6 +2237,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
     setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedProduct } : p));
     markPendingSync();
     return 'local-pending';
+  };
+
+  const updateProduct = async (id: string, updatedProduct: Partial<Product>): Promise<ProductWriteStatus> => {
+    if (!requirePermission('inventory:manage', 'Solo un administrador puede editar productos.')) {
+      return 'failed';
+    }
+
+    return applyProductPatch(id, updatedProduct);
   };
 
   const adjustStock = async (
@@ -2078,7 +2268,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const stockBefore = product.stock;
     if (stockAfter === stockBefore) return true;
 
-    const status = await updateProduct(productId, { stock: stockAfter });
+    const status = await applyProductPatch(productId, { stock: stockAfter });
     if (status === 'failed') return false;
 
     const effectiveCostPrice = typeof options?.nextCostPrice === 'number' ? options.nextCostPrice : product.costPrice;
@@ -2117,6 +2307,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const deleteProduct = async (id: string): Promise<ProductWriteStatus> => {
+    if (!requirePermission('inventory:manage', 'Solo un administrador puede eliminar productos.')) {
+      return 'failed';
+    }
+
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
         await removeProduct(session.access_token, currentStoreId, id);
@@ -2146,6 +2340,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Funciones de categorías
   const addCategory = async (name: string): Promise<CategoryWriteStatus> => {
+    if (!requirePermission('inventory:manage', 'Solo un administrador puede crear categorías.')) {
+      return 'failed';
+    }
+
     const normalizedName = name.trim();
     if (!normalizedName) return 'invalid';
 
@@ -2172,6 +2370,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const updateCategory = async (oldName: string, newName: string): Promise<CategoryWriteStatus> => {
+    if (!requirePermission('inventory:manage', 'Solo un administrador puede editar categorías.')) {
+      return 'failed';
+    }
+
     const normalizedNewName = newName.trim();
     if (!normalizedNewName) return 'invalid';
     if (oldName === normalizedNewName) return 'remote-synced';
@@ -2220,6 +2422,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const deleteCategory = async (name: string, replacementCategory?: string): Promise<CategoryWriteStatus> => {
+    if (!requirePermission('inventory:manage', 'Solo un administrador puede eliminar categorías.')) {
+      return 'failed';
+    }
+
     if (!categories.includes(name)) return 'invalid';
 
     const hasProductsInCategory = products.some(product => product.category === name);
@@ -2941,8 +3147,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const clearCashReports = async (): Promise<boolean> => {
-    if (storeConfig.userRole !== 'admin') {
-      toast.error('Solo un administrador puede limpiar reportes de caja.');
+    if (!requirePermission('cash-reports:delete', 'Solo un administrador puede limpiar reportes de caja.')) {
       return false;
     }
 
@@ -2982,8 +3187,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const clearSelectedCashReports = async (sessionIds: string[]): Promise<boolean> => {
-    if (storeConfig.userRole !== 'admin') {
-      toast.error('Solo un administrador puede eliminar reportes de caja.');
+    if (!requirePermission('cash-reports:delete', 'Solo un administrador puede eliminar reportes de caja.')) {
       return false;
     }
 
@@ -3442,7 +3646,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       const stockBefore = product.stock;
       const stockAfter = stockBefore + item.quantity;
 
-      updateProduct(product.id, { stock: stockAfter });
+      void applyProductPatch(product.id, { stock: stockAfter });
 
       const unitCost = buildUnitCostWithIva(product);
       appendKardexMovement({
@@ -3765,6 +3969,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Funciones de proveedores
   const addSupplier = async (supplier: Omit<Supplier, 'id' | 'debt' | 'purchases'>): Promise<ProductWriteStatus> => {
+    if (!requirePermission('suppliers:manage', 'Solo un administrador puede crear proveedores.')) {
+      return 'failed';
+    }
+
     const normalizedAccounts = (supplier.bankAccounts || [])
       .map(account => account.trim())
       .filter(account => account.length > 0);
@@ -3808,7 +4016,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     return 'local-pending';
   };
 
-  const updateSupplier = async (id: string, updatedSupplier: Partial<Supplier>): Promise<ProductWriteStatus> => {
+  const applySupplierPatch = async (id: string, updatedSupplier: Partial<Supplier>): Promise<ProductWriteStatus> => {
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
         await updateSupplierRow(session.access_token, currentStoreId, id, {
@@ -3834,7 +4042,19 @@ export function POSProvider({ children }: { children: ReactNode }) {
     return 'local-pending';
   };
 
+  const updateSupplier = async (id: string, updatedSupplier: Partial<Supplier>): Promise<ProductWriteStatus> => {
+    if (!requirePermission('suppliers:manage', 'Solo un administrador puede editar proveedores.')) {
+      return 'failed';
+    }
+
+    return applySupplierPatch(id, updatedSupplier);
+  };
+
   const deleteSupplier = async (id: string): Promise<ProductWriteStatus> => {
+    if (!requirePermission('suppliers:manage', 'Solo un administrador puede eliminar proveedores.')) {
+      return 'failed';
+    }
+
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
         await deleteSupplierRow(session.access_token, currentStoreId, id);
@@ -3857,6 +4077,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
     items: { productId: string; quantity: number; cost: number }[],
     options?: { pricePolicy?: PurchasePricePolicy }
   ) => {
+    if (!requirePermission('purchases:register', 'No tienes permisos para registrar compras.')) {
+      return;
+    }
+
     const pricePolicy = options?.pricePolicy ?? 'automatic';
     const total = items.reduce((sum, item) => sum + (item.quantity * item.cost), 0);
     const purchaseReference = `COMP-${Date.now().toString().slice(-6)}`;
@@ -3899,7 +4123,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           ? autoUnitSalePrice
           : Number(product.unitPrice ?? product.salePrice);
 
-        updateProduct(item.productId, {
+        void applyProductPatch(item.productId, {
           stock: stockAfter,
           costPrice: weightedCostPrice,
           salePrice: nextUnitSalePrice,
@@ -3925,7 +4149,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     // Actualizar proveedor
     const supplier = suppliers.find(s => s.id === supplierId);
     if (supplier) {
-      updateSupplier(supplierId, {
+      void applySupplierPatch(supplierId, {
         purchases: [...supplier.purchases, newPurchase],
         debt: supplier.debt + total
       });
@@ -3994,6 +4218,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Funciones de configuración
   const updateStoreConfig = async (config: Partial<StoreConfig>): Promise<boolean> => {
+    if (!requirePermission('configuration:view', 'Solo un administrador puede actualizar la configuración.')) {
+      return false;
+    }
+
     const merged = { ...storeConfig, ...config };
     setStoreConfig(merged);
 
@@ -4055,6 +4283,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       offlineDefaultRole,
       hasPendingSync,
       currentUser,
+      hasPermission: hasRolePermission,
       login,
       loginOffline,
       logout,
@@ -4065,6 +4294,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
       syncWithSupabase,
       uploadLocalBackupToSupabase,
       getPendingProductSyncPreview,
+      listStoreUsers,
+      createStoreUser,
+      updateStoreUserAccess,
+      removeStoreUser,
       hasConnectedStore: Boolean(currentStoreId),
       products,
       addProduct,

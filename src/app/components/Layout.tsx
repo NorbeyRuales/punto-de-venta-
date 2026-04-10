@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
+import type { UserRole } from '../constants/permissions';
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -33,18 +34,28 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const logoSrc = storeConfig.logo || DEFAULT_LOGO_PATH;
 
   // Menú lateral con rutas principales.
-  const menuItems = [
-    { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { path: '/pos', icon: ShoppingCart, label: 'Nueva Venta' },
-    { path: '/cash-register', icon: Wallet, label: 'Caja' },
-    { path: '/purchases', icon: ShoppingBag, label: 'Compras' },
-    { path: '/inventory', icon: Package, label: 'Inventario' },
-    { path: '/customers', icon: Users, label: 'Clientes' },
-    { path: '/suppliers', icon: TrendingUp, label: 'Proveedores' },
-    { path: '/reports', icon: FileText, label: 'Reportes' },
-    { path: '/recharges', icon: Smartphone, label: 'Recargas' },
-    { path: '/configuration', icon: Settings, label: 'Configuración' },
+  const menuItems: Array<{
+    path: string;
+    icon: typeof LayoutDashboard;
+    label: string;
+    allowedRoles: UserRole[];
+  }> = [
+    { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', allowedRoles: ['admin', 'cashier'] },
+    { path: '/pos', icon: ShoppingCart, label: 'Nueva Venta', allowedRoles: ['admin', 'cashier'] },
+    { path: '/cash-register', icon: Wallet, label: 'Caja', allowedRoles: ['admin', 'cashier'] },
+    { path: '/purchases', icon: ShoppingBag, label: 'Compras', allowedRoles: ['admin', 'cashier'] },
+    { path: '/inventory', icon: Package, label: 'Inventario', allowedRoles: ['admin', 'cashier'] },
+    { path: '/customers', icon: Users, label: 'Clientes', allowedRoles: ['admin', 'cashier'] },
+    { path: '/suppliers', icon: TrendingUp, label: 'Proveedores', allowedRoles: ['admin'] },
+    { path: '/reports', icon: FileText, label: 'Reportes', allowedRoles: ['admin', 'cashier'] },
+    { path: '/recharges', icon: Smartphone, label: 'Recargas', allowedRoles: ['admin', 'cashier'] },
+    { path: '/configuration', icon: Settings, label: 'Configuración', allowedRoles: ['admin'] },
   ];
+
+  const visibleMenuItems = menuItems.filter((item) => {
+    const activeRole: UserRole = currentUser?.role ?? 'cashier';
+    return item.allowedRoles.includes(activeRole);
+  });
 
   // Cierra sesión y redirige a login.
   const handleLogout = () => {
@@ -138,7 +149,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
         
         <nav className="flex-1 p-4 overflow-y-auto">
-          {menuItems.map((item) => {
+          {visibleMenuItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
             return (
@@ -209,7 +220,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </div>
             
             <nav className="flex-1 p-3 overflow-y-auto">
-              {menuItems.map((item) => {
+              {visibleMenuItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.path;
                 return (

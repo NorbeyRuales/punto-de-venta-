@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router';
 import { usePOS } from '../context/POSContext';
 import type { PendingProductSyncPreview } from '../context/POSContext';
+import type { StoreManagedUser } from '../services/posSupabase';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -106,7 +107,11 @@ export function Configuration() {
     createStore,
     hasConnectedStore,
     uploadLocalBackupToSupabase,
-    getPendingProductSyncPreview
+    getPendingProductSyncPreview,
+    listStoreUsers,
+    createStoreUser,
+    updateStoreUserAccess,
+    removeStoreUser,
   } = usePOS();
   const location = useLocation();
   // Estado de pestañas y formularios.
@@ -128,6 +133,14 @@ export function Configuration() {
   const [offlinePinConfirm, setOfflinePinConfirm] = useState('');
   const [isSavingOfflinePin, setIsSavingOfflinePin] = useState(false);
   const [offlineRoleSelection, setOfflineRoleSelection] = useState<'admin' | 'cashier'>(offlineDefaultRole);
+  const [storeUsers, setStoreUsers] = useState<StoreManagedUser[]>([]);
+  const [isLoadingStoreUsers, setIsLoadingStoreUsers] = useState(false);
+  const [isCreatingStoreUser, setIsCreatingStoreUser] = useState(false);
+  const [isMutatingUserId, setIsMutatingUserId] = useState<string | null>(null);
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserFullName, setNewUserFullName] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'cashier'>('cashier');
 
   // Lee el tab desde querystring (?tab=categories, etc).
   useEffect(() => {
@@ -153,6 +166,97 @@ export function Configuration() {
     [config, storeConfig]
   );
   const isAdmin = currentUser?.role === 'admin';
+
+  const reloadStoreUsers = async () => {
+    if (!isAdmin) return;
+    setIsLoadingStoreUsers(true);
+    try {
+      const users = await listStoreUsers();
+      setStoreUsers(users);
+    } finally {
+      setIsLoadingStoreUsers(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'roles' || !isAdmin) return;
+    void reloadStoreUsers();
+  }, [activeTab, isAdmin]);
+
+  const handleCreateStoreUser = async () => {
+    if (isCreatingStoreUser) return;
+
+    const normalizedEmail = newUserEmail.trim().toLowerCase();
+    if (!normalizedEmail) {
+      toast.error('Ingresa un email para el usuario.');
+      return;
+    }
+
+    if (newUserPassword.trim().length < 6) {
+      toast.error('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+
+    setIsCreatingStoreUser(true);
+    try {
+      const ok = await createStoreUser({
+        email: normalizedEmail,
+        password: newUserPassword,
+        fullName: newUserFullName.trim() || undefined,
+        role: newUserRole,
+      });
+
+      if (!ok) return;
+
+      toast.success('Usuario creado y vinculado a la tienda.');
+      setNewUserEmail('');
+      setNewUserPassword('');
+      setNewUserFullName('');
+      setNewUserRole('cashier');
+      await reloadStoreUsers();
+    } finally {
+      setIsCreatingStoreUser(false);
+    }
+  };
+
+  const handleChangeStoreUserRole = async (membershipId: string, role: 'admin' | 'cashier') => {
+    if (isMutatingUserId) return;
+    setIsMutatingUserId(membershipId);
+    try {
+      const ok = await updateStoreUserAccess(membershipId, { role });
+      if (!ok) return;
+      toast.success('Rol actualizado.');
+      await reloadStoreUsers();
+    } finally {
+      setIsMutatingUserId(null);
+    }
+  };
+
+  const handleToggleStoreUserActive = async (membershipId: string, isActive: boolean) => {
+    if (isMutatingUserId) return;
+    setIsMutatingUserId(membershipId);
+    try {
+      const ok = await updateStoreUserAccess(membershipId, { isActive });
+      if (!ok) return;
+      toast.success(isActive ? 'Usuario activado.' : 'Usuario desactivado.');
+      await reloadStoreUsers();
+    } finally {
+      setIsMutatingUserId(null);
+    }
+  };
+
+  const handleRemoveStoreUser = async (membershipId: string) => {
+    if (isMutatingUserId) return;
+    setIsMutatingUserId(membershipId);
+    try {
+      const ok = await removeStoreUser(membershipId);
+      if (!ok) return;
+      toast.success('Usuario desvinculado de la tienda.');
+      await reloadStoreUsers();
+    } finally {
+      setIsMutatingUserId(null);
+    }
+  };
 
   // Guarda configuración local y en base de datos.
   const handleSave = async () => {
@@ -792,9 +896,9 @@ export function Configuration() {
                 <ul className="text-sm text-gray-600 space-y-1">
                   <li>• Acceso completo al sistema</li>
                   <li>• Gestión de inventario y precios</li>
+                  <li>• Gestión de usuarios y roles</li>
                   <li>• Reportes y estadísticas</li>
-                  <li>• Configuración del sistema</li>
-                  <li>• Gestión de usuarios</li>
+                  <li>• Configuración y sincronización avanzada</li>
                 </ul>
               </div>
 
@@ -802,13 +906,155 @@ export function Configuration() {
                 <h3 className="font-semibold mb-2">Cajero</h3>
                 <ul className="text-sm text-gray-600 space-y-1">
                   <li>• Realizar ventas</li>
-                  <li>• Consultar inventario</li>
+                  <li>• Consultar inventario (modo lectura)</li>
+                  <li>• Registrar compras de mercancía</li>
                   <li>• Gestionar clientes</li>
                   <li>• Recargas y servicios</li>
                   <li>• Ver reportes básicos</li>
                 </ul>
               </div>
             </div>
+
+            {isAdmin && (
+              <div className="p-4 border rounded-lg space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="font-semibold">Gestión de usuarios de tienda</h3>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void reloadStoreUsers()}
+                    disabled={isLoadingStoreUsers || !!isMutatingUserId || isCreatingStoreUser}
+                  >
+                    {isLoadingStoreUsers ? 'Cargando...' : 'Actualizar lista'}
+                  </Button>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Nombre (opcional)</Label>
+                    <Input
+                      value={newUserFullName}
+                      onChange={(e) => setNewUserFullName(e.target.value)}
+                      placeholder="Ej: Laura Gómez"
+                      className={inputClass}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Email *</Label>
+                    <Input
+                      type="email"
+                      value={newUserEmail}
+                      onChange={(e) => setNewUserEmail(e.target.value)}
+                      placeholder="usuario@tienda.com"
+                      className={inputClass}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Contraseña inicial *</Label>
+                    <Input
+                      type="password"
+                      value={newUserPassword}
+                      onChange={(e) => setNewUserPassword(e.target.value)}
+                      placeholder="Mínimo 6 caracteres"
+                      className={inputClass}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Rol *</Label>
+                    <Select value={newUserRole} onValueChange={(value: 'admin' | 'cashier') => setNewUserRole(value)}>
+                      <SelectTrigger className="h-12">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="admin">Administrador</SelectItem>
+                        <SelectItem value="cashier">Cajero</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <Button
+                  className="h-12 bg-[#2ECC71] hover:bg-[#27AE60]"
+                  onClick={() => void handleCreateStoreUser()}
+                  disabled={isCreatingStoreUser || !!isMutatingUserId}
+                >
+                  {isCreatingStoreUser ? 'Creando usuario...' : 'Crear usuario de tienda'}
+                </Button>
+
+                <div className="overflow-x-auto border rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead className="bg-secondary border-b">
+                      <tr>
+                        <th className="text-left p-3">Usuario</th>
+                        <th className="text-left p-3">Rol</th>
+                        <th className="text-left p-3">Estado</th>
+                        <th className="text-left p-3">Creado</th>
+                        <th className="text-right p-3">Acciones</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {isLoadingStoreUsers ? (
+                        <tr>
+                          <td colSpan={5} className="p-4 text-center text-gray-500">Cargando usuarios...</td>
+                        </tr>
+                      ) : storeUsers.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="p-4 text-center text-gray-500">No hay usuarios vinculados a la tienda.</td>
+                        </tr>
+                      ) : (
+                        storeUsers.map((user) => (
+                          <tr key={user.id} className="border-b">
+                            <td className="p-3">
+                              <p className="font-medium">{user.fullName || 'Sin nombre'}</p>
+                              <p className="text-xs text-gray-600">{user.email}</p>
+                            </td>
+                            <td className="p-3">
+                              <Select
+                                value={user.role}
+                                onValueChange={(value: 'admin' | 'cashier') => void handleChangeStoreUserRole(user.id, value)}
+                                disabled={isMutatingUserId === user.id}
+                              >
+                                <SelectTrigger className="h-9 w-[170px]">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="admin">Administrador</SelectItem>
+                                  <SelectItem value="cashier">Cajero</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            <td className="p-3">
+                              <div className="flex items-center gap-2">
+                                <Switch
+                                  checked={user.isActive}
+                                  onCheckedChange={(checked) => void handleToggleStoreUserActive(user.id, checked)}
+                                  disabled={isMutatingUserId === user.id}
+                                />
+                                <span className="text-xs text-gray-600">{user.isActive ? 'Activo' : 'Inactivo'}</span>
+                              </div>
+                            </td>
+                            <td className="p-3 text-xs text-gray-600">
+                              {new Date(user.createdAt).toLocaleString('es-CO')}
+                            </td>
+                            <td className="p-3 text-right">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-red-600 hover:text-red-700"
+                                onClick={() => void handleRemoveStoreUser(user.id)}
+                                disabled={isMutatingUserId === user.id}
+                              >
+                                Quitar
+                              </Button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="p-4 border rounded-lg space-y-4">
               <div>
@@ -867,7 +1113,7 @@ export function Configuration() {
 
             <div className="p-4 bg-blue-50 rounded-lg">
               <p className="text-sm text-gray-700">
-                <strong>Nota:</strong> Los usuarios se administran desde el modulo de autenticacion de la base de datos (Dashboard).
+                <strong>Nota:</strong> Para seguridad, la gestión de usuarios se valida en backend y solo un administrador activo puede ejecutarla.
               </p>
             </div>
           </Card>
