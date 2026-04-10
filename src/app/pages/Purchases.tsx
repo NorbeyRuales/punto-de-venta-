@@ -11,9 +11,25 @@ import { toast } from 'sonner';
 
 type PurchaseItemDraft = {
   productId: string;
-  quantityPackages: string;
-  packageCost: string;
+  quantity: string;
+  cost: string;
+  entryMode: 'package' | 'unit';
 };
+
+type PurchaseItem = {
+  id: string;
+  productId: string;
+  quantity: number;
+  cost: number;
+  unitsPerPackage: number;
+  entryMode: 'package' | 'unit';
+};
+
+const createPurchaseItemId = () => (
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+);
 
 export function Purchases() {
   const { suppliers, products, registerPurchase, storeConfig } = usePOS();
@@ -22,14 +38,15 @@ export function Purchases() {
   const [pricePolicy, setPricePolicy] = useState<'automatic' | 'manual'>(storeConfig.purchasePricePolicy || 'automatic');
   const [draft, setDraft] = useState<PurchaseItemDraft>({
     productId: '',
-    quantityPackages: '1',
-    packageCost: ''
+    quantity: '1',
+    cost: '',
+    entryMode: 'package'
   });
-  const [items, setItems] = useState<Array<{ productId: string; quantity: number; cost: number }>>([]);
-  const [editingProductId, setEditingProductId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState<{ quantityPackages: string; packageCost: string }>({
-    quantityPackages: '',
-    packageCost: ''
+  const [items, setItems] = useState<PurchaseItem[]>([]);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<{ quantity: string; cost: string }>({
+    quantity: '',
+    cost: ''
   });
 
   const selectedSupplier = suppliers.find(s => s.id === supplierId) || null;
@@ -47,68 +64,81 @@ export function Purchases() {
     return map;
   }, [products]);
 
+  const selectedDraftProduct = draft.productId ? productById.get(draft.productId) : undefined;
+
   // Agrega ítems al borrador de compra.
   const addItemToPurchase = () => {
-    const quantity = parseFloat(draft.quantityPackages);
-    const cost = parseFloat(draft.packageCost);
+    const quantity = parseFloat(draft.quantity);
+    const cost = parseFloat(draft.cost);
 
     if (!draft.productId || Number.isNaN(quantity) || Number.isNaN(cost) || quantity <= 0 || cost <= 0) {
-      toast.error('Complete producto, paquetes y costo por paquete');
+      toast.error('Complete producto, cantidad y costo');
       return;
     }
 
+    const unitsPerPackage = draft.entryMode === 'unit'
+      ? 1
+      : Number(selectedDraftProduct?.unitsPerPurchase ?? 1) || 1;
+
     setItems(prev => {
-      const existing = prev.find(item => item.productId === draft.productId);
+      const existing = prev.find(item => item.productId === draft.productId && item.entryMode === draft.entryMode);
       if (existing) {
         return prev.map(item =>
-          item.productId === draft.productId
-            ? { ...item, quantity: item.quantity + quantity, cost }
+          item.id === existing.id
+            ? { ...item, quantity: item.quantity + quantity, cost, unitsPerPackage }
             : item
         );
       }
 
-      return [...prev, { productId: draft.productId, quantity, cost }];
+      return [...prev, {
+        id: createPurchaseItemId(),
+        productId: draft.productId,
+        quantity,
+        cost,
+        unitsPerPackage,
+        entryMode: draft.entryMode
+      }];
     });
 
-    setDraft({ productId: '', quantityPackages: '1', packageCost: '' });
+    setDraft({ productId: '', quantity: '1', cost: '', entryMode: 'package' });
   };
 
-  const removeItem = (productId: string) => {
-    setItems(prev => prev.filter(item => item.productId !== productId));
-    if (editingProductId === productId) {
-      setEditingProductId(null);
-      setEditDraft({ quantityPackages: '', packageCost: '' });
+  const removeItem = (itemId: string) => {
+    setItems(prev => prev.filter(item => item.id !== itemId));
+    if (editingItemId === itemId) {
+      setEditingItemId(null);
+      setEditDraft({ quantity: '', cost: '' });
     }
   };
 
-  const startEditItem = (productId: string) => {
-    const current = items.find(item => item.productId === productId);
+  const startEditItem = (itemId: string) => {
+    const current = items.find(item => item.id === itemId);
     if (!current) return;
 
-    setEditingProductId(productId);
+    setEditingItemId(itemId);
     setEditDraft({
-      quantityPackages: current.quantity.toString(),
-      packageCost: current.cost.toString()
+      quantity: current.quantity.toString(),
+      cost: current.cost.toString()
     });
   };
 
   const cancelEditItem = () => {
-    setEditingProductId(null);
-    setEditDraft({ quantityPackages: '', packageCost: '' });
+    setEditingItemId(null);
+    setEditDraft({ quantity: '', cost: '' });
   };
 
   // Guarda cambios del ítem en edición.
-  const saveEditItem = (productId: string) => {
-    const quantity = parseFloat(editDraft.quantityPackages);
-    const cost = parseFloat(editDraft.packageCost);
+  const saveEditItem = (itemId: string) => {
+    const quantity = parseFloat(editDraft.quantity);
+    const cost = parseFloat(editDraft.cost);
 
     if (Number.isNaN(quantity) || Number.isNaN(cost) || quantity <= 0 || cost <= 0) {
-      toast.error('Ingrese valores válidos para paquetes y costo');
+      toast.error('Ingrese valores válidos para cantidad y costo');
       return;
     }
 
     setItems(prev => prev.map(item =>
-      item.productId === productId
+      item.id === itemId
         ? { ...item, quantity, cost }
         : item
     ));
@@ -136,7 +166,16 @@ export function Purchases() {
       return;
     }
 
-    registerPurchase(supplierId, items, { pricePolicy });
+    registerPurchase(
+      supplierId,
+      items.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        cost: item.cost,
+        unitsPerPackage: item.unitsPerPackage,
+      })),
+      { pricePolicy }
+    );
     toast.success(
       pricePolicy === 'automatic'
         ? 'Compra registrada. Stock y precio actualizados automáticamente'
@@ -144,7 +183,7 @@ export function Purchases() {
     );
 
     setItems([]);
-    setDraft({ productId: '', quantityPackages: '1', packageCost: '' });
+    setDraft({ productId: '', quantity: '1', cost: '', entryMode: 'package' });
   };
 
   return (
@@ -162,7 +201,7 @@ export function Purchases() {
           <Select value={supplierId} onValueChange={(value) => {
             setSupplierId(value);
             setItems([]);
-            setDraft({ productId: '', quantityPackages: '1', packageCost: '' });
+            setDraft({ productId: '', quantity: '1', cost: '', entryMode: 'package' });
           }}>
             <SelectTrigger>
               <SelectValue placeholder="Seleccione proveedor" />
@@ -191,7 +230,7 @@ export function Purchases() {
           </Select>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
           <div className="md:col-span-2">
             <Label>Producto</Label>
             <Select
@@ -213,22 +252,38 @@ export function Purchases() {
           </div>
 
           <div>
-            <Label>Paquetes</Label>
+            <Label>Modo de compra</Label>
+            <Select
+              value={draft.entryMode}
+              onValueChange={(value: 'package' | 'unit') => setDraft(prev => ({ ...prev, entryMode: value }))}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="package">Por paquete</SelectItem>
+                <SelectItem value="unit">Por unidad</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div>
+            <Label>{draft.entryMode === 'package' ? 'Paquetes' : 'Unidades'}</Label>
             <Input
               type="number"
               min="1"
-              value={draft.quantityPackages}
-              onChange={(e) => setDraft(prev => ({ ...prev, quantityPackages: e.target.value }))}
+              value={draft.quantity}
+              onChange={(e) => setDraft(prev => ({ ...prev, quantity: e.target.value }))}
             />
           </div>
 
           <div>
-            <Label>Costo paquete (sin IVA)</Label>
+            <Label>{draft.entryMode === 'package' ? 'Costo paquete (sin IVA)' : 'Costo unidad (sin IVA)'}</Label>
             <Input
               type="number"
               min="0"
-              value={draft.packageCost}
-              onChange={(e) => setDraft(prev => ({ ...prev, packageCost: e.target.value }))}
+              value={draft.cost}
+              onChange={(e) => setDraft(prev => ({ ...prev, cost: e.target.value }))}
             />
           </div>
         </div>
@@ -248,32 +303,34 @@ export function Purchases() {
           ) : (
             items.map(item => {
               const product = productById.get(item.productId);
-              const unitsPerPurchase = Number(product?.unitsPerPurchase ?? 1) || 1;
-              const isEditing = editingProductId === item.productId;
-              const quantityForCalc = isEditing ? (parseFloat(editDraft.quantityPackages) || 0) : item.quantity;
-              const costForCalc = isEditing ? (parseFloat(editDraft.packageCost) || 0) : item.cost;
+              const unitsPerPurchase = Number(item.unitsPerPackage ?? product?.unitsPerPurchase ?? 1) || 1;
+              const isEditing = editingItemId === item.id;
+              const quantityForCalc = isEditing ? (parseFloat(editDraft.quantity) || 0) : item.quantity;
+              const costForCalc = isEditing ? (parseFloat(editDraft.cost) || 0) : item.cost;
               const enteredUnits = quantityForCalc * unitsPerPurchase;
+              const quantityLabel = item.entryMode === 'package' ? 'Paquetes' : 'Unidades';
+              const costLabel = item.entryMode === 'package' ? 'Costo paquete' : 'Costo unidad';
               const subtotal = quantityForCalc * costForCalc;
 
               return (
-                <div key={item.productId} className="rounded-lg border border-border bg-white p-3 space-y-3">
+                <div key={item.id} className="rounded-lg border border-border bg-white p-3 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
                       <p className="font-semibold">{product?.name || 'Producto'}</p>
-                      <p className="text-xs text-gray-600">Unid/paq: {unitsPerPurchase}</p>
+                      <p className="text-xs text-gray-600">Modo: {item.entryMode === 'package' ? 'por paquete' : 'por unidad'} · Unid/entrada: {unitsPerPurchase}</p>
                     </div>
                     <span className="text-sm font-semibold text-[#2ECC71]">+{enteredUnits} unid</span>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 text-sm">
                     <div>
-                      <p className="text-xs text-gray-500">Paquetes</p>
+                      <p className="text-xs text-gray-500">{quantityLabel}</p>
                       {isEditing ? (
                         <Input
                           type="number"
                           min="1"
-                          value={editDraft.quantityPackages}
-                          onChange={(e) => setEditDraft(prev => ({ ...prev, quantityPackages: e.target.value }))}
+                          value={editDraft.quantity}
+                          onChange={(e) => setEditDraft(prev => ({ ...prev, quantity: e.target.value }))}
                           className="h-9 text-right"
                         />
                       ) : (
@@ -281,13 +338,13 @@ export function Purchases() {
                       )}
                     </div>
                     <div>
-                      <p className="text-xs text-gray-500">Costo paquete</p>
+                      <p className="text-xs text-gray-500">{costLabel}</p>
                       {isEditing ? (
                         <Input
                           type="number"
                           min="0"
-                          value={editDraft.packageCost}
-                          onChange={(e) => setEditDraft(prev => ({ ...prev, packageCost: e.target.value }))}
+                          value={editDraft.cost}
+                          onChange={(e) => setEditDraft(prev => ({ ...prev, cost: e.target.value }))}
                           className="h-9 text-right"
                         />
                       ) : (
@@ -311,7 +368,7 @@ export function Purchases() {
                           size="sm"
                           variant="outline"
                           className="text-[#2ECC71] hover:text-[#27AE60]"
-                          onClick={() => saveEditItem(item.productId)}
+                          onClick={() => saveEditItem(item.id)}
                         >
                           <Check className="w-4 h-4" />
                         </Button>
@@ -320,12 +377,12 @@ export function Purchases() {
                         </Button>
                       </>
                     ) : (
-                      <Button size="sm" variant="outline" onClick={() => startEditItem(item.productId)}>
+                      <Button size="sm" variant="outline" onClick={() => startEditItem(item.id)}>
                         <Pencil className="w-4 h-4" />
                       </Button>
                     )}
 
-                    <Button size="sm" variant="outline" className="text-red-600 hover:text-red-700" onClick={() => removeItem(item.productId)}>
+                    <Button size="sm" variant="outline" className="text-red-600 hover:text-red-700" onClick={() => removeItem(item.id)}>
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   </div>
@@ -340,10 +397,10 @@ export function Purchases() {
             <thead className="bg-secondary border-b">
               <tr>
                 <th className="text-left p-3 sm:p-4 font-semibold">Producto</th>
-                <th className="text-right p-3 sm:p-4 font-semibold">Unid por paquete</th>
-                <th className="text-right p-3 sm:p-4 font-semibold">Paquetes</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Unid por entrada</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Cantidad</th>
                 <th className="text-right p-3 sm:p-4 font-semibold">Unidades entrada</th>
-                <th className="text-right p-3 sm:p-4 font-semibold">Costo paquete</th>
+                <th className="text-right p-3 sm:p-4 font-semibold">Costo entrada</th>
                 <th className="text-right p-3 sm:p-4 font-semibold">Subtotal</th>
                 <th className="text-center p-3 sm:p-4 font-semibold">Acciones</th>
               </tr>
@@ -356,24 +413,27 @@ export function Purchases() {
               ) : (
                 items.map(item => {
                   const product = productById.get(item.productId);
-                  const unitsPerPurchase = Number(product?.unitsPerPurchase ?? 1) || 1;
-                  const isEditing = editingProductId === item.productId;
-                  const quantityForCalc = isEditing ? (parseFloat(editDraft.quantityPackages) || 0) : item.quantity;
-                  const costForCalc = isEditing ? (parseFloat(editDraft.packageCost) || 0) : item.cost;
+                  const unitsPerPurchase = Number(item.unitsPerPackage ?? product?.unitsPerPurchase ?? 1) || 1;
+                  const isEditing = editingItemId === item.id;
+                  const quantityForCalc = isEditing ? (parseFloat(editDraft.quantity) || 0) : item.quantity;
+                  const costForCalc = isEditing ? (parseFloat(editDraft.cost) || 0) : item.cost;
                   const enteredUnits = quantityForCalc * unitsPerPurchase;
                   const subtotal = quantityForCalc * costForCalc;
 
                   return (
-                    <tr key={item.productId} className="border-b">
-                      <td className="p-3 sm:p-4">{product?.name || 'Producto'}</td>
+                    <tr key={item.id} className="border-b">
+                      <td className="p-3 sm:p-4">
+                        <p>{product?.name || 'Producto'}</p>
+                        <p className="text-xs text-gray-500">{item.entryMode === 'package' ? 'Por paquete' : 'Por unidad'}</p>
+                      </td>
                       <td className="p-3 sm:p-4 text-right">{unitsPerPurchase}</td>
                       <td className="p-3 sm:p-4 text-right">
                         {isEditing ? (
                           <Input
                             type="number"
                             min="1"
-                            value={editDraft.quantityPackages}
-                            onChange={(e) => setEditDraft(prev => ({ ...prev, quantityPackages: e.target.value }))}
+                            value={editDraft.quantity}
+                            onChange={(e) => setEditDraft(prev => ({ ...prev, quantity: e.target.value }))}
                             className="h-9 text-right"
                           />
                         ) : item.quantity}
@@ -384,8 +444,8 @@ export function Purchases() {
                           <Input
                             type="number"
                             min="0"
-                            value={editDraft.packageCost}
-                            onChange={(e) => setEditDraft(prev => ({ ...prev, packageCost: e.target.value }))}
+                            value={editDraft.cost}
+                            onChange={(e) => setEditDraft(prev => ({ ...prev, cost: e.target.value }))}
                             className="h-9 text-right"
                           />
                         ) : `$${item.cost.toLocaleString('es-CO')}`}
@@ -399,7 +459,7 @@ export function Purchases() {
                                 size="sm"
                                 variant="outline"
                                 className="text-[#2ECC71] hover:text-[#27AE60]"
-                                onClick={() => saveEditItem(item.productId)}
+                                onClick={() => saveEditItem(item.id)}
                               >
                                 <Check className="w-4 h-4" />
                               </Button>
@@ -408,12 +468,12 @@ export function Purchases() {
                               </Button>
                             </>
                           ) : (
-                            <Button size="sm" variant="outline" onClick={() => startEditItem(item.productId)}>
+                            <Button size="sm" variant="outline" onClick={() => startEditItem(item.id)}>
                               <Pencil className="w-4 h-4" />
                             </Button>
                           )}
 
-                          <Button size="sm" variant="outline" className="text-red-600 hover:text-red-700" onClick={() => removeItem(item.productId)}>
+                          <Button size="sm" variant="outline" className="text-red-600 hover:text-red-700" onClick={() => removeItem(item.id)}>
                             <Trash2 className="w-4 h-4" />
                           </Button>
                         </div>

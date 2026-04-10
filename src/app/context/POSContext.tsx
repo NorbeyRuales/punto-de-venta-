@@ -425,7 +425,7 @@ export interface Purchase {
   id: string;
   date: string;
   supplierId: string;
-  items: { productId: string; quantity: number; cost: number }[];
+  items: { productId: string; quantity: number; cost: number; unitsPerPackage?: number }[];
   total: number;
   paid: boolean;
 }
@@ -707,7 +707,7 @@ interface POSContextType {
   deleteSupplier: (id: string) => Promise<ProductWriteStatus>;
   registerPurchase: (
     supplierId: string,
-    items: { productId: string; quantity: number; cost: number }[],
+    items: { productId: string; quantity: number; cost: number; unitsPerPackage?: number }[],
     options?: { pricePolicy?: PurchasePricePolicy }
   ) => void;
   
@@ -1226,6 +1226,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
             productId: item.product_id ?? '',
             quantity: toNumber(item.quantity_packages),
             cost: toNumber(item.package_cost),
+            unitsPerPackage: toNumber(item.units_per_package) || 1,
           })),
         })),
       }));
@@ -4074,7 +4075,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   const registerPurchase = (
     supplierId: string,
-    items: { productId: string; quantity: number; cost: number }[],
+    items: { productId: string; quantity: number; cost: number; unitsPerPackage?: number }[],
     options?: { pricePolicy?: PurchasePricePolicy }
   ) => {
     if (!requirePermission('purchases:register', 'No tienes permisos para registrar compras.')) {
@@ -4097,7 +4098,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     items.forEach(item => {
       const product = products.find(p => p.id === item.productId);
       if (product) {
-        const unitsPerPurchase = Number(product.unitsPerPurchase ?? 1) || 1;
+        const unitsPerPurchase = Number(item.unitsPerPackage ?? product.unitsPerPurchase ?? 1) || 1;
         const stockBefore = product.stock;
         const purchasedPackages = item.quantity;
         const enteredUnits = purchasedPackages * unitsPerPurchase;
@@ -4158,7 +4159,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     if (isConnectedToSupabase && session && currentStoreId) {
       const purchaseItems = items.map((item) => {
         const product = products.find(p => p.id === item.productId);
-        const unitsPerPurchase = Number(product?.unitsPerPurchase ?? 1) || 1;
+        const unitsPerPurchase = Number(item.unitsPerPackage ?? product?.unitsPerPurchase ?? 1) || 1;
         const enteredUnits = item.quantity * unitsPerPurchase;
         const ivaFactor = 1 + (Number(product?.iva || 0) / 100);
         return {
