@@ -111,6 +111,17 @@ const roundMoney = (value: number): number => {
   return Math.round(value / 100) * 100;
 };
 
+const calculatePendingSupplierDebt = (purchases: Purchase[] | undefined): number => {
+  if (!Array.isArray(purchases) || purchases.length === 0) return 0;
+
+  const pending = purchases.reduce((sum, purchase) => {
+    if (purchase.paid) return sum;
+    return sum + toNumber(purchase.total);
+  }, 0);
+
+  return roundMoney(Math.max(0, pending));
+};
+
 const CASH_COUNT_BILL_VALUES = [1000, 2000, 5000, 10000, 20000, 50000, 100000] as const;
 const CASH_COUNT_COIN_VALUES = [50, 100, 200, 500, 1000] as const;
 
@@ -1213,16 +1224,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
       setCustomers(customers);
 
-      const suppliers: Supplier[] = supplierRows.map((row) => ({
-        id: row.id,
-        name: row.name || 'Proveedor',
-        nit: row.nit ?? '',
-        phone: row.phone ?? '',
-        email: row.email ?? undefined,
-        address: row.address ?? undefined,
-        bankAccounts: row.bank_accounts ?? [],
-        debt: toNumber(row.debt),
-        purchases: (row.purchases ?? []).map((purchase) => ({
+      const suppliers: Supplier[] = supplierRows.map((row) => {
+        const purchases: Purchase[] = (row.purchases ?? []).map((purchase) => ({
           id: purchase.id,
           date: purchase.created_at,
           supplierId: row.id,
@@ -1234,8 +1237,20 @@ export function POSProvider({ children }: { children: ReactNode }) {
             cost: toNumber(item.package_cost),
             unitsPerPackage: toNumber(item.units_per_package) || 1,
           })),
-        })),
-      }));
+        }));
+
+        return {
+          id: row.id,
+          name: row.name || 'Proveedor',
+          nit: row.nit ?? '',
+          phone: row.phone ?? '',
+          email: row.email ?? undefined,
+          address: row.address ?? undefined,
+          bankAccounts: row.bank_accounts ?? [],
+          debt: calculatePendingSupplierDebt(purchases),
+          purchases,
+        };
+      });
 
       setSuppliers(suppliers);
 
@@ -1424,9 +1439,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
           .map(account => account.trim())
           .filter(account => account.length > 0);
 
+        const normalizedPurchases = Array.isArray(supplier.purchases) ? supplier.purchases : [];
+
         return {
           ...supplier,
-          bankAccounts: normalizedAccounts
+          bankAccounts: normalizedAccounts,
+          purchases: normalizedPurchases,
+          debt: calculatePendingSupplierDebt(normalizedPurchases),
         };
       });
 
@@ -4156,9 +4175,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
     // Actualizar proveedor
     const supplier = suppliers.find(s => s.id === supplierId);
     if (supplier) {
+      const nextPurchases = [...supplier.purchases, newPurchase];
       void applySupplierPatch(supplierId, {
-        purchases: [...supplier.purchases, newPurchase],
-        debt: supplier.debt + total
+        purchases: nextPurchases,
+        debt: calculatePendingSupplierDebt(nextPurchases),
       });
     }
 
@@ -4239,12 +4259,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return 'remote-synced';
     }
 
-    const oldPending = targetPurchase.paid ? 0 : targetPurchase.total;
-    const nextPending = paid ? 0 : targetPurchase.total;
-    const nextDebt = roundMoney(Math.max(0, supplier.debt + (nextPending - oldPending)));
     const nextPurchases = supplier.purchases.map((purchase) => (
       purchase.id === purchaseId ? { ...purchase, paid } : purchase
     ));
+    const nextDebt = calculatePendingSupplierDebt(nextPurchases);
 
     const supplierStatus = await applySupplierPatch(supplierId, {
       purchases: nextPurchases,
@@ -4342,9 +4360,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    const pendingValue = targetPurchase.paid ? 0 : targetPurchase.total;
-    const nextDebt = roundMoney(Math.max(0, supplier.debt - pendingValue));
     const nextPurchases = supplier.purchases.filter((purchase) => purchase.id !== purchaseId);
+    const nextDebt = calculatePendingSupplierDebt(nextPurchases);
     const supplierStatus = await applySupplierPatch(supplierId, {
       purchases: nextPurchases,
       debt: nextDebt,

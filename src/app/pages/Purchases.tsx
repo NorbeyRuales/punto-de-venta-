@@ -54,7 +54,7 @@ export function Purchases() {
   const [updatingPurchaseId, setUpdatingPurchaseId] = useState<string | null>(null);
   const [deletingPurchaseId, setDeletingPurchaseId] = useState<string | null>(null);
   const [confirmDeletePurchaseId, setConfirmDeletePurchaseId] = useState<string | null>(null);
-  const [historyPeriod, setHistoryPeriod] = useState<'today' | 'week' | 'month'>('today');
+  const [historyPeriod, setHistoryPeriod] = useState<'all' | 'today' | 'week' | 'month'>('all');
 
   const selectedSupplier = suppliers.find(s => s.id === supplierId) || null;
   const visibleSuppliers = useMemo(() => {
@@ -89,13 +89,15 @@ export function Purchases() {
   }, [products]);
 
   const selectedDraftProduct = draft.productId ? productById.get(draft.productId) : undefined;
-  const recentSupplierPurchases = useMemo(
-    () => (selectedSupplier ? selectedSupplier.purchases.slice(-8).reverse() : []),
+  const supplierPurchases = useMemo(
+    () => (selectedSupplier ? [...selectedSupplier.purchases].reverse() : []),
     [selectedSupplier],
   );
   const historyRange = useMemo(() => {
     const now = new Date();
     switch (historyPeriod) {
+      case 'all':
+        return null;
       case 'today':
         return { start: startOfDay(now), end: endOfDay(now) };
       case 'week':
@@ -103,16 +105,19 @@ export function Purchases() {
       case 'month':
         return { start: subDays(startOfDay(now), 30), end: endOfDay(now) };
       default:
-        return { start: startOfDay(now), end: endOfDay(now) };
+        return null;
     }
   }, [historyPeriod]);
   const filteredSupplierPurchases = useMemo(
-    () => recentSupplierPurchases.filter((purchase) => {
+    () => {
+      if (!historyRange) return supplierPurchases;
+      return supplierPurchases.filter((purchase) => {
       const purchaseDate = new Date(purchase.date).getTime();
       if (!Number.isFinite(purchaseDate)) return false;
       return purchaseDate >= historyRange.start.getTime() && purchaseDate <= historyRange.end.getTime();
-    }),
-    [recentSupplierPurchases, historyRange],
+      });
+    },
+    [supplierPurchases, historyRange],
   );
 
   // Agrega ítems al borrador de compra.
@@ -637,11 +642,12 @@ export function Purchases() {
         <Card className="p-6">
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-bold">Compras del proveedor</h2>
-            <Select value={historyPeriod} onValueChange={(value: 'today' | 'week' | 'month') => setHistoryPeriod(value)}>
+            <Select value={historyPeriod} onValueChange={(value: 'all' | 'today' | 'week' | 'month') => setHistoryPeriod(value)}>
               <SelectTrigger className="w-full sm:w-44">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="all">Todo el historial</SelectItem>
                 <SelectItem value="today">Hoy</SelectItem>
                 <SelectItem value="week">Última Semana</SelectItem>
                 <SelectItem value="month">Último Mes</SelectItem>
@@ -649,7 +655,7 @@ export function Purchases() {
             </Select>
           </div>
           <p className="mb-3 text-sm text-gray-600">
-            Mostrando {filteredSupplierPurchases.length} de {recentSupplierPurchases.length} compras.
+            Mostrando {filteredSupplierPurchases.length} de {supplierPurchases.length} compras.
           </p>
           {filteredSupplierPurchases.length === 0 ? (
             <p className="text-sm text-gray-500">Aún no hay compras registradas para este proveedor.</p>
