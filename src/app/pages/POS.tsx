@@ -855,7 +855,7 @@ export function POS() {
           if (open) setCompletedSale(null);
         }}
       >
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Completar Venta</DialogTitle>
           </DialogHeader>
@@ -1001,18 +1001,19 @@ export function POS() {
                           {formatRoundedCurrency(debtPreview)}
                         </span>
                       </div>
-                      {isCashOnlyPayment && cashReceived && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-slate-600">Cambio</span>
-                          <span className="font-semibold text-blue-700">{formatRoundedCurrency(change)}</span>
-                        </div>
-                      )}
                       {isMixedOverpay && (
                         <p className="text-xs text-red-600 pt-1">
                           El pago mixto no puede exceder el total de la venta.
                         </p>
                       )}
                     </div>
+
+                    {isCashOnlyPayment && cashReceived && (
+                      <div className="bg-secondary p-4 rounded-lg">
+                        <p className="text-sm text-gray-600 mb-1">Cambio</p>
+                        <p className="text-3xl font-bold text-blue-700">{formatRoundedCurrency(change)}</p>
+                      </div>
+                    )}
                   </>
                 )}
 
