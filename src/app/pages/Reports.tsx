@@ -1,11 +1,21 @@
 // Reportes de ventas con gráficos y ranking.
-import { useMemo, useState } from 'react';
+import { useDeferredValue, useMemo, useState, useTransition } from 'react';
 import { usePOS } from '../context/POSContext';
 import type { Purchase, Sale } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { FileText, Download, TrendingUp, DollarSign, Share2, ChevronDown, ChevronUp, ShoppingBag } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../components/ui/alert-dialog';
 import { startOfDay, endOfDay, subDays, format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -14,18 +24,21 @@ import { toast } from 'sonner';
 export function Reports() {
   const { getSalesInRange, kardexMovements, registerReturn, customers, storeConfig, products, suppliers } = usePOS();
   const [period, setPeriod] = useState('today');
+  const deferredPeriod = useDeferredValue(period);
+  const [isPendingTransition, startTransition] = useTransition();
   const [purchaseStatusFilter, setPurchaseStatusFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const [showAllLatestSales, setShowAllLatestSales] = useState(false);
   const [showAllLatestPurchases, setShowAllLatestPurchases] = useState(false);
   const [showAllInventoryRows, setShowAllInventoryRows] = useState(false);
+  const [pendingReturnSale, setPendingReturnSale] = useState<{ saleId: string; invoiceNumber?: string } | null>(null);
   const latestSalesCollapsedLimit = 3;
   const latestPurchasesCollapsedLimit = 5;
   const inventoryRowsCollapsedLimit = 3;
 
   // Calcula rango de fechas según periodo seleccionado.
-  const getDateRange = () => {
+  const getDateRange = (selectedPeriod: string) => {
     const now = new Date();
-    switch (period) {
+    switch (selectedPeriod) {
       case 'today': return { start: startOfDay(now), end: endOfDay(now) };
       case 'week': return { start: subDays(startOfDay(now), 7), end: endOfDay(now) };
       case 'month': return { start: subDays(startOfDay(now), 30), end: endOfDay(now) };
@@ -33,16 +46,22 @@ export function Reports() {
     }
   };
 
-  const { start, end } = getDateRange();
-  const periodSales = getSalesInRange(start, end);
-  const returnedReferences = new Set(
-    kardexMovements
-      .map(movement => movement.reference)
-      .filter(Boolean)
+  const { start, end } = useMemo(() => getDateRange(deferredPeriod), [deferredPeriod]);
+  const periodSales = useMemo(() => getSalesInRange(start, end), [getSalesInRange, start, end]);
+  const returnedReferences = useMemo(
+    () => new Set(
+      kardexMovements
+        .map((movement) => movement.reference)
+        .filter(Boolean),
+    ),
+    [kardexMovements],
   );
   const isSaleReturned = (sale: Sale) =>
     Boolean(sale.returnedAt) || returnedReferences.has(`DEV-${sale.id}`);
-  const netSales = periodSales.filter((sale) => !isSaleReturned(sale));
+  const netSales = useMemo(
+    () => periodSales.filter((sale) => !isSaleReturned(sale)),
+    [periodSales, returnedReferences],
+  );
 
   const periodPurchases = useMemo(() => {
     const startTime = start.getTime();
@@ -139,34 +158,38 @@ export function Reports() {
   );
 
   // Productos más vendidos
-  const productSales = new Map<string, { name: string; quantity: number; revenue: number }>();
-  netSales.forEach(sale => {
-    sale.items.forEach(item => {
-      const current = productSales.get(item.product.id);
-      const revenue = item.product.salePrice * item.quantity;
-      if (current) {
-        current.quantity += item.quantity;
-        current.revenue += revenue;
-      } else {
-        productSales.set(item.product.id, { name: item.product.name, quantity: item.quantity, revenue });
-      }
+  const topProducts = useMemo(() => {
+    const productSales = new Map<string, { name: string; quantity: number; revenue: number }>();
+    netSales.forEach((sale) => {
+      sale.items.forEach((item) => {
+        const current = productSales.get(item.product.id);
+        const revenue = item.product.salePrice * item.quantity;
+        if (current) {
+          current.quantity += item.quantity;
+          current.revenue += revenue;
+        } else {
+          productSales.set(item.product.id, { name: item.product.name, quantity: item.quantity, revenue });
+        }
+      });
     });
-  });
 
-  const topProducts = Array.from(productSales.values())
-    .sort((a, b) => b.revenue - a.revenue)
-    .slice(0, 10);
+    return Array.from(productSales.values())
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10);
+  }, [netSales]);
 
   // Ventas por categoría
-  const categorySales = new Map<string, number>();
-  netSales.forEach(sale => {
-    sale.items.forEach(item => {
-      const current = categorySales.get(item.product.category) || 0;
-      categorySales.set(item.product.category, current + (item.product.salePrice * item.quantity));
+  const categoryData = useMemo(() => {
+    const categorySales = new Map<string, number>();
+    netSales.forEach((sale) => {
+      sale.items.forEach((item) => {
+        const current = categorySales.get(item.product.category) || 0;
+        categorySales.set(item.product.category, current + (item.product.salePrice * item.quantity));
+      });
     });
-  });
 
-  const categoryData = Array.from(categorySales.entries()).map(([name, value]) => ({ name, value }));
+    return Array.from(categorySales.entries()).map(([name, value]) => ({ name, value }));
+  }, [netSales]);
   const COLORS = ['#15D9E6', '#E6C915', '#E61595', '#8BE9FD', '#FFD27F', '#2ECC71'];
   const latestSales = periodSales.slice(-20).reverse();
   const visibleLatestSales = showAllLatestSales
@@ -379,10 +402,13 @@ export function Reports() {
       return;
     }
 
-    const confirmed = confirm(`¿Registrar devolución total de la factura ${invoiceNumber || saleId}?`);
-    if (!confirmed) return;
+    setPendingReturnSale({ saleId, invoiceNumber });
+  };
 
-    registerReturn(saleId);
+  const confirmReturnSale = () => {
+    if (!pendingReturnSale) return;
+    registerReturn(pendingReturnSale.saleId);
+    setPendingReturnSale(null);
   };
 
   // Placeholder de exportación.
@@ -395,7 +421,7 @@ export function Reports() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-3xl font-bold">Reportes</h1>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-          <Select value={period} onValueChange={setPeriod}>
+          <Select value={period} onValueChange={(value) => startTransition(() => setPeriod(value))}>
             <SelectTrigger className="w-full sm:w-40">
               <SelectValue />
             </SelectTrigger>
@@ -405,6 +431,9 @@ export function Reports() {
               <SelectItem value="month">Último Mes</SelectItem>
             </SelectContent>
           </Select>
+          {isPendingTransition ? (
+            <p className="text-xs text-gray-500 sm:self-center">Actualizando...</p>
+          ) : null}
           <Button variant="outline" onClick={exportToExcel} className="w-full sm:w-auto">
             <Download className="w-5 h-5 mr-2" />
             Exportar Excel
@@ -671,7 +700,10 @@ export function Reports() {
             <h3 className="text-lg font-bold">Compras del Período</h3>
             <p className="text-sm text-gray-600">Mostrando {visibleLatestPurchases.length} de {latestPurchases.length} compras registradas.</p>
           </div>
-          <Select value={purchaseStatusFilter} onValueChange={(value: 'all' | 'pending' | 'paid') => setPurchaseStatusFilter(value)}>
+          <Select
+            value={purchaseStatusFilter}
+            onValueChange={(value: 'all' | 'pending' | 'paid') => startTransition(() => setPurchaseStatusFilter(value))}
+          >
             <SelectTrigger className="w-full sm:w-44">
               <SelectValue />
             </SelectTrigger>
@@ -683,7 +715,22 @@ export function Reports() {
           </Select>
         </div>
 
-        <div className="overflow-x-auto rounded-lg border">
+        <div className="md:hidden space-y-3">
+          {filteredPurchaseSupplierTotals.length === 0 ? (
+            <div className="text-center py-6 text-gray-500">No hay compras registradas para este período.</div>
+          ) : (
+            filteredPurchaseSupplierTotals.map((row) => (
+              <div key={row.supplierId || row.supplierName} className="rounded-lg border border-border bg-white p-3 space-y-1">
+                <p className="font-semibold">{row.supplierName}</p>
+                <p className="text-sm text-gray-600">Compras: {row.purchases}</p>
+                <p className="text-sm font-medium">Total: {formatCurrency(row.total)}</p>
+                <p className="text-sm font-medium text-red-600">Pendiente: {formatCurrency(row.pending)}</p>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto rounded-lg border">
           <table className="w-full min-w-[640px]">
             <thead className="bg-secondary border-b">
               <tr>
@@ -814,7 +861,23 @@ export function Reports() {
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-lg border">
+        <div className="md:hidden space-y-3">
+          {inventoryTaxSummary.length === 0 ? (
+            <div className="text-center py-6 text-gray-500">No hay inventario con stock disponible.</div>
+          ) : (
+            inventoryTaxSummary.map((row) => (
+              <div key={row.key} className="rounded-lg border border-border bg-white p-3 space-y-1">
+                <p className="font-semibold">{row.label}</p>
+                <p className="text-sm text-gray-600">Productos: {row.productsCount} · Unidades: {row.unitsInStock.toLocaleString('es-CO')}</p>
+                <p className="text-sm">Base: {formatCurrency(row.baseCost)}</p>
+                <p className="text-sm text-amber-700">Impuesto: {formatCurrency(row.taxValue)}</p>
+                <p className="text-sm font-semibold">Total: {formatCurrency(row.totalCost)}</p>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto rounded-lg border">
           <table className="w-full min-w-[760px]">
             <thead className="bg-secondary border-b">
               <tr>
@@ -856,7 +919,26 @@ export function Reports() {
           </div>
         </div>
 
-        <div className="overflow-x-auto rounded-lg border">
+        <div className="md:hidden space-y-3">
+          {inventoryTaxDetails.length === 0 ? (
+            <div className="text-center py-6 text-gray-500">No hay inventario con stock disponible.</div>
+          ) : (
+            visibleInventoryTaxDetails.map((detail) => (
+              <div key={detail.id} className="rounded-lg border border-border bg-white p-3 space-y-1">
+                <p className="font-semibold">{detail.name}</p>
+                <p className="text-sm text-gray-600">{detail.category} · Stock: {detail.stock.toLocaleString('es-CO')}</p>
+                <p className="text-sm">Costo base unit.: {formatCurrency(detail.unitBaseCost)}</p>
+                <p className="text-sm text-amber-700">Impuesto unit.: {formatCurrency(detail.unitTaxValue)}</p>
+                <p className="text-sm">Costo unit. + imp.: {formatCurrency(detail.unitCostWithTax)}</p>
+                <p className="text-sm">Base inventario: {formatCurrency(detail.inventoryBaseCost)}</p>
+                <p className="text-sm text-amber-700">Impuesto inventario: {formatCurrency(detail.inventoryTaxValue)}</p>
+                <p className="text-sm font-semibold">Total inventario: {formatCurrency(detail.inventoryTotalCost)}</p>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto rounded-lg border">
           <table className="w-full min-w-[1200px]">
             <thead className="bg-secondary border-b">
               <tr>
@@ -918,6 +1000,30 @@ export function Reports() {
           </p>
         ) : null}
       </Card>
+
+      <AlertDialog
+        open={pendingReturnSale !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingReturnSale(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Registrar devolución total?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingReturnSale
+                ? `Se devolverá completamente la factura ${pendingReturnSale.invoiceNumber || pendingReturnSale.saleId}.`
+                : 'Confirma si deseas continuar con la devolución.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmReturnSale} className="bg-red-600 hover:bg-red-700">
+              Confirmar devolución
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {(showAllLatestSales && latestSales.length > latestSalesCollapsedLimit)
       || (showAllLatestPurchases && latestPurchases.length > latestPurchasesCollapsedLimit)

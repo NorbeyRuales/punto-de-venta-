@@ -548,7 +548,7 @@ export function Configuration() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 px-2 md:px-4">
+    <div className="max-w-6xl mx-auto space-y-6 px-3 sm:px-4 md:px-5">
       <h1 className="text-3xl font-bold">Configuración</h1>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -567,14 +567,14 @@ export function Configuration() {
               <h2 className="text-xl font-bold">Categorías de Inventario</h2>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 value={newCategory}
                 onChange={(e) => setNewCategory(e.target.value)}
                 placeholder="Nueva categoría"
                 className="h-12"
               />
-              <Button onClick={handleAddCategory} className="h-12 bg-[#2ECC71] hover:bg-[#27AE60]">
+              <Button onClick={handleAddCategory} className="h-12 w-full sm:w-auto bg-[#2ECC71] hover:bg-[#27AE60]">
                 Agregar
               </Button>
             </div>
@@ -587,7 +587,7 @@ export function Configuration() {
                   const usageCount = products.filter(product => product.category === category).length;
 
                   return (
-                    <div key={category} className="flex items-center justify-between border rounded-lg p-3 gap-3">
+                    <div key={category} className="flex flex-col gap-3 border rounded-lg p-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex-1">
                         {editingCategory === category ? (
                           <Input
@@ -601,7 +601,7 @@ export function Configuration() {
                         <p className="text-xs text-gray-600 mt-1">{usageCount} producto(s)</p>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center justify-end gap-2">
                         {editingCategory === category ? (
                           <>
                             <Button size="sm" variant="outline" onClick={handleSaveCategory}>
@@ -636,7 +636,7 @@ export function Configuration() {
         </TabsContent>
 
         <TabsContent value="store">
-          <Card className="p-8 space-y-6">
+          <Card className="p-4 sm:p-6 md:p-8 space-y-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-lg border border-border bg-white overflow-hidden flex items-center justify-center">
                 <img
@@ -669,11 +669,11 @@ export function Configuration() {
                 </div>
                 <div className="w-full flex flex-col gap-3">
                   <Label className="text-sm font-semibold text-foreground">Logo de la tienda</Label>
-                  <label className="inline-flex items-center gap-3 w-full">
+                  <label className="inline-flex w-full flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
                     <span className="inline-flex items-center justify-center px-4 py-2 h-12 rounded-lg border-2 border-[var(--primary)] bg-[var(--primary-soft)] text-[var(--foreground)] font-semibold hover:bg-[var(--primary)] hover:text-[var(--primary-foreground)] transition-all shadow-[0_6px_18px_rgba(128,168,255,0.25)]">
                       Seleccionar logo
                     </span>
-                    <span className="text-sm text-[var(--muted-foreground)] truncate" aria-live="polite">
+                    <span className="w-full text-sm text-[var(--muted-foreground)] break-all sm:truncate" aria-live="polite">
                       {config.logo && config.logo !== DEFAULT_LOGO_PATH ? config.logo : 'Ningún archivo seleccionado'}
                     </span>
                     <input
@@ -917,13 +917,14 @@ export function Configuration() {
 
             {isAdmin && (
               <div className="p-4 border rounded-lg space-y-4">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                   <h3 className="font-semibold">Gestión de usuarios de tienda</h3>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => void reloadStoreUsers()}
                     disabled={isLoadingStoreUsers || !!isMutatingUserId || isCreatingStoreUser}
+                    className="w-full sm:w-auto"
                   >
                     {isLoadingStoreUsers ? 'Cargando...' : 'Actualizar lista'}
                   </Button>
@@ -974,14 +975,68 @@ export function Configuration() {
                 </div>
 
                 <Button
-                  className="h-12 bg-[#2ECC71] hover:bg-[#27AE60]"
+                  className="h-12 w-full bg-[#2ECC71] hover:bg-[#27AE60]"
                   onClick={() => void handleCreateStoreUser()}
                   disabled={isCreatingStoreUser || !!isMutatingUserId}
                 >
                   {isCreatingStoreUser ? 'Creando usuario...' : 'Crear usuario de tienda'}
                 </Button>
 
-                <div className="overflow-x-auto border rounded-lg">
+                <div className="md:hidden space-y-3">
+                  {isLoadingStoreUsers ? (
+                    <div className="rounded-lg border p-4 text-center text-gray-500">Cargando usuarios...</div>
+                  ) : storeUsers.length === 0 ? (
+                    <div className="rounded-lg border p-4 text-center text-gray-500">No hay usuarios vinculados a la tienda.</div>
+                  ) : (
+                    storeUsers.map((user) => (
+                      <div key={user.id} className="rounded-lg border p-3 space-y-3">
+                        <div>
+                          <p className="font-medium">{user.fullName || 'Sin nombre'}</p>
+                          <p className="text-xs text-gray-600 break-all">{user.email}</p>
+                          <p className="text-xs text-gray-500 mt-1">Creado: {new Date(user.createdAt).toLocaleString('es-CO')}</p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label className="text-xs">Rol</Label>
+                          <Select
+                            value={user.role}
+                            onValueChange={(value: 'admin' | 'cashier') => void handleChangeStoreUserRole(user.id, value)}
+                            disabled={isMutatingUserId === user.id}
+                          >
+                            <SelectTrigger className="h-10 w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="admin">Administrador</SelectItem>
+                              <SelectItem value="cashier">Cajero</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <div className="flex items-center justify-between rounded-md bg-secondary px-3 py-2">
+                          <span className="text-sm text-gray-700">{user.isActive ? 'Activo' : 'Inactivo'}</span>
+                          <Switch
+                            checked={user.isActive}
+                            onCheckedChange={(checked) => void handleToggleStoreUserActive(user.id, checked)}
+                            disabled={isMutatingUserId === user.id}
+                          />
+                        </div>
+
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full text-red-600 hover:text-red-700"
+                          onClick={() => void handleRemoveStoreUser(user.id)}
+                          disabled={isMutatingUserId === user.id}
+                        >
+                          Quitar
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="hidden md:block overflow-x-auto border rounded-lg">
                   <table className="w-full text-sm">
                     <thead className="bg-secondary border-b">
                       <tr>
@@ -1014,7 +1069,7 @@ export function Configuration() {
                                 onValueChange={(value: 'admin' | 'cashier') => void handleChangeStoreUserRole(user.id, value)}
                                 disabled={isMutatingUserId === user.id}
                               >
-                                <SelectTrigger className="h-9 w-[170px]">
+                                <SelectTrigger className="h-9 w-full min-w-[170px]">
                                   <SelectValue />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -1286,7 +1341,7 @@ export function Configuration() {
           </Card>
 
           <Dialog open={showPendingModal} onOpenChange={setShowPendingModal}>
-            <DialogContent className="max-w-lg">
+            <DialogContent className="w-[95vw] max-w-lg max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Pendientes locales por sincronizar</DialogTitle>
               </DialogHeader>
@@ -1296,7 +1351,7 @@ export function Configuration() {
                   Fuente del cálculo: {pendingSummary.source === 'offline-backup' ? 'snapshot pendiente (pos_offline_backup)' : 'estado local actual'}.
                 </p>
 
-                <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                   <div className="rounded-lg border p-3">
                     <p className="text-gray-500">Productos</p>
                     <p className="text-lg font-semibold">{pendingSummary.products}</p>
@@ -1360,7 +1415,7 @@ export function Configuration() {
                     )}
                     {productDiff.canCompare && (
                       <>
-                        <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                           <div className="rounded border bg-white p-2">
                             <p className="text-gray-500">Locales</p>
                             <p className="font-semibold">{productDiff.localTotal}</p>

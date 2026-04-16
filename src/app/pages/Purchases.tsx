@@ -1,5 +1,5 @@
 // Registro de compras y actualización de stock.
-import { useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState, useTransition } from 'react';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -54,11 +54,17 @@ export function Purchases() {
   const [updatingPurchaseId, setUpdatingPurchaseId] = useState<string | null>(null);
   const [deletingPurchaseId, setDeletingPurchaseId] = useState<string | null>(null);
   const [confirmDeletePurchaseId, setConfirmDeletePurchaseId] = useState<string | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.matchMedia('(max-width: 767px)').matches;
+  });
+  const [isPendingTransition, startTransition] = useTransition();
   const [historyPeriod, setHistoryPeriod] = useState<'all' | 'today' | 'week' | 'month'>('all');
+  const deferredSupplierSearch = useDeferredValue(supplierSearch);
 
   const selectedSupplier = suppliers.find(s => s.id === supplierId) || null;
   const visibleSuppliers = useMemo(() => {
-    const query = supplierSearch.trim().toLowerCase();
+    const query = deferredSupplierSearch.trim().toLowerCase();
     if (!query) return suppliers;
 
     const filtered = suppliers.filter((supplier) => supplier.name.toLowerCase().includes(query));
@@ -66,14 +72,14 @@ export function Purchases() {
 
     const selected = suppliers.find((supplier) => supplier.id === supplierId);
     return selected ? [selected, ...filtered] : filtered;
-  }, [suppliers, supplierSearch, supplierId]);
+  }, [suppliers, deferredSupplierSearch, supplierId]);
   const supplierSuggestions = useMemo(() => {
-    const query = supplierSearch.trim().toLowerCase();
+    const query = deferredSupplierSearch.trim().toLowerCase();
     if (!query) return [];
     return suppliers
       .filter((supplier) => supplier.name.toLowerCase().includes(query))
       .slice(0, 8);
-  }, [suppliers, supplierSearch]);
+  }, [suppliers, deferredSupplierSearch]);
 
   // Productos filtrados por proveedor seleccionado.
   const supplierProducts = useMemo(() => {
@@ -119,6 +125,25 @@ export function Purchases() {
     },
     [supplierPurchases, historyRange],
   );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const mediaQuery = window.matchMedia('(max-width: 767px)');
+    const handleViewportChange = (event: MediaQueryListEvent) => {
+      setIsMobileViewport(event.matches);
+    };
+
+    setIsMobileViewport(mediaQuery.matches);
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', handleViewportChange);
+      return () => mediaQuery.removeEventListener('change', handleViewportChange);
+    }
+
+    mediaQuery.addListener(handleViewportChange);
+    return () => mediaQuery.removeListener(handleViewportChange);
+  }, []);
 
   // Agrega ítems al borrador de compra.
   const addItemToPurchase = () => {
@@ -426,7 +451,8 @@ export function Purchases() {
       </Card>
 
       <Card className="overflow-hidden">
-        <div className="md:hidden p-4 space-y-3">
+        {isMobileViewport ? (
+          <div className="p-4 space-y-3">
           {items.length === 0 ? (
             <div className="text-center py-8 text-gray-500">No hay productos en la compra</div>
           ) : (
@@ -519,9 +545,9 @@ export function Purchases() {
               );
             })
           )}
-        </div>
-
-        <div className="hidden md:block overflow-x-auto">
+          </div>
+        ) : (
+        <div className="overflow-x-auto">
           <table className="w-full min-w-[900px]">
             <thead className="bg-secondary border-b">
               <tr>
@@ -614,6 +640,7 @@ export function Purchases() {
             </tbody>
           </table>
         </div>
+        )}
       </Card>
 
       <Card className="p-6">
@@ -641,8 +668,14 @@ export function Purchases() {
       {selectedSupplier && (
         <Card className="p-6">
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="text-lg font-bold">Compras del proveedor</h2>
-            <Select value={historyPeriod} onValueChange={(value: 'all' | 'today' | 'week' | 'month') => setHistoryPeriod(value)}>
+            <div>
+              <h2 className="text-lg font-bold">Compras del proveedor</h2>
+              {isPendingTransition ? <p className="text-xs text-gray-500">Actualizando historial...</p> : null}
+            </div>
+            <Select
+              value={historyPeriod}
+              onValueChange={(value: 'all' | 'today' | 'week' | 'month') => startTransition(() => setHistoryPeriod(value))}
+            >
               <SelectTrigger className="w-full sm:w-44">
                 <SelectValue />
               </SelectTrigger>
@@ -661,7 +694,8 @@ export function Purchases() {
             <p className="text-sm text-gray-500">Aún no hay compras registradas para este proveedor.</p>
           ) : (
             <>
-              <div className="md:hidden space-y-3">
+              {isMobileViewport ? (
+              <div className="space-y-3">
                 {filteredSupplierPurchases.map((purchase) => (
                   <div key={purchase.id} className="rounded-lg border border-border p-3 space-y-3">
                     <div className="flex items-start justify-between gap-3">
@@ -732,8 +766,8 @@ export function Purchases() {
                   </div>
                 ))}
               </div>
-
-              <div className="hidden md:block overflow-x-auto rounded-lg border">
+              ) : (
+              <div className="overflow-x-auto rounded-lg border">
                 <table className="w-full min-w-[1000px]">
                   <thead className="bg-secondary border-b">
                     <tr>
@@ -819,6 +853,7 @@ export function Purchases() {
                   </tbody>
                 </table>
               </div>
+              )}
             </>
           )}
         </Card>

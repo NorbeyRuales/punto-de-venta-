@@ -1884,50 +1884,78 @@ return (
             </div>
           )}
 
-          <div className="overflow-auto border rounded-md max-h-[72vh]">
-            <table className="w-full text-sm min-w-[980px]">
-              <thead className="bg-secondary border-b">
-                <tr>
-                  <th className="text-left p-3 font-semibold">Fecha</th>
-                  <th className="text-left p-3 font-semibold">Tipo</th>
-                  <th className="text-left p-3 font-semibold">Referencia</th>
-                  <th className="text-right p-3 font-semibold">Cantidad</th>
-                  <th className="text-right p-3 font-semibold">Antes</th>
-                  <th className="text-right p-3 font-semibold">Después</th>
-                  <th className="text-right p-3 font-semibold">Costo uni</th>
-                  <th className="text-right p-3 font-semibold">Venta uni</th>
-                </tr>
-              </thead>
-              <tbody>
-                {selectedKardexMovements.length === 0 ? (
+          {isMobileViewport ? (
+            <div className="space-y-3">
+              {selectedKardexMovements.length === 0 ? (
+                <div className="text-center py-8 text-gray-500 border rounded-md">
+                  Este producto aún no tiene movimientos de Kardex.
+                </div>
+              ) : (
+                selectedKardexMovements.map((movement) => (
+                  <div key={movement.id} className="rounded-md border p-3 space-y-1 text-sm">
+                    <p className="text-gray-600">{new Date(movement.date).toLocaleString('es-CO')}</p>
+                    <p className="font-medium capitalize">{movement.type === 'entry' ? 'Entrada' : movement.type === 'sale' ? 'Salida' : 'Ajuste'} · {movement.reference}</p>
+                    <p className={movement.quantity >= 0 ? 'font-semibold text-[#2ECC71]' : 'font-semibold text-red-600'}>
+                      Cantidad: {movement.quantity > 0 ? `+${movement.quantity}` : movement.quantity}
+                    </p>
+                    <p>Antes: {movement.stockBefore} · Después: {movement.stockAfter}</p>
+                    <p>Costo uni: ${movement.unitCost.toLocaleString('es-CO', { maximumFractionDigits: 2 })}</p>
+                    <p>
+                      Venta uni:{' '}
+                      {typeof movement.unitSalePrice === 'number'
+                        ? `$${movement.unitSalePrice.toLocaleString('es-CO', { maximumFractionDigits: 2 })}`
+                        : '-'}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : (
+            <div className="overflow-auto border rounded-md max-h-[72vh]">
+              <table className="w-full text-sm min-w-[980px]">
+                <thead className="bg-secondary border-b">
                   <tr>
-                    <td colSpan={8} className="text-center py-8 text-gray-500">
-                      Este producto aún no tiene movimientos de Kardex.
-                    </td>
+                    <th className="text-left p-3 font-semibold">Fecha</th>
+                    <th className="text-left p-3 font-semibold">Tipo</th>
+                    <th className="text-left p-3 font-semibold">Referencia</th>
+                    <th className="text-right p-3 font-semibold">Cantidad</th>
+                    <th className="text-right p-3 font-semibold">Antes</th>
+                    <th className="text-right p-3 font-semibold">Después</th>
+                    <th className="text-right p-3 font-semibold">Costo uni</th>
+                    <th className="text-right p-3 font-semibold">Venta uni</th>
                   </tr>
-                ) : (
-                  selectedKardexMovements.map(movement => (
-                    <tr key={movement.id} className="border-b">
-                      <td className="p-3 whitespace-nowrap">{new Date(movement.date).toLocaleString('es-CO')}</td>
-                      <td className="p-3 capitalize whitespace-nowrap">{movement.type === 'entry' ? 'Entrada' : movement.type === 'sale' ? 'Salida' : 'Ajuste'}</td>
-                      <td className="p-3 whitespace-nowrap">{movement.reference}</td>
-                      <td className={`p-3 text-right font-semibold ${movement.quantity >= 0 ? 'text-[#2ECC71]' : 'text-red-600'}`}>
-                        {movement.quantity > 0 ? `+${movement.quantity}` : movement.quantity}
-                      </td>
-                      <td className="p-3 text-right">{movement.stockBefore}</td>
-                      <td className="p-3 text-right">{movement.stockAfter}</td>
-                      <td className="p-3 text-right">${movement.unitCost.toLocaleString('es-CO', { maximumFractionDigits: 2 })}</td>
-                      <td className="p-3 text-right">
-                        {typeof movement.unitSalePrice === 'number'
-                          ? `$${movement.unitSalePrice.toLocaleString('es-CO', { maximumFractionDigits: 2 })}`
-                          : '-'}
+                </thead>
+                <tbody>
+                  {selectedKardexMovements.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="text-center py-8 text-gray-500">
+                        Este producto aún no tiene movimientos de Kardex.
                       </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  ) : (
+                    selectedKardexMovements.map(movement => (
+                      <tr key={movement.id} className="border-b">
+                        <td className="p-3 whitespace-nowrap">{new Date(movement.date).toLocaleString('es-CO')}</td>
+                        <td className="p-3 capitalize whitespace-nowrap">{movement.type === 'entry' ? 'Entrada' : movement.type === 'sale' ? 'Salida' : 'Ajuste'}</td>
+                        <td className="p-3 whitespace-nowrap">{movement.reference}</td>
+                        <td className={`p-3 text-right font-semibold ${movement.quantity >= 0 ? 'text-[#2ECC71]' : 'text-red-600'}`}>
+                          {movement.quantity > 0 ? `+${movement.quantity}` : movement.quantity}
+                        </td>
+                        <td className="p-3 text-right">{movement.stockBefore}</td>
+                        <td className="p-3 text-right">{movement.stockAfter}</td>
+                        <td className="p-3 text-right">${movement.unitCost.toLocaleString('es-CO', { maximumFractionDigits: 2 })}</td>
+                        <td className="p-3 text-right">
+                          {typeof movement.unitSalePrice === 'number'
+                            ? `$${movement.unitSalePrice.toLocaleString('es-CO', { maximumFractionDigits: 2 })}`
+                            : '-'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           <div className="flex justify-end pt-2">
             <Button variant="outline" onClick={() => setShowKardexDialog(false)}>
