@@ -1,5 +1,5 @@
 // Punto de venta: búsqueda, carrito, descuentos y cobro.
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, type KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { usePOS } from '../context/POSContext';
 import type { PaymentMethodOption, Sale } from '../context/POSContext';
@@ -289,6 +289,66 @@ export function POS() {
     return false;
   };
 
+  // Atiende Enter del escáner/teclado para autoagregar al carrito.
+  const handleSearchSubmit = (rawQuery: string) => {
+    const query = rawQuery.trim();
+    if (!query) return;
+
+    const queryNormalized = normalizeText(query);
+
+    const barcodeMatches = products.filter((product) => (product.barcode || '').trim() === query);
+    if (barcodeMatches.length === 1) {
+      const added = handleAddToCart(barcodeMatches[0].id);
+      if (!added) {
+        setSearchQuery('');
+        searchInputRef.current?.focus();
+      }
+      return;
+    }
+    if (barcodeMatches.length > 1) {
+      toast.error('Código de barras duplicado. Selecciona el producto manualmente.');
+      return;
+    }
+
+    const skuMatches = products.filter((product) => normalizeText(product.sku || '') === queryNormalized);
+    if (skuMatches.length === 1) {
+      const added = handleAddToCart(skuMatches[0].id);
+      if (!added) {
+        setSearchQuery('');
+        searchInputRef.current?.focus();
+      }
+      return;
+    }
+    if (skuMatches.length > 1) {
+      toast.error('SKU duplicado. Selecciona el producto manualmente.');
+      return;
+    }
+
+    const nameMatches = products.filter((product) => normalizeText(product.name) === queryNormalized);
+    if (nameMatches.length === 1) {
+      const added = handleAddToCart(nameMatches[0].id);
+      if (!added) {
+        setSearchQuery('');
+        searchInputRef.current?.focus();
+      }
+      return;
+    }
+    if (nameMatches.length > 1) {
+      toast.error('Nombre ambiguo. Selecciona el producto manualmente.');
+      return;
+    }
+
+    toast.error('Producto no encontrado.');
+    setSearchQuery('');
+    searchInputRef.current?.focus();
+  };
+
+  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    handleSearchSubmit(searchQuery);
+  };
+
   // Ajusta cantidades del carrito con validaciones.
   const handleQuantityChange = (productId: string, newQuantity: number) => {
     const product = products.find(p => p.id === productId);
@@ -522,6 +582,7 @@ export function POS() {
                 placeholder="Buscar productos..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={handleSearchKeyDown}
                 className="pl-10 h-12 text-base"
                 autoFocus
                 aria-label="Buscar productos"
