@@ -1,5 +1,5 @@
 // Control de caja: apertura, movimientos y cierre.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -121,6 +121,8 @@ export function CashRegister() {
   const [isDeletingSelectedReports, setIsDeletingSelectedReports] = useState(false);
   const [deleteConfirmationPassword, setDeleteConfirmationPassword] = useState('');
   const [showAllActiveMovements, setShowAllActiveMovements] = useState(false);
+  const countInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const closingNoteRef = useRef<HTMLInputElement | null>(null);
 
   const currentStatus = currentCashSession?.status;
   const isOpen = currentStatus === 'open';
@@ -261,6 +263,19 @@ export function CashRegister() {
 
   const handleStartCounting = async () => {
     await startCashCounting();
+  };
+
+  const handleCountInputKeyDown = (event: KeyboardEvent<HTMLInputElement>, index: number) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+
+    const nextInput = countInputRefs.current[index + 1];
+    if (nextInput) {
+      nextInput.focus();
+      return;
+    }
+
+    closingNoteRef.current?.focus();
   };
 
   const handleCancelCounting = async () => {
@@ -565,10 +580,13 @@ export function CashRegister() {
                   <div className="min-w-[260px] flex-1 rounded-lg border border-slate-200 p-3">
                     <p className="mb-2 text-sm font-semibold text-slate-700">Billetes</p>
                     <div className="space-y-2">
-                      {billRows.map((row) => (
+                      {billRows.map((row, index) => (
                         <div key={row.denomination} className="grid grid-cols-[68px_84px_minmax(80px,1fr)] items-center gap-2 sm:grid-cols-[88px_96px_minmax(96px,1fr)] sm:gap-3">
                           <span className="whitespace-nowrap text-sm text-slate-700 tabular-nums">{formatDenomination(row.denomination)}</span>
                           <Input
+                            ref={(element) => {
+                              countInputRefs.current[index] = element;
+                            }}
                             type="number"
                             min="0"
                             step="1"
@@ -577,6 +595,7 @@ export function CashRegister() {
                               ...prev,
                               [String(row.denomination)]: event.target.value,
                             }))}
+                            onKeyDown={(event) => handleCountInputKeyDown(event, index)}
                             placeholder="0"
                             className="h-11 w-full text-center text-base font-semibold tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                           />
@@ -592,10 +611,13 @@ export function CashRegister() {
                   <div className="min-w-[320px] flex-[1.18] rounded-lg border border-slate-200 p-3">
                     <p className="mb-2 text-sm font-semibold text-slate-700">Monedas</p>
                     <div className="space-y-2">
-                      {coinRows.map((row) => (
+                      {coinRows.map((row, index) => (
                         <div key={row.denomination} className="grid grid-cols-[68px_84px_minmax(80px,1fr)] items-center gap-2 sm:grid-cols-[88px_96px_minmax(96px,1fr)] sm:gap-3">
                           <span className="whitespace-nowrap text-sm text-slate-700 tabular-nums">{formatDenomination(row.denomination)}</span>
                           <Input
+                            ref={(element) => {
+                              countInputRefs.current[CASH_BILL_DENOMINATIONS.length + index] = element;
+                            }}
                             type="number"
                             min="0"
                             step="1"
@@ -604,6 +626,7 @@ export function CashRegister() {
                               ...prev,
                               [String(row.denomination)]: event.target.value,
                             }))}
+                            onKeyDown={(event) => handleCountInputKeyDown(event, CASH_BILL_DENOMINATIONS.length + index)}
                             placeholder="0"
                             className="h-11 w-full text-center text-base font-semibold tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                           />
@@ -620,6 +643,7 @@ export function CashRegister() {
               <div>
                 <Label>Observación de cierre (opcional)</Label>
                 <Input
+                  ref={closingNoteRef}
                   value={closingNote}
                   onChange={(e) => setClosingNote(e.target.value)}
                   placeholder="Ej: faltante por cambio no registrado"

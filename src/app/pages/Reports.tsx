@@ -5,8 +5,10 @@ import type { Purchase, Sale } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { FileText, Download, TrendingUp, DollarSign, Share2, ChevronDown, ChevronUp, ShoppingBag } from 'lucide-react';
+import { FileText, Download, TrendingUp, DollarSign, Share2, ChevronDown, ChevronUp, ShoppingBag, CalendarDays } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Calendar } from '../components/ui/calendar';
+import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,16 +19,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog';
-import { startOfDay, endOfDay, subDays, format } from 'date-fns';
+import { startOfDay, endOfDay, format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { toast } from 'sonner';
+import type { DateRange } from 'react-day-picker';
 
 export function Reports() {
   const { getSalesInRange, sales, kardexMovements, registerReturn, customers, storeConfig, products, suppliers } = usePOS();
-  const [period, setPeriod] = useState('today');
-  const deferredPeriod = useDeferredValue(period);
+  const [dateRange, setDateRange] = useState<DateRange>(() => {
+    const today = startOfDay(new Date());
+    return { from: today, to: today };
+  });
+  const deferredDateRange = useDeferredValue(dateRange);
   const [isPendingTransition, startTransition] = useTransition();
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [purchaseStatusFilter, setPurchaseStatusFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const [showAllLatestSales, setShowAllLatestSales] = useState(false);
   const [showAllReturnReports, setShowAllReturnReports] = useState(false);
@@ -39,19 +46,25 @@ export function Reports() {
   const latestPurchasesCollapsedLimit = 5;
   const inventoryRowsCollapsedLimit = 3;
 
-  // Calcula rango de fechas según periodo seleccionado.
-  const getDateRange = (selectedPeriod: string) => {
-    const now = new Date();
-    switch (selectedPeriod) {
-      case 'today': return { start: startOfDay(now), end: endOfDay(now) };
-      case 'yesterday': return { start: startOfDay(subDays(now, 1)), end: endOfDay(subDays(now, 1)) };
-      case 'week': return { start: subDays(startOfDay(now), 7), end: endOfDay(now) };
-      case 'month': return { start: subDays(startOfDay(now), 30), end: endOfDay(now) };
-      default: return { start: startOfDay(now), end: endOfDay(now) };
-    }
-  };
+  const { start, end } = useMemo(() => {
+    const from = deferredDateRange?.from ?? new Date();
+    const to = deferredDateRange?.to ?? from;
+    return {
+      start: startOfDay(from),
+      end: endOfDay(to),
+    };
+  }, [deferredDateRange]);
+  const dateRangeLabel = useMemo(() => {
+    if (!dateRange?.from) return 'Seleccionar fechas';
+    const fromLabel = format(dateRange.from, 'd MMM yyyy', { locale: es });
 
-  const { start, end } = useMemo(() => getDateRange(deferredPeriod), [deferredPeriod]);
+    if (!dateRange.to) {
+      return `Desde ${fromLabel}`;
+    }
+
+    const toLabel = format(dateRange.to, 'd MMM yyyy', { locale: es });
+    return fromLabel === toLabel ? fromLabel : `${fromLabel} - ${toLabel}`;
+  }, [dateRange]);
   const periodSales = useMemo(() => getSalesInRange(start, end), [getSalesInRange, start, end]);
   const returnedQuantitiesBySale = useMemo(() => {
     const grouped = new Map<string, Map<string, number>>();
@@ -677,22 +690,56 @@ export function Reports() {
     toast.success('Exportando reporte...');
   };
 
+  const handleRangeSelect = (nextRange: DateRange | undefined) => {
+    if (!nextRange?.from) return;
+
+    const normalizedFrom = startOfDay(nextRange.from);
+    const normalizedTo = nextRange.to ? startOfDay(nextRange.to) : normalizedFrom;
+
+    startTransition(() => {
+      setDateRange({
+        from: normalizedFrom,
+        to: normalizedTo,
+      });
+    });
+
+    setIsDatePickerOpen(false);
+  };
+
+  const handleTodayRange = () => {
+    const today = startOfDay(new Date());
+    startTransition(() => {
+      setDateRange({ from: today, to: today });
+    });
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-3xl font-bold">Reportes</h1>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-          <Select value={period} onValueChange={(value) => startTransition(() => setPeriod(value))}>
-            <SelectTrigger className="w-full sm:w-40">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="today">Hoy</SelectItem>
-              <SelectItem value="yesterday">Ayer</SelectItem>
-              <SelectItem value="week">Última Semana</SelectItem>
-              <SelectItem value="month">Último Mes</SelectItem>
-            </SelectContent>
-          </Select>
+          <Popover open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
+            <PopoverTrigger asChild>
+              <Button type="button" variant="outline" className="w-full justify-between sm:w-[270px]">
+                <span className="truncate text-left">{dateRangeLabel}</span>
+                <CalendarDays className="ml-2 h-4 w-4 shrink-0" />
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <Calendar
+                mode="range"
+                selected={dateRange}
+                onSelect={handleRangeSelect}
+                locale={es}
+                initialFocus
+                numberOfMonths={1}
+                disabled={(date) => date > new Date()}
+              />
+            </PopoverContent>
+          </Popover>
+          <Button type="button" variant="outline" onClick={handleTodayRange} className="w-full sm:w-auto">
+            Hoy
+          </Button>
           {isPendingTransition ? (
             <p className="text-xs text-gray-500 sm:self-center">Actualizando...</p>
           ) : null}
