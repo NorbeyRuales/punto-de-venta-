@@ -4,6 +4,7 @@ import { usePOS } from '../context/POSContext';
 import type { Purchase, Sale } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
 import { FileText, Download, TrendingUp, DollarSign, Share2, ChevronDown, ChevronUp, ShoppingBag } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import {
@@ -22,16 +23,19 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { toast } from 'sonner';
 
 export function Reports() {
-  const { getSalesInRange, kardexMovements, registerReturn, customers, storeConfig, products, suppliers } = usePOS();
+  const { getSalesInRange, sales, kardexMovements, registerReturn, customers, storeConfig, products, suppliers } = usePOS();
   const [period, setPeriod] = useState('today');
   const deferredPeriod = useDeferredValue(period);
   const [isPendingTransition, startTransition] = useTransition();
   const [purchaseStatusFilter, setPurchaseStatusFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const [showAllLatestSales, setShowAllLatestSales] = useState(false);
+  const [showAllReturnReports, setShowAllReturnReports] = useState(false);
   const [showAllLatestPurchases, setShowAllLatestPurchases] = useState(false);
   const [showAllInventoryRows, setShowAllInventoryRows] = useState(false);
-  const [pendingReturnSale, setPendingReturnSale] = useState<{ saleId: string; invoiceNumber?: string } | null>(null);
+  const [pendingReturnSale, setPendingReturnSale] = useState<Sale | null>(null);
+  const [returnQuantities, setReturnQuantities] = useState<Record<string, number>>({});
   const latestSalesCollapsedLimit = 3;
+  const returnReportsCollapsedLimit = 5;
   const latestPurchasesCollapsedLimit = 5;
   const inventoryRowsCollapsedLimit = 3;
 
@@ -40,6 +44,7 @@ export function Reports() {
     const now = new Date();
     switch (selectedPeriod) {
       case 'today': return { start: startOfDay(now), end: endOfDay(now) };
+      case 'yesterday': return { start: startOfDay(subDays(now, 1)), end: endOfDay(subDays(now, 1)) };
       case 'week': return { start: subDays(startOfDay(now), 7), end: endOfDay(now) };
       case 'month': return { start: subDays(startOfDay(now), 30), end: endOfDay(now) };
       default: return { start: startOfDay(now), end: endOfDay(now) };
@@ -48,19 +53,80 @@ export function Reports() {
 
   const { start, end } = useMemo(() => getDateRange(deferredPeriod), [deferredPeriod]);
   const periodSales = useMemo(() => getSalesInRange(start, end), [getSalesInRange, start, end]);
-  const returnedReferences = useMemo(
-    () => new Set(
-      kardexMovements
-        .map((movement) => movement.reference)
-        .filter(Boolean),
-    ),
-    [kardexMovements],
-  );
-  const isSaleReturned = (sale: Sale) =>
-    Boolean(sale.returnedAt) || returnedReferences.has(`DEV-${sale.id}`);
+  const returnedQuantitiesBySale = useMemo(() => {
+    const grouped = new Map<string, Map<string, number>>();
+
+    kardexMovements.forEach((movement) => {
+      if (!movement.reference?.startsWith('DEV-')) return;
+
+      const saleId = movement.reference.slice(4);
+      if (!saleId) return;
+
+      const quantity = Number(movement.quantity) || 0;
+      if (quantity <= 0) return;
+
+      const byProduct = grouped.get(saleId);
+      if (byProduct) {
+        byProduct.set(movement.productId, (byProduct.get(movement.productId) || 0) + quantity);
+        return;
+      }
+
+      grouped.set(saleId, new Map([[movement.productId, quantity]]));
+    });
+
+    return grouped;
+  }, [kardexMovements]);
+
+  const getSaleReturnedInfo = (sale: Sale) => {
+    const soldByProduct = new Map<string, { productName: string; soldQuantity: number }>();
+    sale.items.forEach((item) => {
+      const current = soldByProduct.get(item.product.id);
+      if (current) {
+        current.soldQuantity += item.quantity;
+        return;
+      }
+
+      soldByProduct.set(item.product.id, {
+        productName: item.product.name,
+        soldQuantity: item.quantity,
+      });
+    });
+
+    const returnedByProduct = returnedQuantitiesBySale.get(sale.id);
+    let isFullyReturned = soldByProduct.size > 0;
+
+    const returnableItems = Array.from(soldByProduct.entries())
+      .map(([productId, data]) => {
+        const returnedQuantity = Math.max(0, returnedByProduct?.get(productId) || 0);
+        const remainingQuantity = Math.max(0, data.soldQuantity - returnedQuantity);
+        if (remainingQuantity > 0) {
+          isFullyReturned = false;
+        }
+
+        return {
+          productId,
+          productName: data.productName,
+          soldQuantity: data.soldQuantity,
+          returnedQuantity: Math.min(data.soldQuantity, returnedQuantity),
+          remainingQuantity,
+        };
+      })
+      .filter((item) => item.soldQuantity > 0);
+
+    if (sale.returnedAt) {
+      isFullyReturned = true;
+    }
+
+    return {
+      isFullyReturned,
+      returnableItems,
+    };
+  };
+
+  const isSaleReturned = (sale: Sale) => getSaleReturnedInfo(sale).isFullyReturned;
   const netSales = useMemo(
     () => periodSales.filter((sale) => !isSaleReturned(sale)),
-    [periodSales, returnedReferences],
+    [periodSales, returnedQuantitiesBySale],
   );
 
   const periodPurchases = useMemo(() => {
@@ -191,11 +257,172 @@ export function Reports() {
     return Array.from(categorySales.entries()).map(([name, value]) => ({ name, value }));
   }, [netSales]);
   const COLORS = ['#15D9E6', '#E6C915', '#E61595', '#8BE9FD', '#FFD27F', '#2ECC71'];
-  const latestSales = periodSales.slice(-20).reverse();
+  const latestSales = periodSales.slice().reverse();
   const visibleLatestSales = showAllLatestSales
     ? latestSales
     : latestSales.slice(0, latestSalesCollapsedLimit);
   const hiddenLatestSalesCount = Math.max(0, latestSales.length - visibleLatestSales.length);
+  const roundToHundred = (value: number) => {
+    if (!Number.isFinite(value)) return 0;
+    return Math.round(value / 100) * 100;
+  };
+  const salesById = useMemo(
+    () => new Map(sales.map((sale) => [sale.id, sale])),
+    [sales],
+  );
+  const returnReportRows = useMemo(() => {
+    const startTime = start.getTime();
+    const endTime = end.getTime();
+    const toTimestamp = (value?: string) => {
+      const timestamp = new Date(value || '').getTime();
+      return Number.isFinite(timestamp) ? timestamp : null;
+    };
+    const isInRange = (timestamp: number | null) =>
+      timestamp !== null && timestamp >= startTime && timestamp <= endTime;
+
+    const grouped = new Map<string, {
+      saleId: string;
+      latestReturnAt: string;
+      byProduct: Map<string, {
+        productName: string;
+        returnedQuantity: number;
+        returnedAmount: number;
+      }>;
+    }>();
+
+    kardexMovements.forEach((movement) => {
+      if (!movement.reference?.startsWith('DEV-')) return;
+
+      const quantity = Number(movement.quantity) || 0;
+      if (quantity <= 0) return;
+
+      const saleId = movement.reference.slice(4);
+      if (!saleId) return;
+
+      const unitSalePrice = Number(movement.unitSalePrice) || 0;
+      const returnedAmount = roundToHundred(unitSalePrice * quantity);
+
+      const current = grouped.get(saleId);
+      if (current) {
+        const byProduct = current.byProduct.get(movement.productId);
+        if (byProduct) {
+          byProduct.returnedQuantity += quantity;
+          byProduct.returnedAmount = roundToHundred(byProduct.returnedAmount + returnedAmount);
+          byProduct.productName = movement.productName || byProduct.productName;
+        } else {
+          current.byProduct.set(movement.productId, {
+            productName: movement.productName || 'Producto',
+            returnedQuantity: quantity,
+            returnedAmount,
+          });
+        }
+        if (new Date(movement.date).getTime() > new Date(current.latestReturnAt).getTime()) {
+          current.latestReturnAt = movement.date;
+        }
+        return;
+      }
+
+      grouped.set(saleId, {
+        saleId,
+        latestReturnAt: movement.date,
+        byProduct: new Map([[movement.productId, {
+          productName: movement.productName || 'Producto',
+          returnedQuantity: quantity,
+          returnedAmount,
+        }]]),
+      });
+    });
+
+    const rows = Array.from(grouped.values())
+      .map((groupedSale) => {
+        const sale = salesById.get(groupedSale.saleId);
+        const returnTime = toTimestamp(groupedSale.latestReturnAt);
+        const saleTime = toTimestamp(sale?.date);
+
+        // Incluye filas por fecha de devolución y, como respaldo, por fecha de venta en rango.
+        if (!isInRange(returnTime) && !isInRange(saleTime)) {
+          return null;
+        }
+
+        const soldByProduct = new Map<string, { productName: string; soldQuantity: number }>();
+        if (sale) {
+          sale.items.forEach((item) => {
+            const current = soldByProduct.get(item.product.id);
+            if (current) {
+              current.soldQuantity += item.quantity;
+              return;
+            }
+
+            soldByProduct.set(item.product.id, {
+              productName: item.product.name,
+              soldQuantity: item.quantity,
+            });
+          });
+        }
+
+        const returnedItems = Array.from(groupedSale.byProduct.entries())
+          .map(([productId, data]) => {
+            const sold = soldByProduct.get(productId);
+            const soldQuantity = sold?.soldQuantity || data.returnedQuantity;
+            return {
+              productId,
+              productName: sold?.productName || data.productName || 'Producto',
+              soldQuantity,
+              returnedQuantity: data.returnedQuantity,
+              remainingQuantity: Math.max(0, soldQuantity - data.returnedQuantity),
+            };
+          })
+          .filter((item) => item.returnedQuantity > 0);
+
+        if (returnedItems.length === 0) return null;
+
+        const returnedAmount = roundToHundred(
+          Array.from(groupedSale.byProduct.values()).reduce((sum, item) => sum + item.returnedAmount, 0),
+        );
+
+        const returnedQuantity = returnedItems.reduce((sum, item) => sum + item.returnedQuantity, 0);
+
+        const isFullyReturned = sale
+          ? getSaleReturnedInfo(sale).isFullyReturned
+          : false;
+
+        return {
+          saleId: groupedSale.saleId,
+          invoiceNumber: sale?.invoiceNumber || groupedSale.saleId,
+          saleDate: sale?.date || groupedSale.latestReturnAt,
+          returnedAt: groupedSale.latestReturnAt || sale?.date || new Date().toISOString(),
+          returnedItems,
+          returnedQuantity,
+          returnedAmount,
+          isFullyReturned,
+        };
+      })
+      .filter((row): row is {
+        saleId: string;
+        invoiceNumber: string;
+        saleDate: string;
+        returnedAt: string;
+        returnedItems: Array<{
+          productId: string;
+          productName: string;
+          soldQuantity: number;
+          returnedQuantity: number;
+          remainingQuantity: number;
+        }>;
+        returnedQuantity: number;
+        returnedAmount: number;
+        isFullyReturned: boolean;
+      } => row !== null);
+
+    return rows.sort((a, b) => new Date(b.returnedAt).getTime() - new Date(a.returnedAt).getTime());
+  }, [kardexMovements, salesById, start, end, returnedQuantitiesBySale]);
+  const returnReportsTotalAmount = returnReportRows.reduce((sum, row) => sum + row.returnedAmount, 0);
+  const returnReportsTotalUnits = returnReportRows.reduce((sum, row) => sum + row.returnedQuantity, 0);
+  const returnReportsFullyReturnedCount = returnReportRows.filter((row) => row.isFullyReturned).length;
+  const visibleReturnReports = showAllReturnReports
+    ? returnReportRows
+    : returnReportRows.slice(0, returnReportsCollapsedLimit);
+  const hiddenReturnReportsCount = Math.max(0, returnReportRows.length - visibleReturnReports.length);
   const latestPurchases = filteredPeriodPurchases.slice(-20).reverse();
   const visibleLatestPurchases = showAllLatestPurchases
     ? latestPurchases
@@ -206,10 +433,6 @@ export function Reports() {
   }, [products]);
 
   const formatCurrency = (value: number) => `$${Math.round(value).toLocaleString('es-CO')}`;
-  const roundToHundred = (value: number) => {
-    if (!Number.isFinite(value)) return 0;
-    return Math.round(value / 100) * 100;
-  };
   const formatRoundedCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
   const formatTaxLabel = (ivaPercent: number, ipucPercent: number) => {
     const normalizedIva = Number.isFinite(ivaPercent) ? ivaPercent : 0;
@@ -354,6 +577,12 @@ export function Reports() {
     const firstLabel = `${productName} x${firstItem.quantity}`;
     return restItems.length > 0 ? `${firstLabel} +${restItems.length} más` : firstLabel;
   };
+  const formatReturnItemsSummary = (items: Array<{ productName: string; returnedQuantity: number }>) => {
+    if (items.length === 0) return 'Sin productos';
+    const [firstItem, ...restItems] = items;
+    const firstLabel = `${firstItem.productName} x${firstItem.returnedQuantity.toLocaleString('es-CO')}`;
+    return restItems.length > 0 ? `${firstLabel} +${restItems.length} más` : firstLabel;
+  };
 
   const buildWhatsappMessage = (sale: Sale) => {
     const customer = sale.customerId ? customers.find(c => c.id === sale.customerId) : undefined;
@@ -393,22 +622,54 @@ export function Reports() {
     window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  const handleReturnSale = (saleId: string, invoiceNumber?: string) => {
-    const reference = `DEV-${saleId}`;
-    const sale = periodSales.find(item => item.id === saleId);
-    const alreadyReturned = sale ? isSaleReturned(sale) : returnedReferences.has(reference);
-    if (alreadyReturned) {
-      toast.info('Esta venta ya tiene una devolución registrada.');
+  const handleReturnSale = (sale: Sale) => {
+    const returnInfo = getSaleReturnedInfo(sale);
+    if (returnInfo.isFullyReturned || returnInfo.returnableItems.every((item) => item.remainingQuantity <= 0)) {
+      toast.info('Esta venta ya fue devuelta en su totalidad.');
       return;
     }
 
-    setPendingReturnSale({ saleId, invoiceNumber });
+    setPendingReturnSale(sale);
+    setReturnQuantities({});
   };
 
+  const updateReturnQuantity = (productId: string, rawValue: string, maxQuantity: number) => {
+    const parsed = Number(rawValue);
+    const normalized = Number.isFinite(parsed) ? parsed : 0;
+    const clamped = Math.min(maxQuantity, Math.max(0, normalized));
+
+    setReturnQuantities((prev) => ({
+      ...prev,
+      [productId]: clamped,
+    }));
+  };
+
+  const pendingReturnItems = pendingReturnSale
+    ? getSaleReturnedInfo(pendingReturnSale).returnableItems.filter((item) => item.remainingQuantity > 0)
+    : [];
+  const selectedReturnItems = pendingReturnItems
+    .map((item) => ({
+      productId: item.productId,
+      quantity: Math.min(item.remainingQuantity, Math.max(0, Number(returnQuantities[item.productId]) || 0)),
+    }))
+    .filter((item) => item.quantity > 0);
+  const selectedReturnQuantity = selectedReturnItems.reduce((sum, item) => sum + item.quantity, 0);
+
   const confirmReturnSale = () => {
-    if (!pendingReturnSale) return;
-    registerReturn(pendingReturnSale.saleId);
+    if (!pendingReturnSale) return false;
+    if (selectedReturnItems.length === 0) {
+      toast.error('Selecciona al menos un producto con cantidad a devolver.');
+      return false;
+    }
+
+    const success = registerReturn(pendingReturnSale.id, {
+      items: selectedReturnItems,
+    });
+    if (!success) return false;
+
     setPendingReturnSale(null);
+    setReturnQuantities({});
+    return true;
   };
 
   // Placeholder de exportación.
@@ -427,6 +688,7 @@ export function Reports() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="today">Hoy</SelectItem>
+              <SelectItem value="yesterday">Ayer</SelectItem>
               <SelectItem value="week">Última Semana</SelectItem>
               <SelectItem value="month">Último Mes</SelectItem>
             </SelectContent>
@@ -600,7 +862,7 @@ export function Reports() {
                       size="sm"
                       variant="outline"
                       disabled={isReturned}
-                      onClick={() => handleReturnSale(sale.id, sale.invoiceNumber)}
+                      onClick={() => handleReturnSale(sale)}
                     >
                       {isReturned ? 'Devuelto' : 'Devolver'}
                     </Button>
@@ -660,7 +922,7 @@ export function Reports() {
                           size="sm"
                           variant="outline"
                           disabled={isReturned}
-                          onClick={() => handleReturnSale(sale.id, sale.invoiceNumber)}
+                          onClick={() => handleReturnSale(sale)}
                         >
                           {isReturned ? 'Devuelto' : 'Devolver'}
                         </Button>
@@ -689,6 +951,114 @@ export function Reports() {
         {!showAllLatestSales && hiddenLatestSalesCount > 0 ? (
           <p className="text-sm text-gray-600">
             {hiddenLatestSalesCount} transacciones ocultas. Usa "Ver listado completo" para desplegarlas.
+          </p>
+        ) : null}
+      </Card>
+
+      {/* Reporte de devoluciones */}
+      <Card className="p-6 space-y-4">
+        <div className="flex flex-col gap-1">
+          <h3 className="text-lg font-bold">Reportes de Devoluciones</h3>
+          <p className="text-sm text-gray-600">
+            Mostrando {visibleReturnReports.length} de {returnReportRows.length} ventas con devoluciones en el período.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-lg border bg-secondary/40 p-4">
+            <p className="text-sm text-gray-600">Valor Devuelto</p>
+            <p className="text-xl font-bold text-red-600">{formatRoundedCurrency(returnReportsTotalAmount)}</p>
+          </div>
+          <div className="rounded-lg border bg-secondary/40 p-4">
+            <p className="text-sm text-gray-600">Ventas con Devolución</p>
+            <p className="text-xl font-bold">{returnReportRows.length}</p>
+          </div>
+          <div className="rounded-lg border bg-secondary/40 p-4">
+            <p className="text-sm text-gray-600">Unidades Devueltas</p>
+            <p className="text-xl font-bold">{returnReportsTotalUnits.toLocaleString('es-CO')}</p>
+            <p className="text-xs text-gray-500">Totales: {returnReportsFullyReturnedCount} ventas devueltas completas</p>
+          </div>
+        </div>
+
+        <div className="md:hidden space-y-3">
+          {visibleReturnReports.length === 0 ? (
+            <div className="text-center py-6 text-gray-500">No hay devoluciones registradas para este período.</div>
+          ) : (
+            visibleReturnReports.map((row) => (
+              <div key={row.saleId} className="rounded-lg border border-border bg-white p-3 space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm text-gray-600">{format(new Date(row.returnedAt), "d MMM, HH:mm", { locale: es })}</p>
+                    <p className="font-semibold">{row.invoiceNumber}</p>
+                    <p className="text-xs text-gray-500">{formatReturnItemsSummary(row.returnedItems)}</p>
+                  </div>
+                  <span className="font-bold text-red-600">{formatRoundedCurrency(row.returnedAmount)}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-gray-600">Cantidad: {row.returnedQuantity.toLocaleString('es-CO')}</span>
+                  <span className={row.isFullyReturned ? 'font-semibold text-red-700' : 'font-semibold text-amber-700'}>
+                    {row.isFullyReturned ? 'Total' : 'Parcial'}
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="hidden md:block overflow-x-auto rounded-lg border">
+          <table className="w-full min-w-[920px]">
+            <thead className="bg-secondary border-b">
+              <tr>
+                <th className="text-left p-3">Fecha devolución</th>
+                <th className="text-left p-3">Factura</th>
+                <th className="text-left p-3">Productos devueltos</th>
+                <th className="text-right p-3">Cantidad</th>
+                <th className="text-right p-3">Valor devuelto</th>
+                <th className="text-right p-3">Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {visibleReturnReports.length === 0 ? (
+                <tr>
+                  <td className="p-4 text-center text-gray-500" colSpan={6}>No hay devoluciones registradas para este período.</td>
+                </tr>
+              ) : (
+                visibleReturnReports.map((row) => (
+                  <tr key={row.saleId} className="border-b align-top">
+                    <td className="p-3 whitespace-nowrap">{format(new Date(row.returnedAt), "d MMM, HH:mm", { locale: es })}</td>
+                    <td className="p-3">{row.invoiceNumber}</td>
+                    <td className="p-3">{formatReturnItemsSummary(row.returnedItems)}</td>
+                    <td className="p-3 text-right">{row.returnedQuantity.toLocaleString('es-CO')}</td>
+                    <td className="p-3 text-right font-semibold text-red-600">{formatRoundedCurrency(row.returnedAmount)}</td>
+                    <td className="p-3 text-right">
+                      <span className={row.isFullyReturned ? 'text-red-700 font-semibold' : 'text-amber-700 font-semibold'}>
+                        {row.isFullyReturned ? 'Total' : 'Parcial'}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {!showAllReturnReports && hiddenReturnReportsCount > 0 ? (
+          <div className="flex justify-center pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAllReturnReports(true)}
+              className="rounded-full"
+            >
+              <ChevronDown className="w-4 h-4 mr-1" />
+              Ver listado completo
+            </Button>
+          </div>
+        ) : null}
+        {!showAllReturnReports && hiddenReturnReportsCount > 0 ? (
+          <p className="text-sm text-gray-600">
+            {hiddenReturnReportsCount} devoluciones ocultas. Usa "Ver listado completo" para desplegarlas.
           </p>
         ) : null}
       </Card>
@@ -1004,21 +1374,76 @@ export function Reports() {
       <AlertDialog
         open={pendingReturnSale !== null}
         onOpenChange={(open) => {
-          if (!open) setPendingReturnSale(null);
+          if (!open) {
+            setPendingReturnSale(null);
+            setReturnQuantities({});
+          }
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Registrar devolución total?</AlertDialogTitle>
+            <AlertDialogTitle>¿Registrar devolución por ítems?</AlertDialogTitle>
             <AlertDialogDescription>
               {pendingReturnSale
-                ? `Se devolverá completamente la factura ${pendingReturnSale.invoiceNumber || pendingReturnSale.saleId}.`
-                : 'Confirma si deseas continuar con la devolución.'}
+                ? `Selecciona los productos y cantidades a devolver de la factura ${pendingReturnSale.invoiceNumber || pendingReturnSale.id}.`
+                : 'Confirma si deseas continuar con la devolución parcial.'}
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          {pendingReturnSale ? (
+            <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
+              {pendingReturnItems.length === 0 ? (
+                <p className="text-sm text-gray-600">No hay cantidades pendientes por devolver en esta venta.</p>
+              ) : (
+                pendingReturnItems.map((item) => (
+                  <div key={item.productId} className="rounded-lg border border-border bg-secondary/30 p-3">
+                    <div className="mb-2 flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-medium">{item.productName}</p>
+                        <p className="text-xs text-gray-600">
+                          Vendido: {item.soldQuantity.toLocaleString('es-CO')} | Devuelto: {item.returnedQuantity.toLocaleString('es-CO')} | Disponible: {item.remainingQuantity.toLocaleString('es-CO')}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => updateReturnQuantity(item.productId, String(item.remainingQuantity), item.remainingQuantity)}
+                      >
+                        Máx
+                      </Button>
+                    </div>
+
+                    <Input
+                      type="number"
+                      min={0}
+                      max={item.remainingQuantity}
+                      step="0.01"
+                      value={returnQuantities[item.productId] ?? 0}
+                      onChange={(event) => updateReturnQuantity(item.productId, event.target.value, item.remainingQuantity)}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+          ) : null}
+
+          <p className="text-sm text-gray-600">
+            Cantidad seleccionada para devolver: {selectedReturnQuantity.toLocaleString('es-CO')}
+          </p>
+
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmReturnSale} className="bg-red-600 hover:bg-red-700">
+            <AlertDialogAction
+              disabled={selectedReturnItems.length === 0}
+              onClick={(event) => {
+                const success = confirmReturnSale();
+                if (!success) {
+                  event.preventDefault();
+                }
+              }}
+              className="bg-red-600 hover:bg-red-700"
+            >
               Confirmar devolución
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -1026,6 +1451,7 @@ export function Reports() {
       </AlertDialog>
 
       {(showAllLatestSales && latestSales.length > latestSalesCollapsedLimit)
+      || (showAllReturnReports && returnReportRows.length > returnReportsCollapsedLimit)
       || (showAllLatestPurchases && latestPurchases.length > latestPurchasesCollapsedLimit)
       || (showAllInventoryRows && inventoryTaxDetails.length > inventoryRowsCollapsedLimit) ? (
         <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 flex-col gap-2 sm:left-auto sm:right-6 sm:translate-x-0">
@@ -1039,6 +1465,18 @@ export function Reports() {
             >
               <ChevronUp className="w-4 h-4 mr-1" />
               Ocultar transacciones
+            </Button>
+          ) : null}
+          {showAllReturnReports && returnReportRows.length > returnReportsCollapsedLimit ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAllReturnReports(false)}
+              className="rounded-full bg-white/95 shadow-lg backdrop-blur"
+            >
+              <ChevronUp className="w-4 h-4 mr-1" />
+              Ocultar devoluciones
             </Button>
           ) : null}
           {showAllLatestPurchases && latestPurchases.length > latestPurchasesCollapsedLimit ? (

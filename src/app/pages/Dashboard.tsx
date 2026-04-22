@@ -29,13 +29,41 @@ export function Dashboard() {
   const navigate = useNavigate();
 
   // KPIs principales del día.
-  const returnedReferences = new Set(
-    kardexMovements
-      .map(movement => movement.reference)
-      .filter(Boolean)
-  );
-  const isReturned = (sale: { id: string; returnedAt?: string | null }) =>
-    Boolean(sale.returnedAt) || returnedReferences.has(`DEV-${sale.id}`);
+  const returnedQuantitiesBySale = new Map<string, Map<string, number>>();
+  kardexMovements.forEach((movement) => {
+    if (!movement.reference?.startsWith('DEV-')) return;
+
+    const saleId = movement.reference.slice(4);
+    if (!saleId) return;
+
+    const quantity = Number(movement.quantity) || 0;
+    if (quantity <= 0) return;
+
+    const byProduct = returnedQuantitiesBySale.get(saleId);
+    if (byProduct) {
+      byProduct.set(movement.productId, (byProduct.get(movement.productId) || 0) + quantity);
+      return;
+    }
+
+    returnedQuantitiesBySale.set(saleId, new Map([[movement.productId, quantity]]));
+  });
+
+  const isReturned = (sale: { id: string; returnedAt?: string | null; items?: Array<{ product: { id: string }; quantity: number }> }) => {
+    if (sale.returnedAt) return true;
+
+    const returnedByProduct = returnedQuantitiesBySale.get(sale.id);
+    if (!returnedByProduct || !sale.items || sale.items.length === 0) return false;
+
+    const soldByProduct = new Map<string, number>();
+    sale.items.forEach((item) => {
+      soldByProduct.set(item.product.id, (soldByProduct.get(item.product.id) || 0) + item.quantity);
+    });
+
+    return Array.from(soldByProduct.entries()).every(([productId, soldQty]) => {
+      const returnedQty = returnedByProduct.get(productId) || 0;
+      return returnedQty + 0.000001 >= soldQty;
+    });
+  };
   const todaySales = getSalesToday();
   const netTodaySales = todaySales.filter((sale) => !isReturned(sale));
   const totalToday = roundToHundred(netTodaySales.reduce((sum, sale) => sum + sale.total, 0));

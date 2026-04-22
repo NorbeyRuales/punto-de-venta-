@@ -664,7 +664,15 @@ interface POSContextType {
   completeSale: (paymentInput: SalePaymentInput) => Promise<Sale | null>;
   getSalesToday: () => Sale[];
   getSalesInRange: (startDate: Date, endDate: Date) => Sale[];
-  registerReturn: (saleId: string) => boolean;
+  registerReturn: (
+    saleId: string,
+    options?: {
+      items?: Array<{
+        productId: string;
+        quantity: number;
+      }>;
+    }
+  ) => boolean;
 
   // Caja
   cashSessions: CashSession[];
@@ -3643,70 +3651,241 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const registerReturn = (saleId: string): boolean => {
+  const registerReturn = (
+    saleId: string,
+    options?: {
+      items?: Array<{
+        productId: string;
+        quantity: number;
+      }>;
+    },
+  ): boolean => {
     const sale = sales.find(s => s.id === saleId);
     if (!sale) {
       toast.error('No se encontró la venta para devolver.');
       return false;
     }
 
+    const reference = `DEV-${sale.id}`;
+
+    const soldByProduct = new Map<string, { quantity: number; name: string }>();
+    sale.items.forEach((item) => {
+      const current = soldByProduct.get(item.product.id);
+      if (current) {
+        current.quantity += item.quantity;
+        return;
+      }
+
+      soldByProduct.set(item.product.id, {
+        quantity: item.quantity,
+        name: item.product.name,
+      });
+    });
+
+    if (soldByProduct.size === 0) {
+      toast.error('La venta no tiene productos para devolver.');
+      return false;
+    }
+
+    const previouslyReturnedByProduct = new Map<string, number>();
+    kardexMovements.forEach((movement) => {
+      if (movement.reference !== reference) return;
+      const quantity = toNumber(movement.quantity);
+      if (quantity <= 0) return;
+      previouslyReturnedByProduct.set(
+        movement.productId,
+        toNumber(previouslyReturnedByProduct.get(movement.productId)) + quantity,
+      );
+    });
+
+    const remainingByProduct = new Map<string, number>();
+    soldByProduct.forEach(({ quantity }, productId) => {
+      const returnedQty = toNumber(previouslyReturnedByProduct.get(productId));
+      const remainingQty = Math.max(0, quantity - returnedQty);
+      if (remainingQty > 0) {
+        remainingByProduct.set(productId, remainingQty);
+      }
+    });
+
+    if (remainingByProduct.size === 0 || sale.returnedAt) {
+      toast.info('Esta venta ya fue devuelta en su totalidad.');
+      return false;
+    }
+
+    const requestedByProduct = new Map<string, number>();
+    if (options?.items && options.items.length > 0) {
+      options.items.forEach((item) => {
+        if (!item?.productId) return;
+        const quantity = toNumber(item.quantity);
+        if (quantity <= 0) return;
+        requestedByProduct.set(
+          item.productId,
+          toNumber(requestedByProduct.get(item.productId)) + quantity,
+        );
+      });
+    } else {
+      remainingByProduct.forEach((quantity, productId) => {
+        requestedByProduct.set(productId, quantity);
+      });
+    }
+
+    if (requestedByProduct.size === 0) {
+      toast.error('Selecciona al menos un producto con cantidad a devolver.');
+      return false;
+    }
+
+    for (const [productId, requestedQty] of requestedByProduct.entries()) {
+      const sold = soldByProduct.get(productId);
+      if (!sold) {
+        toast.error('Hay productos que no pertenecen a la venta seleccionada.');
+        return false;
+      }
+
+      const remaining = toNumber(remainingByProduct.get(productId));
+      if (requestedQty > remaining + 0.000001) {
+        toast.error(`La cantidad a devolver para ${sold.name} supera lo disponible.`);
+        return false;
+      }
+    }
+
+    const calculateReturnedTotals = (quantitiesByProduct: Map<string, number>) => {
+      const pendingByProduct = new Map(quantitiesByProduct);
+      let saleAmount = 0;
+      let costAmount = 0;
+
+      sale.items.forEach((item) => {
+        const pending = toNumber(pendingByProduct.get(item.product.id));
+        if (pending <= 0) return;
+
+        const soldQty = Math.max(0, toNumber(item.quantity));
+        if (soldQty <= 0) return;
+
+        const qtyToReturn = Math.min(soldQty, pending);
+        if (qtyToReturn <= 0) return;
+
+        const lineMoney = computeLineMoney(
+          item.product.salePrice,
+          soldQty,
+          item.discount,
+          item.product.iva,
+        );
+        const unitSaleAmount = soldQty > 0 ? lineMoney.lineTotal / soldQty : 0;
+        const unitCost = buildUnitCostWithIva(item.product);
+
+        saleAmount = roundMoney(saleAmount + (unitSaleAmount * qtyToReturn));
+        costAmount = roundMoney(costAmount + (unitCost * qtyToReturn));
+        pendingByProduct.set(item.product.id, Math.max(0, pending - qtyToReturn));
+      });
+
+      return {
+        saleAmount,
+        costAmount,
+      };
+    };
+
+    const previousTotals = calculateReturnedTotals(previouslyReturnedByProduct);
+    const nextReturnedByProduct = new Map(previouslyReturnedByProduct);
+    requestedByProduct.forEach((quantity, productId) => {
+      nextReturnedByProduct.set(
+        productId,
+        toNumber(nextReturnedByProduct.get(productId)) + quantity,
+      );
+    });
+    const nextTotals = calculateReturnedTotals(nextReturnedByProduct);
+
+    const returnedSaleAmount = roundMoney(Math.max(0, nextTotals.saleAmount - previousTotals.saleAmount));
+    if (returnedSaleAmount <= 0) {
+      toast.error('No se pudo calcular la devolución. Verifica las cantidades seleccionadas.');
+      return false;
+    }
+
+    const saleTotal = Math.max(0, roundMoney(sale.total));
     const saleBreakdown = getSalePaymentBreakdown(sale);
-    const cashRefund = roundMoney(toNumber(saleBreakdown.efectivo));
+    const paidInCash = roundMoney(toNumber(saleBreakdown.efectivo));
+    const paidOnCredit = roundMoney(getSaleCreditedAmount(sale));
+
+    const previousCashRefund = saleTotal > 0
+      ? roundMoney((paidInCash / saleTotal) * previousTotals.saleAmount)
+      : 0;
+    const nextCashRefund = saleTotal > 0
+      ? roundMoney((paidInCash / saleTotal) * nextTotals.saleAmount)
+      : 0;
+    const cashRefund = Math.max(0, roundMoney(nextCashRefund - previousCashRefund));
+
+    const previousCreditedRefund = saleTotal > 0
+      ? roundMoney((paidOnCredit / saleTotal) * previousTotals.saleAmount)
+      : 0;
+    const nextCreditedRefund = saleTotal > 0
+      ? roundMoney((paidOnCredit / saleTotal) * nextTotals.saleAmount)
+      : 0;
+    const creditedRefund = Math.max(0, roundMoney(nextCreditedRefund - previousCreditedRefund));
+
     if (cashRefund > 0 && (!currentCashSession || currentCashSession.status !== 'open')) {
       toast.error('Debes abrir la caja para registrar una devolución con reembolso en efectivo.');
       return false;
     }
 
-    const reference = `DEV-${sale.id}`;
-    const alreadyReturned = Boolean(sale.returnedAt)
-      || kardexMovements.some(movement => movement.reference === reference);
-    if (alreadyReturned) {
-      toast.info('Esta venta ya tiene una devolución registrada.');
-      return false;
-    }
+    requestedByProduct.forEach((returnQty, productId) => {
+      const sold = soldByProduct.get(productId);
+      const product = products.find((p) => p.id === productId)
+        || sale.items.find((item) => item.product.id === productId)?.product;
+      if (!product || !sold) return;
 
-    const returnedAt = new Date().toISOString();
-
-    sale.items.forEach(item => {
-      const product = products.find(p => p.id === item.product.id) ?? item.product;
       const stockBefore = product.stock;
-      const stockAfter = stockBefore + item.quantity;
+      const stockAfter = stockBefore + returnQty;
 
       void applyProductPatch(product.id, { stock: stockAfter });
 
       const unitCost = buildUnitCostWithIva(product);
       appendKardexMovement({
         productId: product.id,
-        productName: product.name,
+        productName: sold.name,
         type: 'adjustment',
         reference,
-        quantity: item.quantity,
+        quantity: returnQty,
         stockBefore,
         stockAfter,
         unitCost,
         unitSalePrice: product.salePrice,
-        totalCost: unitCost * item.quantity,
+        totalCost: unitCost * returnQty,
       });
     });
 
+    const isFullyReturned = Array.from(soldByProduct.entries()).every(([productId, soldData]) => {
+      const returnedQty = toNumber(nextReturnedByProduct.get(productId));
+      return returnedQty + 0.000001 >= soldData.quantity;
+    });
+
+    const returnedAt = isFullyReturned ? new Date().toISOString() : null;
+
     setSales(prev => prev.map((item) => (
-      item.id === sale.id ? { ...item, returnedAt } : item
+      item.id === sale.id
+        ? { ...item, returnedAt: returnedAt ?? item.returnedAt ?? null }
+        : item
     )));
 
     if (sale.customerId) {
-      const points = Math.floor(sale.total / 1000);
       const customer = customers.find(c => c.id === sale.customerId);
       if (customer) {
-        const nextPoints = Math.max(0, customer.points - points);
-        const nextPurchases = customer.purchases.filter(purchase => purchase.id !== sale.id);
-        updateCustomer(customer.id, {
-          points: nextPoints,
-          purchases: nextPurchases,
-        });
+        const previousNetSaleAmount = Math.max(0, roundMoney(sale.total - previousTotals.saleAmount));
+        const nextNetSaleAmount = Math.max(0, roundMoney(sale.total - nextTotals.saleAmount));
+        const previousPoints = Math.floor(previousNetSaleAmount / 1000);
+        const nextPointsBySale = Math.floor(nextNetSaleAmount / 1000);
+        const pointsToDiscount = Math.max(0, previousPoints - nextPointsBySale);
+
+        if (pointsToDiscount > 0 || isFullyReturned) {
+          const nextPoints = Math.max(0, customer.points - pointsToDiscount);
+          const nextPurchases = isFullyReturned
+            ? customer.purchases.filter(purchase => purchase.id !== sale.id)
+            : customer.purchases;
+
+          updateCustomer(customer.id, {
+            points: nextPoints,
+            purchases: nextPurchases,
+          });
+        }
       }
     }
-
-    const creditedRefund = getSaleCreditedAmount(sale);
 
     if (cashRefund > 0) {
       void addCashMovement(
@@ -3732,12 +3911,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
       addPaymentToCustomer(
         sale.customerId,
         creditedRefund,
-        `Reverso por devolución ${sale.invoiceNumber || sale.id}`,
+        `Reverso por devolución parcial ${sale.invoiceNumber || sale.id}`,
         { registerCashIn: false },
       );
     }
 
-    if (isConnectedToSupabase && session && currentStoreId) {
+    if (returnedAt && isConnectedToSupabase && session && currentStoreId) {
       void updateSaleRow(session.access_token, currentStoreId, sale.id, {
         returnedAt,
       }).catch((error) => {
@@ -3747,7 +3926,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
       });
     }
 
-    toast.success('Devolución registrada en Kardex.');
+    toast.success(isFullyReturned
+      ? 'Devolución total registrada en Kardex.'
+      : 'Devolución parcial registrada en Kardex.');
     return true;
   };
 
