@@ -1,5 +1,5 @@
 // Capa de acceso a datos en Supabase (REST + RPC) para el POS.
-import { deleteRows, insertRows, refreshSession, rpc, selectRows, supabaseAnonKey, supabaseUrl, updateRows } from '../../lib/supabaseClient';
+import { deleteRows, insertRows, refreshSession, rpc, selectAllRows, selectRows, supabaseAnonKey, supabaseUrl, updateRows } from '../../lib/supabaseClient';
 import type { Product } from '../context/POSContext';
 
 // Tipos "shape" de filas usadas en llamadas REST.
@@ -114,6 +114,10 @@ type SaleItemRow = {
   created_at: string;
 };
 
+type SaleItemWithSaleIdRow = SaleItemRow & {
+  sale_id: string;
+};
+
 type SaleRow = {
   id: string;
   created_at: string;
@@ -132,6 +136,8 @@ type SaleRow = {
   cash_session_id: string | null;
   sale_items?: SaleItemRow[] | null;
 };
+
+type SaleSummaryRow = Omit<SaleRow, 'sale_items'>;
 
 type SaleDraftStatus = 'open' | 'void' | 'completed';
 
@@ -405,19 +411,20 @@ export async function bootstrapStore(token: string, payload: {
 
 // Carga catálogo de categorías y productos, normalizando los datos para la UI.
 export async function loadCategoriesAndProducts(token: string, storeId: string): Promise<{ categories: string[]; products: Product[] }> {
-  const categories = await selectRows<CategoryRow>(
-    'categories',
-    `select=id,name&store_id=eq.${storeId}&order=name.asc`,
-    token,
-  );
+  const [categories, products] = await Promise.all([
+    selectAllRows<CategoryRow>(
+      'categories',
+      `select=id,name&store_id=eq.${storeId}&order=name.asc`,
+      token,
+    ),
+    selectAllRows<ProductRow>(
+      'products',
+      `select=id,name,sku,barcode,cost_price,sale_price,stock,min_stock,unit,is_bulk,iva,ipuc,units_per_purchase,profit_margin,unit_price,category_id,supplier_id,is_active,supplier:suppliers(name)&store_id=eq.${storeId}&order=created_at.asc`,
+      token,
+    ),
+  ]);
 
   const categoryById = new Map(categories.map(category => [category.id, category.name]));
-
-  const products = await selectRows<ProductRow>(
-    'products',
-    `select=id,name,sku,barcode,cost_price,sale_price,stock,min_stock,unit,is_bulk,iva,ipuc,units_per_purchase,profit_margin,unit_price,category_id,supplier_id,is_active,supplier:suppliers(name)&store_id=eq.${storeId}&order=created_at.asc`,
-    token,
-  );
 
   return {
     categories: categories.map(category => category.name),
@@ -925,7 +932,7 @@ export async function loadSaleDraftsWithItems(
   userId?: string,
 ): Promise<SaleDraftRow[]> {
   const userFilter = uuidLike(userId) ? `&user_id=eq.${userId}` : '';
-  return selectRows<SaleDraftRow>(
+  return selectAllRows<SaleDraftRow>(
     'sale_drafts',
     'select=id,store_id,user_id,cash_session_id,customer_id,status,notes,created_at,updated_at,'
       + 'sale_draft_items(id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at)'
@@ -1282,7 +1289,7 @@ export async function deleteCashReportsByIds(
 
 // Consultas de sincronización remota.
 export async function loadCustomersWithDebt(token: string, storeId: string): Promise<CustomerRow[]> {
-  return selectRows<CustomerRow>(
+  return selectAllRows<CustomerRow>(
     'customers',
     'select=id,name,phone,address,email,nit,points,debt,customer_debt_transactions(id,type,amount,description,balance,created_at)'
       + `&store_id=eq.${storeId}&order=created_at.asc`,
@@ -1291,7 +1298,7 @@ export async function loadCustomersWithDebt(token: string, storeId: string): Pro
 }
 
 export async function loadSuppliersWithPurchases(token: string, storeId: string): Promise<SupplierRow[]> {
-  return selectRows<SupplierRow>(
+  return selectAllRows<SupplierRow>(
     'suppliers',
     'select=id,name,nit,phone,email,address,bank_accounts,debt,'
       + 'purchases(id,created_at,total,paid,reference,price_policy,'
@@ -1302,17 +1309,53 @@ export async function loadSuppliersWithPurchases(token: string, storeId: string)
 }
 
 export async function loadSalesWithItems(token: string, storeId: string): Promise<SaleRow[]> {
-  return selectRows<SaleRow>(
-    'sales',
-    'select=id,created_at,returned_at,subtotal,discount,iva,total,payment_method,cash_received,change_value,payment_breakdown,credited_amount,customer_id,invoice_number,cash_session_id,'
-      + 'sale_items(id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at)'
-      + `&store_id=eq.${storeId}&order=created_at.asc`,
-    token,
-  );
+  const salesBaseQuery =
+    'select=id,created_at,returned_at,subtotal,discount,iva,total,payment_method,cash_received,change_value,payment_breakdown,credited_amount,customer_id,invoice_number,cash_session_id';
+  const salesWithItemsQuery = `${salesBaseQuery},sale_items(id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at)`
+    + `&store_id=eq.${storeId}&order=created_at.asc`;
+
+  try {
+    return await selectAllRows<SaleRow>(
+      'sales',
+      salesWithItemsQuery,
+      token,
+    );
+  } catch (error) {
+    console.warn('La carga anidada de ventas falló. Reintentando ventas e ítems por separado.', error);
+
+    const [salesRows, saleItemRows] = await Promise.all([
+      selectAllRows<SaleSummaryRow>(
+        'sales',
+        `${salesBaseQuery}&store_id=eq.${storeId}&order=created_at.asc`,
+        token,
+      ),
+      selectAllRows<SaleItemWithSaleIdRow>(
+        'sale_items',
+        'select=id,sale_id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at'
+          + `&store_id=eq.${storeId}&order=created_at.asc`,
+        token,
+      ),
+    ]);
+
+    const itemsBySaleId = new Map<string, SaleItemRow[]>();
+    saleItemRows.forEach(({ sale_id, ...item }) => {
+      const existing = itemsBySaleId.get(sale_id);
+      if (existing) {
+        existing.push(item);
+        return;
+      }
+      itemsBySaleId.set(sale_id, [item]);
+    });
+
+    return salesRows.map((sale) => ({
+      ...sale,
+      sale_items: itemsBySaleId.get(sale.id) ?? [],
+    }));
+  }
 }
 
 export async function loadKardexMovements(token: string, storeId: string): Promise<KardexRow[]> {
-  return selectRows<KardexRow>(
+  return selectAllRows<KardexRow>(
     'kardex_movements',
     'select=id,product_id,product_name,type,reference,quantity,stock_before,stock_after,unit_cost,unit_sale_price,total_cost,created_at'
       + `&store_id=eq.${storeId}&order=created_at.asc`,
@@ -1321,7 +1364,7 @@ export async function loadKardexMovements(token: string, storeId: string): Promi
 }
 
 export async function loadRecharges(token: string, storeId: string): Promise<RechargeRow[]> {
-  return selectRows<RechargeRow>(
+  return selectAllRows<RechargeRow>(
     'recharges',
     'select=id,type,provider,phone_number,amount,commission,total,created_at'
       + `&store_id=eq.${storeId}&order=created_at.asc`,
@@ -1331,7 +1374,7 @@ export async function loadRecharges(token: string, storeId: string): Promise<Rec
 
 export async function loadCashSessions(token: string, storeId: string): Promise<CashSessionRow[]> {
   try {
-    return await selectRows<CashSessionRow>(
+    return await selectAllRows<CashSessionRow>(
       'cash_sessions',
       'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_cash_breakdown,counted_at,closing_note,difference,status,opened_by,closed_by,created_at'
         + `&store_id=eq.${storeId}&order=opened_at.asc`,
@@ -1339,7 +1382,7 @@ export async function loadCashSessions(token: string, storeId: string): Promise<
     );
   } catch (error) {
     if (isMissingColumnError(error, 'counted_cash_breakdown')) {
-      const legacyRows = await selectRows<CashSessionRow>(
+      const legacyRows = await selectAllRows<CashSessionRow>(
         'cash_sessions',
         'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_at,closing_note,difference,status,opened_by,closed_by,created_at'
           + `&store_id=eq.${storeId}&order=opened_at.asc`,
@@ -1355,7 +1398,7 @@ export async function loadCashSessions(token: string, storeId: string): Promise<
 }
 
 export async function loadCashMovements(token: string, storeId: string): Promise<CashMovementRow[]> {
-  return selectRows<CashMovementRow>(
+  return selectAllRows<CashMovementRow>(
     'cash_movements',
     'select=id,store_id,cash_session_id,user_id,type,amount,reason,category,subtype,payment_method,reference_type,reference_id,metadata,created_at'
       + `&store_id=eq.${storeId}&order=created_at.asc`,

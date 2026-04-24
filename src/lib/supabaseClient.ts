@@ -142,6 +142,35 @@ export async function selectRows<T>(table: string, query: string, token: string)
   return request<T[]>(`/rest/v1/${table}?${query}`, { method: 'GET' }, token);
 }
 
+// Recorre tablas grandes en páginas para evitar truncamiento por límite de filas de PostgREST.
+export async function selectAllRows<T>(
+  table: string,
+  query: string,
+  token: string,
+  pageSize = 1000,
+  maxPages = 100,
+): Promise<T[]> {
+  if (pageSize <= 0) {
+    throw new Error('pageSize debe ser mayor que cero.');
+  }
+
+  const rows: T[] = [];
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const separator = query.length > 0 ? '&' : '';
+    const pageQuery = `${query}${separator}limit=${pageSize}&offset=${page * pageSize}`;
+    const pageRows = await selectRows<T>(table, pageQuery, token);
+
+    rows.push(...pageRows);
+
+    if (pageRows.length < pageSize) {
+      return rows;
+    }
+  }
+
+  throw new Error(`Se alcanzó el límite de paginación al cargar ${table}.`);
+}
+
 // Inserta filas y devuelve representación.
 export async function insertRows<T>(table: string, rows: Record<string, unknown>[], token: string): Promise<T[]> {
   return request<T[]>(`/rest/v1/${table}`, {

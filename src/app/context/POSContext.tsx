@@ -1057,8 +1057,27 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   // Sincroniza datos remotos (catálogo + operaciones) desde Supabase.
-  const syncFromSupabase = async (nextSession: SupabaseSession, storeId: string): Promise<boolean> => {
+  const syncFromSupabase = async (
+    nextSession: SupabaseSession,
+    storeId: string,
+    options?: { preservePendingSync?: boolean },
+  ): Promise<boolean> => {
     try {
+      const failedSections: string[] = [];
+      const withFallback = async <T,>(
+        section: string,
+        loader: Promise<T>,
+        fallback: T,
+      ): Promise<T> => {
+        try {
+          return await loader;
+        } catch (error) {
+          failedSections.push(section);
+          console.error(`No se pudieron cargar datos de ${section} en Supabase`, error);
+          return fallback;
+        }
+      };
+
       const draftRowsPromise = loadSaleDraftsWithItems(nextSession.access_token, storeId, nextSession.user.id)
         .catch((error) => {
           console.error('No se pudieron cargar borradores en Supabase', error);
@@ -1082,22 +1101,88 @@ export function POSProvider({ children }: { children: ReactNode }) {
         cashMovementRows,
         storeRow,
       ] = await Promise.all([
-        loadCategoriesAndProducts(nextSession.access_token, storeId),
-        loadCustomersWithDebt(nextSession.access_token, storeId),
-        loadSuppliersWithPurchases(nextSession.access_token, storeId),
-        loadSalesWithItems(nextSession.access_token, storeId),
+        withFallback(
+          'catálogo',
+          loadCategoriesAndProducts(nextSession.access_token, storeId),
+          { categories: [], products: [] },
+        ),
+        withFallback(
+          'clientes',
+          loadCustomersWithDebt(nextSession.access_token, storeId),
+          [],
+        ),
+        withFallback(
+          'proveedores',
+          loadSuppliersWithPurchases(nextSession.access_token, storeId),
+          [],
+        ),
+        withFallback(
+          'ventas',
+          loadSalesWithItems(nextSession.access_token, storeId),
+          [],
+        ),
         draftRowsPromise,
-        loadKardexMovements(nextSession.access_token, storeId),
-        loadRecharges(nextSession.access_token, storeId),
-        loadCashSessions(nextSession.access_token, storeId),
-        loadCashMovements(nextSession.access_token, storeId),
-        loadStoreDetails(nextSession.access_token, storeId),
+        withFallback(
+          'kardex',
+          loadKardexMovements(nextSession.access_token, storeId),
+          [],
+        ),
+        withFallback(
+          'recargas',
+          loadRecharges(nextSession.access_token, storeId),
+          [],
+        ),
+        withFallback(
+          'sesiones de caja',
+          loadCashSessions(nextSession.access_token, storeId),
+          [],
+        ),
+        withFallback(
+          'movimientos de caja',
+          loadCashMovements(nextSession.access_token, storeId),
+          [],
+        ),
+        withFallback(
+          'configuración de tienda',
+          loadStoreDetails(nextSession.access_token, storeId),
+          null,
+        ),
       ]);
+      const failedSet = new Set(failedSections);
 
-      setCategories(catalog.categories);
-      setProducts(catalog.products);
+      if (failedSections.length > 0) {
+        const uniqueSections = Array.from(new Set(failedSections));
+        const isSalesSyncAffected = uniqueSections.includes('ventas');
+        toast.warning(
+          `Algunas secciones no se pudieron actualizar (${uniqueSections.join(', ')}). Se conservaron datos locales previos.${isSalesSyncAffected ? ' Los reportes pueden seguir mostrando ventas antiguas hasta que la sincronización de ventas complete correctamente.' : ''}`,
+        );
+      }
+
+      if (!failedSet.has('catálogo')) {
+        setCategories(catalog.categories);
+        setProducts(catalog.products);
+      }
 
       const productById = new Map(catalog.products.map(product => [product.id, product]));
+      const saleSessionByMovement = new Map<string, string>();
+
+      cashMovementRows.forEach((row) => {
+        if (row.reference_type !== 'sale') return;
+        if (!row.cash_session_id) return;
+
+        const referenceId = typeof row.reference_id === 'string' && row.reference_id.trim().length > 0
+          ? row.reference_id.trim()
+          : undefined;
+        const metadataSaleId = row.metadata
+          && typeof row.metadata === 'object'
+          && typeof (row.metadata as Record<string, unknown>).saleId === 'string'
+          ? (row.metadata as Record<string, unknown>).saleId as string
+          : undefined;
+        const saleId = referenceId || metadataSaleId;
+
+        if (!saleId || saleSessionByMovement.has(saleId)) return;
+        saleSessionByMovement.set(saleId, row.cash_session_id);
+      });
 
       const sales = salesRows.map((sale) => {
         const items: CartItem[] = (sale.sale_items ?? []).map((item) => {
@@ -1144,12 +1229,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
           creditedAmount: toNumber(sale.credited_amount),
           customerId: sale.customer_id ?? undefined,
           invoiceNumber: sale.invoice_number ?? undefined,
-          cashSessionId: sale.cash_session_id ?? undefined,
+          cashSessionId: sale.cash_session_id ?? saleSessionByMovement.get(sale.id) ?? undefined,
           returnedAt: sale.returned_at ?? undefined,
         };
       });
 
-      setSales(sales);
+      if (!failedSet.has('ventas')) {
+        setSales(sales);
+      }
 
       const drafts: SaleDraft[] = draftRows.map((draft) => {
         const items: CartItem[] = (draft.sale_draft_items ?? []).map((item) => {
@@ -1230,7 +1317,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
         })),
       }));
 
-      setCustomers(customers);
+      if (!failedSet.has('clientes') && !failedSet.has('ventas')) {
+        setCustomers(customers);
+      }
 
       const suppliers: Supplier[] = supplierRows.map((row) => {
         const purchases: Purchase[] = (row.purchases ?? []).map((purchase) => ({
@@ -1260,68 +1349,78 @@ export function POSProvider({ children }: { children: ReactNode }) {
         };
       });
 
-      setSuppliers(suppliers);
+      if (!failedSet.has('proveedores')) {
+        setSuppliers(suppliers);
+      }
 
-      setKardexMovements(kardexRows.map((row) => ({
-        id: row.id,
-        date: row.created_at,
-        productId: row.product_id ?? '',
-        productName: row.product_name || 'Producto',
-        type: row.type,
-        reference: row.reference ?? '',
-        quantity: toNumber(row.quantity),
-        stockBefore: toNumber(row.stock_before),
-        stockAfter: toNumber(row.stock_after),
-        unitCost: toNumber(row.unit_cost),
-        unitSalePrice: row.unit_sale_price == null ? undefined : toNumber(row.unit_sale_price),
-        totalCost: toNumber(row.total_cost),
-      })));
+      if (!failedSet.has('kardex')) {
+        setKardexMovements(kardexRows.map((row) => ({
+          id: row.id,
+          date: row.created_at,
+          productId: row.product_id ?? '',
+          productName: row.product_name || 'Producto',
+          type: row.type,
+          reference: row.reference ?? '',
+          quantity: toNumber(row.quantity),
+          stockBefore: toNumber(row.stock_before),
+          stockAfter: toNumber(row.stock_after),
+          unitCost: toNumber(row.unit_cost),
+          unitSalePrice: row.unit_sale_price == null ? undefined : toNumber(row.unit_sale_price),
+          totalCost: toNumber(row.total_cost),
+        })));
+      }
 
-      setRecharges(rechargeRows.map((row) => ({
-        id: row.id,
-        date: row.created_at,
-        type: row.type,
-        provider: row.provider || 'N/A',
-        phoneNumber: row.phone_number ?? undefined,
-        amount: toNumber(row.amount),
-        commission: toNumber(row.commission),
-        total: toNumber(row.total),
-      })));
+      if (!failedSet.has('recargas')) {
+        setRecharges(rechargeRows.map((row) => ({
+          id: row.id,
+          date: row.created_at,
+          type: row.type,
+          provider: row.provider || 'N/A',
+          phoneNumber: row.phone_number ?? undefined,
+          amount: toNumber(row.amount),
+          commission: toNumber(row.commission),
+          total: toNumber(row.total),
+        })));
+      }
 
-      setCashSessions(cashSessionRows.map((row) => ({
-        id: row.id,
-        storeId: row.store_id,
-        userId: row.user_id ?? undefined,
-        openedBy: row.opened_by ?? undefined,
-        closedBy: row.closed_by ?? undefined,
-        openedAt: row.opened_at,
-        closedAt: row.closed_at ?? undefined,
-        openingNote: row.opening_note ?? undefined,
-        openingCash: toNumber(row.opening_cash),
-        expectedCash: row.expected_cash == null ? undefined : toNumber(row.expected_cash),
-        countedCash: row.counted_cash == null ? undefined : toNumber(row.counted_cash),
-        countedCashBreakdown: sanitizeCashCountBreakdown(row.counted_cash_breakdown),
-        countedAt: row.counted_at ?? undefined,
-        closingNote: row.closing_note ?? undefined,
-        difference: row.difference == null ? undefined : toNumber(row.difference),
-        status: row.status,
-      })));
+      if (!failedSet.has('sesiones de caja')) {
+        setCashSessions(cashSessionRows.map((row) => ({
+          id: row.id,
+          storeId: row.store_id,
+          userId: row.user_id ?? undefined,
+          openedBy: row.opened_by ?? undefined,
+          closedBy: row.closed_by ?? undefined,
+          openedAt: row.opened_at,
+          closedAt: row.closed_at ?? undefined,
+          openingNote: row.opening_note ?? undefined,
+          openingCash: toNumber(row.opening_cash),
+          expectedCash: row.expected_cash == null ? undefined : toNumber(row.expected_cash),
+          countedCash: row.counted_cash == null ? undefined : toNumber(row.counted_cash),
+          countedCashBreakdown: sanitizeCashCountBreakdown(row.counted_cash_breakdown),
+          countedAt: row.counted_at ?? undefined,
+          closingNote: row.closing_note ?? undefined,
+          difference: row.difference == null ? undefined : toNumber(row.difference),
+          status: row.status,
+        })));
+      }
 
-      setCashMovements(cashMovementRows.map((row) => ({
-        id: row.id,
-        cashSessionId: row.cash_session_id,
-        userId: row.user_id ?? undefined,
-        type: row.type,
-        amount: toNumber(row.amount),
-        reason: row.reason ?? undefined,
-        category: normalizeMovementCategory(row.category, row.type === 'cash_in' ? 'manual_income' : 'manual_expense'),
-        subtype: row.subtype ?? undefined,
-        paymentMethod: normalizeMovementPaymentMethod(row.payment_method),
-        referenceType: row.reference_type == null ? undefined : row.reference_type as CashMovementReferenceType,
-        referenceId: row.reference_id ?? undefined,
-        metadata: row.metadata ?? {},
-        date: row.created_at,
-      })));
+      if (!failedSet.has('movimientos de caja')) {
+        setCashMovements(cashMovementRows.map((row) => ({
+          id: row.id,
+          cashSessionId: row.cash_session_id,
+          userId: row.user_id ?? undefined,
+          type: row.type,
+          amount: toNumber(row.amount),
+          reason: row.reason ?? undefined,
+          category: normalizeMovementCategory(row.category, row.type === 'cash_in' ? 'manual_income' : 'manual_expense'),
+          subtype: row.subtype ?? undefined,
+          paymentMethod: normalizeMovementPaymentMethod(row.payment_method),
+          referenceType: row.reference_type == null ? undefined : row.reference_type as CashMovementReferenceType,
+          referenceId: row.reference_id ?? undefined,
+          metadata: row.metadata ?? {},
+          date: row.created_at,
+        })));
+      }
 
       if (storeRow) {
         setStoreConfig(prev => ({
@@ -1341,10 +1440,17 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
 
       setIsOfflineMode(false);
-      // Supabase queda como fuente de verdad al descargar datos remotos.
-      clearPendingSync();
+      // Si hay pendientes offline, mantenemos su estado para no perder trazabilidad,
+      // pero permitimos visualizar los datos remotos más recientes.
+      const shouldPreservePendingSync = options?.preservePendingSync
+        && localStorage.getItem(OFFLINE_DIRTY_KEY) === 'true';
+      if (shouldPreservePendingSync) {
+        setHasPendingSync(true);
+      } else {
+        clearPendingSync();
+      }
 
-      return true;
+      return failedSet.size === 0;
     } catch (error) {
       console.error('No se pudieron cargar datos desde Supabase', error);
       return false;
@@ -1531,10 +1637,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
           username: storedSession.user.email || 'usuario',
           role: membership.role,
         });
-        if (pendingSync === 'true') {
-          toast.info('Hay cambios offline pendientes. Puedes subirlos manualmente si deseas.');
+        const preservePendingSync = pendingSync === 'true';
+        if (preservePendingSync) {
+          setHasPendingSync(true);
+          toast.info('Hay cambios offline pendientes. Se muestran datos de nube y se conserva el estado pendiente.');
         }
-        return syncFromSupabase(storedSession, membership.store_id);
+        return syncFromSupabase(storedSession, membership.store_id, { preservePendingSync });
       })
       .catch((error) => {
         console.error('No se pudo restaurar la sesión de Supabase', error);
@@ -1683,11 +1791,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
       if (membership) {
         setCurrentStoreId(membership.store_id);
         const pendingSync = localStorage.getItem(OFFLINE_DIRTY_KEY) === 'true';
+        const preservePendingSync = pendingSync;
         if (pendingSync) {
           setHasPendingSync(true);
-          toast.info('Hay cambios offline pendientes. Puedes subirlos manualmente si deseas.');
+          toast.info('Hay cambios offline pendientes. Se muestran datos de nube y se conserva el estado pendiente.');
         }
-        const synced = await syncFromSupabase(nextSession, membership.store_id);
+        const synced = await syncFromSupabase(nextSession, membership.store_id, { preservePendingSync });
         if (!synced) {
           toast.error('Sesión iniciada, pero falló la sincronización de datos');
         }
@@ -2794,7 +2903,26 @@ export function POSProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    const sessionSales = sales.filter(sale => sale.cashSessionId === sessionId);
+    const saleSessionByMovement = new Map<string, string>();
+    cashMovements.forEach((movement) => {
+      if (movement.referenceType !== 'sale') return;
+      if (!movement.cashSessionId) return;
+
+      const byReference = movement.referenceId?.trim();
+      const byMetadata = movement.metadata
+        && typeof movement.metadata.saleId === 'string'
+        ? movement.metadata.saleId.trim()
+        : '';
+      const saleId = byReference || byMetadata;
+
+      if (!saleId || saleSessionByMovement.has(saleId)) return;
+      saleSessionByMovement.set(saleId, movement.cashSessionId);
+    });
+
+    const sessionSales = sales.filter((sale) => {
+      const linkedSessionId = sale.cashSessionId ?? saleSessionByMovement.get(sale.id);
+      return linkedSessionId === sessionId;
+    });
     const returnedSales = sessionSales.filter((sale) => Boolean(sale.returnedAt));
     const netSales = sessionSales.filter((sale) => !sale.returnedAt);
     const salesByMethod: Record<string, number> = {};

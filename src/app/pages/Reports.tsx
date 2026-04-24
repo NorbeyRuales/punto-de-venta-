@@ -19,7 +19,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '../components/ui/alert-dialog';
-import { startOfDay, endOfDay, format } from 'date-fns';
+import { startOfDay, endOfDay, format, isSameDay } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { toast } from 'sonner';
@@ -27,10 +27,13 @@ import type { DateRange } from 'react-day-picker';
 
 export function Reports() {
   const { getSalesInRange, sales, kardexMovements, registerReturn, customers, storeConfig, products, suppliers } = usePOS();
+  const [calendarMode, setCalendarMode] = useState<'single' | 'range'>('single');
+  const [selectedDate, setSelectedDate] = useState<Date>(() => startOfDay(new Date()));
   const [dateRange, setDateRange] = useState<DateRange>(() => {
     const today = startOfDay(new Date());
     return { from: today, to: today };
   });
+  const deferredSelectedDate = useDeferredValue(selectedDate);
   const deferredDateRange = useDeferredValue(dateRange);
   const [isPendingTransition, startTransition] = useTransition();
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
@@ -45,16 +48,29 @@ export function Reports() {
   const returnReportsCollapsedLimit = 5;
   const latestPurchasesCollapsedLimit = 5;
   const inventoryRowsCollapsedLimit = 3;
+  const today = startOfDay(new Date());
 
   const { start, end } = useMemo(() => {
+    if (calendarMode === 'single') {
+      const day = deferredSelectedDate ?? new Date();
+      return {
+        start: startOfDay(day),
+        end: endOfDay(day),
+      };
+    }
+
     const from = deferredDateRange?.from ?? new Date();
     const to = deferredDateRange?.to ?? from;
     return {
       start: startOfDay(from),
       end: endOfDay(to),
     };
-  }, [deferredDateRange]);
+  }, [calendarMode, deferredDateRange, deferredSelectedDate]);
   const dateRangeLabel = useMemo(() => {
+    if (calendarMode === 'single') {
+      return format(selectedDate, 'd MMM yyyy', { locale: es });
+    }
+
     if (!dateRange?.from) return 'Seleccionar fechas';
     const fromLabel = format(dateRange.from, 'd MMM yyyy', { locale: es });
 
@@ -64,7 +80,16 @@ export function Reports() {
 
     const toLabel = format(dateRange.to, 'd MMM yyyy', { locale: es });
     return fromLabel === toLabel ? fromLabel : `${fromLabel} - ${toLabel}`;
-  }, [dateRange]);
+  }, [calendarMode, dateRange, selectedDate]);
+  const isRangeSelectionComplete = calendarMode === 'single' || Boolean(dateRange?.from && dateRange?.to);
+  const isTodayActive = calendarMode === 'single'
+    ? isSameDay(selectedDate, today)
+    : Boolean(dateRange?.from && dateRange?.to && isSameDay(dateRange.from, today) && isSameDay(dateRange.to, today));
+  const reportFilterMessage = calendarMode === 'single'
+    ? `Mostrando información del ${dateRangeLabel}.`
+    : isRangeSelectionComplete
+      ? `Mostrando información del rango ${dateRangeLabel}.`
+      : `Selecciona la fecha final para completar el rango. Por ahora se muestra ${dateRangeLabel}.`;
   const periodSales = useMemo(() => getSalesInRange(start, end), [getSalesInRange, start, end]);
   const returnedQuantitiesBySale = useMemo(() => {
     const grouped = new Map<string, Map<string, number>>();
@@ -694,7 +719,7 @@ export function Reports() {
     if (!nextRange?.from) return;
 
     const normalizedFrom = startOfDay(nextRange.from);
-    const normalizedTo = nextRange.to ? startOfDay(nextRange.to) : normalizedFrom;
+    const normalizedTo = nextRange.to ? startOfDay(nextRange.to) : undefined;
 
     startTransition(() => {
       setDateRange({
@@ -703,50 +728,137 @@ export function Reports() {
       });
     });
 
+    if (normalizedTo) {
+      setIsDatePickerOpen(false);
+    }
+  };
+
+  const handleSingleDateSelect = (nextDate: Date | undefined) => {
+    if (!nextDate) return;
+
+    const normalizedDate = startOfDay(nextDate);
+    startTransition(() => {
+      setSelectedDate(normalizedDate);
+    });
+
     setIsDatePickerOpen(false);
   };
 
-  const handleTodayRange = () => {
-    const today = startOfDay(new Date());
+  const handleCalendarModeChange = (mode: 'single' | 'range') => {
+    setIsDatePickerOpen(false);
     startTransition(() => {
+      setCalendarMode(mode);
+      if (mode === 'single') {
+        const nextDate = dateRange.to ?? dateRange.from ?? selectedDate;
+        setSelectedDate(startOfDay(nextDate));
+        return;
+      }
+
+      const day = startOfDay(selectedDate);
+      setDateRange({ from: day, to: day });
+    });
+  };
+
+  const handleTodayRange = () => {
+    startTransition(() => {
+      setSelectedDate(today);
       setDateRange({ from: today, to: today });
     });
   };
 
+  const filterControlClassName = 'h-12 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-900 shadow-sm transition-[border-color,box-shadow,background-color,color] hover:border-slate-300 hover:bg-slate-50 focus-visible:border-sky-300 focus-visible:ring-4 focus-visible:ring-sky-100/80';
+  const filterSelectTriggerClassName = '!h-12 !rounded-xl !border-slate-200 !bg-white !px-4 !text-sm !font-medium !text-slate-900 !shadow-sm hover:!border-slate-300 hover:!bg-slate-50 focus-visible:!border-sky-300 focus-visible:!ring-4 focus-visible:!ring-sky-100/80';
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-3xl font-bold">Reportes</h1>
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-          <Popover open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
-            <PopoverTrigger asChild>
-              <Button type="button" variant="outline" className="w-full justify-between sm:w-[270px]">
-                <span className="truncate text-left">{dateRangeLabel}</span>
-                <CalendarDays className="ml-2 h-4 w-4 shrink-0" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <Calendar
-                mode="range"
-                selected={dateRange}
-                onSelect={handleRangeSelect}
-                locale={es}
-                initialFocus
-                numberOfMonths={1}
-                disabled={(date) => date > new Date()}
-              />
-            </PopoverContent>
-          </Popover>
-          <Button type="button" variant="outline" onClick={handleTodayRange} className="w-full sm:w-auto">
-            Hoy
-          </Button>
-          {isPendingTransition ? (
-            <p className="text-xs text-gray-500 sm:self-center">Actualizando...</p>
-          ) : null}
-          <Button variant="outline" onClick={exportToExcel} className="w-full sm:w-auto">
-            <Download className="w-5 h-5 mr-2" />
-            Exportar Excel
-          </Button>
+      <div className="space-y-4">
+        <div className="space-y-1">
+          <h1 className="text-3xl font-bold tracking-tight text-slate-950">Reportes</h1>
+          <p className="text-sm text-slate-600">
+            Consulta ventas, compras, devoluciones e inventario con un mismo periodo.
+          </p>
+        </div>
+
+        <section className="w-full rounded-2xl border border-[var(--primary)]/12 bg-[var(--primary)]/8 p-3 shadow-[0_14px_30px_-24px_rgba(79,70,229,0.45)] lg:w-fit">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+            <Select value={calendarMode} onValueChange={(value: 'single' | 'range') => handleCalendarModeChange(value)}>
+              <SelectTrigger className={`${filterSelectTriggerClassName} w-full lg:w-[210px]`} aria-label="Modo de fecha del reporte">
+                <SelectValue placeholder="Modo de fecha" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="single">Día único</SelectItem>
+                <SelectItem value="range">Rango de fechas</SelectItem>
+              </SelectContent>
+            </Select>
+            <Popover open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className={`${filterControlClassName} w-full justify-between text-left lg:w-[340px] xl:w-[360px] ${isDatePickerOpen ? 'border-sky-300 bg-sky-50 text-slate-950' : ''}`}
+                  aria-label={calendarMode === 'single' ? 'Seleccionar día del reporte' : 'Seleccionar rango de fechas del reporte'}
+                >
+                  <span className="truncate text-left">{dateRangeLabel}</span>
+                  <CalendarDays className="ml-2 h-4 w-4 shrink-0 text-slate-500" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto rounded-xl border-slate-200 p-0 shadow-xl" align="end">
+                {calendarMode === 'single' ? (
+                  <Calendar
+                    mode="single"
+                    selected={selectedDate}
+                    onSelect={handleSingleDateSelect}
+                    locale={es}
+                    initialFocus
+                    numberOfMonths={1}
+                    disabled={(date) => date > today}
+                  />
+                ) : (
+                  <Calendar
+                    mode="range"
+                    selected={dateRange}
+                    onSelect={handleRangeSelect}
+                    locale={es}
+                    initialFocus
+                    numberOfMonths={1}
+                    disabled={(date) => date > today}
+                  />
+                )}
+              </PopoverContent>
+            </Popover>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleTodayRange}
+              aria-pressed={isTodayActive}
+              className={`${filterControlClassName} w-full justify-center px-5 lg:w-[108px] ${isTodayActive ? 'border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)] hover:bg-[var(--primary)]/12' : ''}`}
+            >
+              Hoy
+            </Button>
+          </div>
+        </section>
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-slate-900">
+              {calendarMode === 'single' ? 'Filtro por día seleccionado' : 'Filtro por rango de fechas'}
+            </p>
+            <p className="text-sm text-slate-600">{reportFilterMessage}</p>
+          </div>
+          <div className="flex flex-col gap-3 sm:items-end">
+            <p className={`text-xs font-medium ${isPendingTransition ? 'text-sky-700' : 'text-slate-500'}`}>
+              {isPendingTransition ? 'Actualizando datos...' : 'Se aplica a todas las tarjetas y tablas del reporte.'}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={exportToExcel}
+              className="h-10 w-full rounded-xl border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50 sm:w-auto"
+            >
+              <Download className="w-4 h-4" />
+              Exportar Excel
+            </Button>
+          </div>
         </div>
       </div>
 

@@ -39,6 +39,7 @@ Thumbs.db
 *.tmp
 *.temp
 *.bak
+nul
 .vercel
 
 # Local agent metadata
