@@ -93,8 +93,8 @@ export function Customers() {
   const validateCustomerForm = (excludeCustomerId?: string): ReturnType<typeof normalizeCustomerForm> | null => {
     const normalized = normalizeCustomerForm();
 
-    if (!normalized.name || !normalized.phone) {
-      toast.error('Complete los campos requeridos');
+    if (!normalized.name) {
+      toast.error('Ingrese el nombre del cliente.');
       return null;
     }
 
@@ -103,7 +103,8 @@ export function Customers() {
       return null;
     }
 
-    const duplicatedPhone = customers.some(customer => (
+    const hasPhone = normalized.phone.length > 0;
+    const duplicatedPhone = hasPhone && customers.some(customer => (
       customer.id !== excludeCustomerId
       && normalizePhone(customer.phone) === normalized.phone
     ));
@@ -437,7 +438,7 @@ export function Customers() {
                   <h3 className="font-bold">{customer.name}</h3>
                   <p className="text-sm text-gray-600 flex items-center gap-1">
                     <Phone className="w-3 h-3" />
-                    {customer.phone}
+                    {customer.phone || 'Sin teléfono'}
                   </p>
                 </div>
               </div>
@@ -544,7 +545,7 @@ export function Customers() {
             </div>
 
             <div>
-              <Label>Teléfono *</Label>
+              <Label>Teléfono (opcional)</Label>
               <Input
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
@@ -621,7 +622,7 @@ export function Customers() {
             </div>
 
             <div>
-              <Label>Teléfono *</Label>
+              <Label>Teléfono (opcional)</Label>
               <Input
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
@@ -818,7 +819,7 @@ export function Customers() {
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Teléfono</p>
-                    <p className="font-semibold">{selectedCustomer.phone}</p>
+                    <p className="font-semibold">{selectedCustomer.phone || 'Sin teléfono'}</p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">Dirección</p>
