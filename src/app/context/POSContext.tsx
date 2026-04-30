@@ -101,6 +101,17 @@ const isLocalBackupPayload = (value: unknown): value is LocalBackupPayload => {
     && isLocalBackupField(candidate.config);
 };
 
+// Parse JSON seguro desde localStorage: evita excepciones por datos corruptos.
+const safeParse = <T,>(raw: string | null, fallback: T): T => {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    console.warn('safeParse: valor JSON corrupto, usando fallback');
+    return fallback;
+  }
+};
+
 const toNumber = (value: unknown, fallback = 0): number => {
   const num = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -1484,7 +1495,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       setHasPendingSync(true);
     }
     const offlineAuthRaw = localStorage.getItem(OFFLINE_AUTH_KEY);
-    const offlineAuth = offlineAuthRaw ? JSON.parse(offlineAuthRaw) as { username?: string; role: 'admin' | 'cashier' } : null;
+    const offlineAuth = safeParse<{ username?: string; role: 'admin' | 'cashier' } | null>(offlineAuthRaw, null);
 
     const loadedProducts = localStorage.getItem('pos_products');
     const loadedCategories = localStorage.getItem('pos_categories');
@@ -1499,7 +1510,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const loadedDrafts = localStorage.getItem(OFFLINE_DRAFTS_KEY);
     const loadedActiveDraftId = localStorage.getItem(OFFLINE_ACTIVE_DRAFT_KEY);
 
-    const productData: Product[] = loadedProducts ? JSON.parse(loadedProducts) : initialProducts;
+    const productData: Product[] = safeParse<Product[] | null>(loadedProducts, null) ?? initialProducts;
     const distribunzelKeySet = new Set(
       distribunzelSeedProducts.map(
         product => `${product.name.trim().toLowerCase()}|${product.category.trim().toLowerCase()}`
@@ -1532,16 +1543,17 @@ export function POSProvider({ children }: { children: ReactNode }) {
     setProducts(mergedProducts);
 
     if (loadedCategories) {
-      setCategories(JSON.parse(loadedCategories));
+      const parsedCats = safeParse<string[]>(loadedCategories, []);
+      setCategories(parsedCats.length > 0 ? parsedCats : Array.from(new Set(mergedProducts.map(product => product.category))));
     } else {
       setCategories(Array.from(new Set(mergedProducts.map(product => product.category))));
     }
     
-    if (loadedSales) setSales(JSON.parse(loadedSales));
-    if (loadedKardex) setKardexMovements(JSON.parse(loadedKardex));
-    if (loadedCustomers) setCustomers(JSON.parse(loadedCustomers));
+    if (loadedSales) setSales(safeParse<Sale[]>(loadedSales, []));
+    if (loadedKardex) setKardexMovements(safeParse<KardexMovement[]>(loadedKardex, []));
+    if (loadedCustomers) setCustomers(safeParse<Customer[]>(loadedCustomers, []));
     if (loadedSuppliers) {
-      const parsedSuppliers: Supplier[] = JSON.parse(loadedSuppliers);
+      const parsedSuppliers: Supplier[] = safeParse<Supplier[]>(loadedSuppliers, []);
       const normalizedSuppliers = parsedSuppliers.map((supplier) => {
         const normalizedAccounts = (
           supplier.bankAccounts && supplier.bankAccounts.length > 0
@@ -1574,17 +1586,17 @@ export function POSProvider({ children }: { children: ReactNode }) {
     } else {
       setSuppliers(initialSuppliers);
     }
-    if (loadedRecharges) setRecharges(JSON.parse(loadedRecharges));
+    if (loadedRecharges) setRecharges(safeParse<RechargeTransaction[]>(loadedRecharges, []));
     if (loadedCashSessions) {
-      const parsedCashSessions = JSON.parse(loadedCashSessions) as CashSession[];
+      const parsedCashSessions = safeParse<CashSession[]>(loadedCashSessions, []);
       setCashSessions(parsedCashSessions.map((sessionItem) => ({
         ...sessionItem,
         countedCashBreakdown: sanitizeCashCountBreakdown(sessionItem.countedCashBreakdown),
       })));
     }
-    if (loadedCashMovements) setCashMovements(JSON.parse(loadedCashMovements));
+    if (loadedCashMovements) setCashMovements(safeParse<CashMovement[]>(loadedCashMovements, []));
     if (loadedConfig) {
-      const parsedConfig = JSON.parse(loadedConfig) as Partial<StoreConfig>;
+      const parsedConfig = safeParse<Partial<StoreConfig>>(loadedConfig, {});
       setStoreConfig(prev => ({
         ...prev,
         ...parsedConfig,
@@ -1593,7 +1605,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
     if (loadedDrafts) {
       try {
-        const parsedDrafts = JSON.parse(loadedDrafts) as SaleDraft[];
+        const parsedDrafts = safeParse<SaleDraft[]>(loadedDrafts, []);
         setSaleDrafts(parsedDrafts);
         if (loadedActiveDraftId) {
           setActiveDraftId(loadedActiveDraftId);
@@ -1878,6 +1890,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(OFFLINE_AUTH_KEY);
     setSaleDrafts([]);
     setActiveDraftId(null);
+    // Limpia claves locales que pueden quedar corruptas y provocar fallos al recargar.
+    [
+      'pos_products', 'pos_categories', 'pos_sales', 'pos_kardex', 'pos_customers',
+      'pos_suppliers', 'pos_recharges', 'pos_cash_sessions', 'pos_cash_movements',
+      'pos_config', 'pos_auth', OFFLINE_DIRTY_KEY, OFFLINE_BACKUP_KEY, OFFLINE_DRAFTS_KEY,
+      OFFLINE_ACTIVE_DRAFT_KEY, OFFLINE_INVOICE_KEY, OFFLINE_PIN_KEY, OFFLINE_ROLE_KEY,
+      SESSION_STORAGE_KEY
+    ].forEach((k) => { try { localStorage.removeItem(k); } catch {} });
   };
 
   const verifyAdminPasswordForCriticalAction = async (password: string): Promise<boolean> => {
@@ -1969,7 +1989,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const offlineBackupRaw = localStorage.getItem(OFFLINE_BACKUP_KEY);
     if (offlineBackupRaw) {
       try {
-        const parsedBackup: unknown = JSON.parse(offlineBackupRaw);
+        const parsedBackup: unknown = safeParse<unknown>(offlineBackupRaw, null);
         if (isLocalBackupPayload(parsedBackup)) {
           backupPayload = parsedBackup;
         }
@@ -2025,7 +2045,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     if (offlineBackupRaw) {
       try {
-        const parsedBackup: unknown = JSON.parse(offlineBackupRaw);
+        const parsedBackup: unknown = safeParse<unknown>(offlineBackupRaw, null);
         if (isLocalBackupPayload(parsedBackup) && typeof parsedBackup.products === 'string') {
           localProductsRaw = parsedBackup.products;
         }
@@ -2036,7 +2056,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     const localProducts: Product[] = (() => {
       try {
-        const parsed = localProductsRaw ? JSON.parse(localProductsRaw) : [];
+        const parsed = safeParse<Product[] | null>(localProductsRaw, null) ?? [];
         return Array.isArray(parsed) ? parsed as Product[] : [];
       } catch {
         return [];

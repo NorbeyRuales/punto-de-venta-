@@ -1,0 +1,29 @@
+[33mcommit 2e8bcc271d1ba715dc04f409abe60c9a804224fb[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: NorbeyRuales <dully.ruales@correounivalle.edu.co>
+Date:   Fri Apr 24 12:21:30 2026 -0500
+
+    arreglo en reportes
+
+[33mcommit 21ae460c030d4bba188cae6c24a3f4166604b760[m
+Author: NorbeyRuales <dully.ruales@correounivalle.edu.co>
+Date:   Wed Apr 22 00:29:54 2026 -0500
+
+    ajuste en dashboard filtrado por rango de fechas
+
+[33mcommit ca8045a1928096e99deaa8f7e2aeae9e566686f0[m
+Author: NorbeyRuales <dully.ruales@correounivalle.edu.co>
+Date:   Wed Apr 22 00:02:29 2026 -0500
+
+    ajuste en reportes de devoluciones
+
+[33mcommit b3abb61fbb80e92670e60ce6957e87d48e657d51[m
+Author: NorbeyRuales <dully.ruales@correounivalle.edu.co>
+Date:   Thu Apr 16 01:12:57 2026 -0500
+
+    ajuste en responsive
+
+[33mcommit 83d4ee4d74d37bec32fd6643aa0ee54e990e09f1[m
+Author: NorbeyRuales <dully.ruales@correounivalle.edu.co>
+Date:   Thu Apr 16 00:51:05 2026 -0500
+
+    ajuste en compras , deudas a proveedores
