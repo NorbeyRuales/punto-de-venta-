@@ -112,6 +112,33 @@ const safeParse = <T,>(raw: string | null, fallback: T): T => {
   }
 };
 
+const safeStorageGet = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const safeStorageSet = (key: string, value: string): boolean => {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn(`safeStorageSet: no se pudo guardar ${key}`, error);
+    return false;
+  }
+};
+
+const safeStorageRemove = (key: string): boolean => {
+  try {
+    localStorage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const toNumber = (value: unknown, fallback = 0): number => {
   const num = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -237,10 +264,10 @@ const hashPin = async (pin: string): Promise<string> => {
 };
 
 const getNextOfflineInvoiceNumber = (): string => {
-  const stored = localStorage.getItem(OFFLINE_INVOICE_KEY);
+  const stored = safeStorageGet(OFFLINE_INVOICE_KEY);
   const last = stored ? Number(stored) : 0;
   const next = Number.isFinite(last) ? last + 1 : 1;
-  localStorage.setItem(OFFLINE_INVOICE_KEY, String(next));
+  safeStorageSet(OFFLINE_INVOICE_KEY, String(next));
   return `OFF-${next.toString().padStart(6, '0')}`;
 };
 
@@ -926,6 +953,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const cart = activeDraft?.items ?? [];
   const draftSyncTimers = useRef<Record<string, number>>({});
   const isHydratingRef = useRef(true);
+  const isSyncingFromSupabaseRef = useRef(false);
   const offlineSnapshotRef = useRef<string | null>(null);
   const localStorageCacheRef = useRef<Record<string, string | null>>({});
   const isAutoSyncingRef = useRef(false);
@@ -958,8 +986,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
     setIsAuthenticated(false);
     setCurrentUser(null);
     setIsOfflineMode(false);
-    localStorage.removeItem('pos_auth');
-    localStorage.removeItem(OFFLINE_AUTH_KEY);
+    safeStorageRemove('pos_auth');
+    safeStorageRemove(OFFLINE_AUTH_KEY);
 
     if (typeof window !== 'undefined' && window.location.pathname !== '/') {
       window.location.assign('/');
@@ -1018,15 +1046,15 @@ export function POSProvider({ children }: { children: ReactNode }) {
   }, [currentUser?.role]);
 
   const buildLocalBackupPayload = (): LocalBackupPayload => ({
-    products: localStorage.getItem('pos_products'),
-    sales: localStorage.getItem('pos_sales'),
-    customers: localStorage.getItem('pos_customers'),
-    suppliers: localStorage.getItem('pos_suppliers'),
-    kardex: localStorage.getItem('pos_kardex'),
-    recharges: localStorage.getItem('pos_recharges'),
-    cash_sessions: localStorage.getItem('pos_cash_sessions'),
-    cash_movements: localStorage.getItem('pos_cash_movements'),
-    config: localStorage.getItem('pos_config'),
+    products: safeStorageGet('pos_products'),
+    sales: safeStorageGet('pos_sales'),
+    customers: safeStorageGet('pos_customers'),
+    suppliers: safeStorageGet('pos_suppliers'),
+    kardex: safeStorageGet('pos_kardex'),
+    recharges: safeStorageGet('pos_recharges'),
+    cash_sessions: safeStorageGet('pos_cash_sessions'),
+    cash_movements: safeStorageGet('pos_cash_movements'),
+    config: safeStorageGet('pos_config'),
   });
 
   const buildStateBackupPayload = (): LocalBackupPayload => ({
@@ -1043,12 +1071,15 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   const persistLocalStorageValue = (key: string, value: string | null) => {
     if (localStorageCacheRef.current[key] === value) return;
-    localStorageCacheRef.current[key] = value;
     if (value === null) {
-      localStorage.removeItem(key);
+      if (safeStorageRemove(key)) {
+        localStorageCacheRef.current[key] = null;
+      }
       return;
     }
-    localStorage.setItem(key, value);
+    if (safeStorageSet(key, value)) {
+      localStorageCacheRef.current[key] = value;
+    }
   };
 
   const persistLocalStorageJson = (key: string, value: unknown) => {
@@ -1057,14 +1088,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   const markPendingSync = () => {
     setHasPendingSync(true);
-    localStorage.setItem(OFFLINE_DIRTY_KEY, 'true');
-    localStorage.setItem(OFFLINE_BACKUP_KEY, JSON.stringify(buildStateBackupPayload()));
+    safeStorageSet(OFFLINE_DIRTY_KEY, 'true');
+    safeStorageSet(OFFLINE_BACKUP_KEY, JSON.stringify(buildStateBackupPayload()));
   };
 
   const clearPendingSync = () => {
     setHasPendingSync(false);
-    localStorage.removeItem(OFFLINE_DIRTY_KEY);
-    localStorage.removeItem(OFFLINE_BACKUP_KEY);
+    safeStorageRemove(OFFLINE_DIRTY_KEY);
+    safeStorageRemove(OFFLINE_BACKUP_KEY);
   };
 
   // Sincroniza datos remotos (catálogo + operaciones) desde Supabase.
@@ -1073,6 +1104,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     storeId: string,
     options?: { preservePendingSync?: boolean },
   ): Promise<boolean> => {
+    isSyncingFromSupabaseRef.current = true;
     try {
       const failedSections: string[] = [];
       const withFallback = async <T,>(
@@ -1454,7 +1486,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       // Si hay pendientes offline, mantenemos su estado para no perder trazabilidad,
       // pero permitimos visualizar los datos remotos más recientes.
       const shouldPreservePendingSync = options?.preservePendingSync
-        && localStorage.getItem(OFFLINE_DIRTY_KEY) === 'true';
+        && safeStorageGet(OFFLINE_DIRTY_KEY) === 'true';
       if (shouldPreservePendingSync) {
         setHasPendingSync(true);
       } else {
@@ -1465,6 +1497,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('No se pudieron cargar datos desde Supabase', error);
       return false;
+    } finally {
+      isSyncingFromSupabaseRef.current = false;
     }
   };
 
@@ -1482,33 +1516,33 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Cargar datos del localStorage
   useEffect(() => {
-    const storedPin = localStorage.getItem(OFFLINE_PIN_KEY);
+    const storedPin = safeStorageGet(OFFLINE_PIN_KEY);
     if (storedPin) {
       setOfflinePinHash(storedPin);
     }
-    const storedRole = localStorage.getItem(OFFLINE_ROLE_KEY);
+    const storedRole = safeStorageGet(OFFLINE_ROLE_KEY);
     if (storedRole === 'admin' || storedRole === 'cashier') {
       setOfflineDefaultRoleState(storedRole);
     }
-    const pendingSync = localStorage.getItem(OFFLINE_DIRTY_KEY);
+    const pendingSync = safeStorageGet(OFFLINE_DIRTY_KEY);
     if (pendingSync === 'true') {
       setHasPendingSync(true);
     }
-    const offlineAuthRaw = localStorage.getItem(OFFLINE_AUTH_KEY);
+    const offlineAuthRaw = safeStorageGet(OFFLINE_AUTH_KEY);
     const offlineAuth = safeParse<{ username?: string; role: 'admin' | 'cashier' } | null>(offlineAuthRaw, null);
 
-    const loadedProducts = localStorage.getItem('pos_products');
-    const loadedCategories = localStorage.getItem('pos_categories');
-    const loadedSales = localStorage.getItem('pos_sales');
-    const loadedKardex = localStorage.getItem('pos_kardex');
-    const loadedCustomers = localStorage.getItem('pos_customers');
-    const loadedSuppliers = localStorage.getItem('pos_suppliers');
-    const loadedRecharges = localStorage.getItem('pos_recharges');
-    const loadedCashSessions = localStorage.getItem('pos_cash_sessions');
-    const loadedCashMovements = localStorage.getItem('pos_cash_movements');
-    const loadedConfig = localStorage.getItem('pos_config');
-    const loadedDrafts = localStorage.getItem(OFFLINE_DRAFTS_KEY);
-    const loadedActiveDraftId = localStorage.getItem(OFFLINE_ACTIVE_DRAFT_KEY);
+    const loadedProducts = safeStorageGet('pos_products');
+    const loadedCategories = safeStorageGet('pos_categories');
+    const loadedSales = safeStorageGet('pos_sales');
+    const loadedKardex = safeStorageGet('pos_kardex');
+    const loadedCustomers = safeStorageGet('pos_customers');
+    const loadedSuppliers = safeStorageGet('pos_suppliers');
+    const loadedRecharges = safeStorageGet('pos_recharges');
+    const loadedCashSessions = safeStorageGet('pos_cash_sessions');
+    const loadedCashMovements = safeStorageGet('pos_cash_movements');
+    const loadedConfig = safeStorageGet('pos_config');
+    const loadedDrafts = safeStorageGet(OFFLINE_DRAFTS_KEY);
+    const loadedActiveDraftId = safeStorageGet(OFFLINE_ACTIVE_DRAFT_KEY);
 
     const productData: Product[] = safeParse<Product[] | null>(loadedProducts, null) ?? initialProducts;
     const distribunzelKeySet = new Set(
@@ -1618,7 +1652,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     if (!storedSession) {
       setSession(null);
       setCurrentStoreId(null);
-      localStorage.removeItem('pos_auth');
+      safeStorageRemove('pos_auth');
 
       if (offlineAuth?.role) {
         setIsOfflineMode(true);
@@ -1741,10 +1775,6 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Marcar cambios offline pendientes de sincronización.
   useEffect(() => {
-    if (!isHydratingRef.current && isConnectedToSupabase) {
-      return;
-    }
-
     const snapshot = JSON.stringify({
       products,
       categories,
@@ -1759,7 +1789,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
       saleDrafts,
     });
 
-    if (isHydratingRef.current) {
+    if (isHydratingRef.current || isSyncingFromSupabaseRef.current || !isAuthenticated) {
+      offlineSnapshotRef.current = snapshot;
+      return;
+    }
+
+    if (isConnectedToSupabase) {
       offlineSnapshotRef.current = snapshot;
       return;
     }
@@ -1781,6 +1816,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     storeConfig,
     saleDrafts,
     isConnectedToSupabase,
+    isAuthenticated,
   ]);
 
   // Funciones de autenticación
@@ -1790,7 +1826,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       storeSession(nextSession);
       setSession(nextSession);
       setIsOfflineMode(false);
-      localStorage.removeItem(OFFLINE_AUTH_KEY);
+      safeStorageRemove(OFFLINE_AUTH_KEY);
 
       const membership = await fetchMyStoreMembership(nextSession.access_token, nextSession.user.id);
 
@@ -1802,7 +1838,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
       if (membership) {
         setCurrentStoreId(membership.store_id);
-        const pendingSync = localStorage.getItem(OFFLINE_DIRTY_KEY) === 'true';
+        const pendingSync = safeStorageGet(OFFLINE_DIRTY_KEY) === 'true';
         const preservePendingSync = pendingSync;
         if (pendingSync) {
           setHasPendingSync(true);
@@ -1854,7 +1890,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const safeRole = role || offlineDefaultRole;
     const safeUsername = username?.trim() || 'offline';
     setCurrentUser({ username: safeUsername, role: safeRole });
-    localStorage.setItem(OFFLINE_AUTH_KEY, JSON.stringify({ username: safeUsername, role: safeRole }));
+    safeStorageSet(OFFLINE_AUTH_KEY, JSON.stringify({ username: safeUsername, role: safeRole }));
     return true;
   };
 
@@ -1867,14 +1903,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     const hashed = await hashPin(trimmed);
     setOfflinePinHash(hashed);
-    localStorage.setItem(OFFLINE_PIN_KEY, hashed);
-    localStorage.removeItem(OFFLINE_AUTH_KEY);
+    safeStorageSet(OFFLINE_PIN_KEY, hashed);
+    safeStorageRemove(OFFLINE_AUTH_KEY);
     return true;
   };
 
   const setOfflineDefaultRole = (role: 'admin' | 'cashier') => {
     setOfflineDefaultRoleState(role);
-    localStorage.setItem(OFFLINE_ROLE_KEY, role);
+    safeStorageSet(OFFLINE_ROLE_KEY, role);
   };
 
   const logout = () => {
@@ -1887,9 +1923,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
     setIsAuthenticated(false);
     setCurrentUser(null);
     setIsOfflineMode(false);
-    localStorage.removeItem(OFFLINE_AUTH_KEY);
+    safeStorageRemove(OFFLINE_AUTH_KEY);
     setSaleDrafts([]);
     setActiveDraftId(null);
+    clearPendingSync();
+    offlineSnapshotRef.current = null;
+    localStorageCacheRef.current = {};
     // Limpia claves locales que pueden quedar corruptas y provocar fallos al recargar.
     [
       'pos_products', 'pos_categories', 'pos_sales', 'pos_kardex', 'pos_customers',
@@ -1897,7 +1936,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       'pos_config', 'pos_auth', OFFLINE_DIRTY_KEY, OFFLINE_BACKUP_KEY, OFFLINE_DRAFTS_KEY,
       OFFLINE_ACTIVE_DRAFT_KEY, OFFLINE_INVOICE_KEY, OFFLINE_PIN_KEY, OFFLINE_ROLE_KEY,
       SESSION_STORAGE_KEY
-    ].forEach((k) => { try { localStorage.removeItem(k); } catch {} });
+    ].forEach((k) => { safeStorageRemove(k); });
   };
 
   const verifyAdminPasswordForCriticalAction = async (password: string): Promise<boolean> => {
@@ -1986,7 +2025,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
 
     let backupPayload = buildLocalBackupPayload();
-    const offlineBackupRaw = localStorage.getItem(OFFLINE_BACKUP_KEY);
+    const offlineBackupRaw = safeStorageGet(OFFLINE_BACKUP_KEY);
     if (offlineBackupRaw) {
       try {
         const parsedBackup: unknown = safeParse<unknown>(offlineBackupRaw, null);
@@ -2040,8 +2079,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
       sampleConflicts: [],
     };
 
-    const offlineBackupRaw = localStorage.getItem(OFFLINE_BACKUP_KEY);
-    let localProductsRaw = localStorage.getItem('pos_products');
+    const offlineBackupRaw = safeStorageGet(OFFLINE_BACKUP_KEY);
+    let localProductsRaw = safeStorageGet('pos_products');
 
     if (offlineBackupRaw) {
       try {
