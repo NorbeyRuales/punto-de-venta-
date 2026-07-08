@@ -3314,6 +3314,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const openedAt = new Date().toISOString();
     const openedByName = currentUser?.fullName?.trim() || currentUser?.username?.trim() || undefined;
     let sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let remoteSessionCreated = false;
 
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
@@ -3326,12 +3327,25 @@ export function POSProvider({ children }: { children: ReactNode }) {
         });
         if (remoteId) {
           sessionId = remoteId;
+          remoteSessionCreated = true;
+
+          await Promise.all(saleDrafts.map((draft) =>
+            updateSaleDraftRow(session.access_token, currentStoreId, draft.id, {
+              cashSessionId: remoteId,
+            })
+          ));
         }
       } catch (error) {
         console.error('No se pudo abrir caja en Supabase', error);
         markPendingSync();
-        toast.error('Caja abierta localmente, pero falló en Supabase.');
+        toast.error('No se pudo abrir la caja en Supabase. Intenta nuevamente.');
+        return false;
       }
+    }
+
+    if (isConnectedToSupabase && !remoteSessionCreated) {
+      toast.error('Supabase no devolvió la caja creada. Intenta nuevamente.');
+      return false;
     }
 
     const newSession: CashSession = {
@@ -3347,6 +3361,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
     };
 
     setCashSessions(prev => [...prev, newSession]);
+    setSaleDrafts(prev => prev.map((draft) => ({
+      ...draft,
+      cashSessionId: sessionId,
+      updatedAt: openedAt,
+    })));
 
     if (safeOpeningCash > 0) {
       await addCashMovement(
