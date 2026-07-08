@@ -214,6 +214,8 @@ type CashSessionRow = {
   status: CashSessionStatus;
   opened_by: string | null;
   closed_by: string | null;
+  opened_by_name: string | null;
+  closed_by_name: string | null;
   created_at: string;
 };
 
@@ -1180,6 +1182,7 @@ export async function createCashSession(
   storeId: string,
   payload: {
     userId?: string;
+    openedByName?: string;
     openingCash: number;
     openingNote?: string;
     openedAt?: string;
@@ -1189,6 +1192,7 @@ export async function createCashSession(
     store_id: storeId,
     user_id: uuidLike(payload.userId) ? payload.userId : null,
     opened_by: uuidLike(payload.userId) ? payload.userId : null,
+    opened_by_name: payload.openedByName?.trim() || null,
     opening_cash: payload.openingCash,
     opening_note: payload.openingNote || null,
     opened_at: payload.openedAt || new Date().toISOString(),
@@ -1210,6 +1214,7 @@ export async function updateCashSession(
     countedAt?: string;
     closingNote?: string;
     closedBy?: string;
+    closedByName?: string;
     difference?: number;
     status?: CashSessionStatus;
   },
@@ -1223,6 +1228,7 @@ export async function updateCashSession(
   if (patch.countedAt !== undefined) dbPatch.counted_at = patch.countedAt;
   if (patch.closingNote !== undefined) dbPatch.closing_note = patch.closingNote || null;
   if (patch.closedBy !== undefined) dbPatch.closed_by = uuidLike(patch.closedBy) ? patch.closedBy : null;
+  if (patch.closedByName !== undefined) dbPatch.closed_by_name = patch.closedByName.trim() || null;
   if (patch.difference !== undefined) dbPatch.difference = patch.difference;
   if (patch.status !== undefined) dbPatch.status = patch.status;
   if (Object.keys(dbPatch).length === 0) return;
@@ -1387,7 +1393,7 @@ export async function loadCashSessions(token: string, storeId: string): Promise<
   try {
     return await selectAllRows<CashSessionRow>(
       'cash_sessions',
-      'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_cash_breakdown,counted_at,closing_note,difference,status,opened_by,closed_by,created_at'
+      'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_cash_breakdown,counted_at,closing_note,difference,status,opened_by,closed_by,opened_by_name,closed_by_name,created_at'
         + `&store_id=eq.${storeId}&order=opened_at.asc`,
       token,
     );
@@ -1395,7 +1401,7 @@ export async function loadCashSessions(token: string, storeId: string): Promise<
     if (isMissingColumnError(error, 'counted_cash_breakdown')) {
       const legacyRows = await selectAllRows<CashSessionRow>(
         'cash_sessions',
-        'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_at,closing_note,difference,status,opened_by,closed_by,created_at'
+        'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_at,closing_note,difference,status,opened_by,closed_by,opened_by_name,closed_by_name,created_at'
           + `&store_id=eq.${storeId}&order=opened_at.asc`,
         token,
       );

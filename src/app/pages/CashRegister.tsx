@@ -992,6 +992,17 @@ export function CashRegister() {
                 </div>
               </div>
 
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Caja abierta por</p>
+                  <p className="text-sm font-semibold text-slate-800">{selectedClosedSession.openedByName || 'Usuario no identificado'}</p>
+                </div>
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-xs text-slate-500">Caja cerrada por</p>
+                  <p className="text-sm font-semibold text-slate-800">{selectedClosedSession.closedByName || 'Usuario no identificado'}</p>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-lg border border-violet-200 bg-violet-50 p-3">
                   <p className="text-xs text-violet-700">Esperado</p>

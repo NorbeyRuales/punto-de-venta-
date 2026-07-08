@@ -546,6 +546,8 @@ export interface CashSession {
   userId?: string;
   openedBy?: string;
   closedBy?: string;
+  openedByName?: string;
+  closedByName?: string;
   openedAt: string;
   closedAt?: string;
   openingNote?: string;
@@ -632,6 +634,7 @@ export interface StoreConfig {
 
 export type POSUser = {
   username: string;
+  fullName?: string;
   role: UserRole;
 };
 
@@ -1502,6 +1505,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
           userId: row.user_id ?? undefined,
           openedBy: row.opened_by ?? undefined,
           closedBy: row.closed_by ?? undefined,
+          openedByName: row.opened_by_name ?? undefined,
+          closedByName: row.closed_by_name ?? undefined,
           openedAt: row.opened_at,
           closedAt: row.closed_at ?? undefined,
           openingNote: row.opening_note ?? undefined,
@@ -1768,6 +1773,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         setCurrentStoreId(membership.store_id);
         setCurrentUser({
           username: storedSession.user.email || 'usuario',
+          fullName: storedSession.user.user_metadata?.full_name,
           role: membership.role,
         });
         const preservePendingSync = pendingSync === 'true';
@@ -1929,6 +1935,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       setIsAuthenticated(true);
       setCurrentUser({
         username: nextSession.user.email || username,
+        fullName: nextSession.user.user_metadata?.full_name,
         role: membership?.role || 'admin'
       });
 
@@ -3305,12 +3312,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const safeOpeningCash = roundMoney(Number.isFinite(openingCash) ? Math.max(0, openingCash) : 0);
     const normalizedOpeningNote = openingNote?.trim() || undefined;
     const openedAt = new Date().toISOString();
+    const openedByName = currentUser?.fullName?.trim() || currentUser?.username?.trim() || undefined;
     let sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
         const remoteId = await createCashSession(session.access_token, currentStoreId, {
           userId: session.user.id,
+          openedByName,
           openingCash: safeOpeningCash,
           openingNote: normalizedOpeningNote,
           openedAt,
@@ -3330,6 +3339,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       storeId: currentStoreId ?? undefined,
       userId: session?.user.id,
       openedBy: session?.user.id,
+      openedByName,
       openedAt,
       openingNote: normalizedOpeningNote,
       openingCash: safeOpeningCash,
@@ -3553,6 +3563,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const difference = roundMoney(safeCounted - expectedCash);
     const closedAt = new Date().toISOString();
     const normalizedClosingNote = closingNote?.trim() || undefined;
+    const closedByName = currentUser?.fullName?.trim() || currentUser?.username?.trim() || undefined;
     const nextStatus: CashSession['status'] = difference === 0 ? 'closed' : 'closed_with_difference';
 
     const closedSession: CashSession = {
@@ -3564,6 +3575,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       countedAt: closedAt,
       closingNote: normalizedClosingNote,
       closedBy: session?.user.id,
+      closedByName,
       difference,
       status: nextStatus,
     };
@@ -3580,6 +3592,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           countedAt: closedAt,
           closingNote: normalizedClosingNote,
           closedBy: session.user.id,
+          closedByName,
           difference,
           status: nextStatus,
         });
