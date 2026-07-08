@@ -121,6 +121,7 @@ export function CashRegister() {
   const [isDeletingSelectedReports, setIsDeletingSelectedReports] = useState(false);
   const [deleteConfirmationPassword, setDeleteConfirmationPassword] = useState('');
   const [showAllActiveMovements, setShowAllActiveMovements] = useState(false);
+  const [visibleClosedSessionsCount, setVisibleClosedSessionsCount] = useState(20);
   const countInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const closingNoteRef = useRef<HTMLInputElement | null>(null);
 
@@ -128,10 +129,16 @@ export function CashRegister() {
   const isOpen = currentStatus === 'open';
   const isCounting = currentStatus === 'counting';
 
-  const activeReport = currentCashSession ? getCashSessionReport(currentCashSession.id) : null;
-  const activeMovements = currentCashSession
-    ? cashMovements.filter(movement => movement.cashSessionId === currentCashSession.id)
-    : [];
+  const activeReport = useMemo(
+    () => currentCashSession ? getCashSessionReport(currentCashSession.id) : null,
+    [currentCashSession, getCashSessionReport],
+  );
+  const activeMovements = useMemo(
+    () => currentCashSession
+      ? cashMovements.filter((movement) => movement.cashSessionId === currentCashSession.id)
+      : [],
+    [cashMovements, currentCashSession],
+  );
   const activeMovementsCollapsedLimit = 5;
   const latestActiveMovements = useMemo(
     () => activeMovements.slice(-10).reverse(),
@@ -145,6 +152,10 @@ export function CashRegister() {
   const closedSessions = useMemo(() => cashSessions
     .filter((session) => session.status === 'closed' || session.status === 'closed_with_difference')
     .sort((a, b) => new Date(b.closedAt || b.openedAt).getTime() - new Date(a.closedAt || a.openedAt).getTime()), [cashSessions]);
+  const visibleClosedSessions = useMemo(
+    () => closedSessions.slice(0, visibleClosedSessionsCount),
+    [closedSessions, visibleClosedSessionsCount],
+  );
 
   const lastClosedSession = useMemo(() => {
     if (lastClosedId) {
@@ -156,7 +167,10 @@ export function CashRegister() {
     return closedSessions.sort((a, b) => new Date(b.closedAt || b.openedAt).getTime() - new Date(a.closedAt || a.openedAt).getTime())[0] ?? null;
   }, [cashSessions, lastClosedId]);
 
-  const lastClosedReport = lastClosedSession ? getCashSessionReport(lastClosedSession.id) : null;
+  const lastClosedReport = useMemo(
+    () => lastClosedSession ? getCashSessionReport(lastClosedSession.id) : null,
+    [lastClosedSession, getCashSessionReport],
+  );
 
   const selectedClosedSession = useMemo(() => {
     if (selectedClosedSessionId) {
@@ -165,9 +179,10 @@ export function CashRegister() {
     return lastClosedSession;
   }, [closedSessions, selectedClosedSessionId, lastClosedSession]);
 
-  const selectedClosedReport = selectedClosedSession
-    ? getCashSessionReport(selectedClosedSession.id)
-    : null;
+  const selectedClosedReport = useMemo(
+    () => selectedClosedSession ? getCashSessionReport(selectedClosedSession.id) : null,
+    [selectedClosedSession, getCashSessionReport],
+  );
 
   const selectedClosedMovements = useMemo(() => {
     if (!selectedClosedSession) return [];
@@ -892,7 +907,7 @@ export function CashRegister() {
                 </tr>
               </thead>
               <tbody>
-                {closedSessions.map((session) => {
+                {visibleClosedSessions.map((session) => {
                   const report = getCashSessionReport(session.id);
                   const expected = session.expectedCash ?? report.expectedCash;
                   const counted = session.countedCash ?? 0;
@@ -931,6 +946,16 @@ export function CashRegister() {
               </tbody>
             </table>
           </div>
+          {visibleClosedSessions.length < closedSessions.length && (
+            <div className="flex justify-center pt-4">
+              <Button
+                variant="outline"
+                onClick={() => setVisibleClosedSessionsCount((current) => current + 20)}
+              >
+                Mostrar 20 cierres más ({closedSessions.length - visibleClosedSessions.length} pendientes)
+              </Button>
+            </div>
+          )}
         </Card>
       )}
 

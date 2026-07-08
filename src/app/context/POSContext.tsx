@@ -1,5 +1,5 @@
 // Contexto principal del POS: centraliza estado, acciones de negocio y sincronización.
-import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useRef, useMemo, useCallback } from 'react';
 import { toast } from 'sonner';
 import {
   getStoredSession,
@@ -58,9 +58,12 @@ import {
   updateSupplierRow,
   updateStoreDetails,
   type StoreManagedUser,
+  type DataDateRange,
 } from '../services/posSupabase';
 import { DEFAULT_LOGO_PATH } from '../constants/branding';
 import { hasPermission, type AppPermission, type UserRole } from '../constants/permissions';
+import { clearLocalState, loadLocalState, writeLocalState } from '../services/localDatabase';
+import { validateBackupPayload } from '../services/backupValidation';
 
 const OFFLINE_PIN_KEY = 'pos_offline_pin_hash';
 const OFFLINE_ROLE_KEY = 'pos_offline_role_default';
@@ -71,6 +74,14 @@ const OFFLINE_DRAFTS_KEY = 'pos_sale_drafts';
 const OFFLINE_ACTIVE_DRAFT_KEY = 'pos_active_draft_id';
 const OFFLINE_BACKUP_KEY = 'pos_offline_backup';
 const ALLOW_AUTOMATIC_BACKUP_UPLOAD = false;
+const INITIAL_HISTORY_DAYS = 90;
+const SYNC_DIAGNOSTICS_KEY = 'pos_sync_diagnostics';
+
+const mergeById = <T extends { id: string }>(existing: T[], incoming: T[]): T[] => {
+  const merged = new Map(existing.map((item) => [item.id, item]));
+  incoming.forEach((item) => merged.set(item.id, item));
+  return Array.from(merged.values());
+};
 
 type LocalBackupPayload = {
   products: string | null;
@@ -83,6 +94,18 @@ type LocalBackupPayload = {
   cash_movements: string | null;
   config: string | null;
 } & Record<string, unknown>;
+
+export type CompleteBackupPayload = LocalBackupPayload;
+
+export type SyncDiagnostics = {
+  status: 'idle' | 'syncing' | 'success' | 'partial' | 'error';
+  lastAttemptAt?: string;
+  lastSuccessAt?: string;
+  durationMs?: number;
+  message?: string;
+  lastBackupAt?: string;
+  lastBackupCounts?: Record<string, number>;
+};
 
 const isLocalBackupField = (value: unknown): value is string | null => value === null || typeof value === 'string';
 
@@ -110,6 +133,12 @@ const safeParse = <T,>(raw: string | null, fallback: T): T => {
     console.warn('safeParse: valor JSON corrupto, usando fallback');
     return fallback;
   }
+};
+
+const readCachedValue = <T,>(value: unknown, fallback: T): T => {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string') return safeParse<T>(value, fallback);
+  return value as T;
 };
 
 const safeStorageGet = (key: string): string | null => {
@@ -631,6 +660,7 @@ interface POSContextType {
   offlinePinConfigured: boolean;
   offlineDefaultRole: 'admin' | 'cashier';
   hasPendingSync: boolean;
+  syncDiagnostics: SyncDiagnostics;
   currentUser: POSUser | null;
   hasPermission: (permission: AppPermission) => boolean;
   login: (username: string, password: string) => Promise<boolean>;
@@ -641,6 +671,9 @@ interface POSContextType {
   setOfflineDefaultRole: (role: 'admin' | 'cashier') => void;
   createStore: (store: { name: string; nit?: string; address?: string; phone?: string; email?: string }) => Promise<boolean>;
   syncWithSupabase: () => Promise<boolean>;
+  createCompleteBackup: () => Promise<CompleteBackupPayload | null>;
+  rebuildLocalCache: () => Promise<boolean>;
+  loadHistoryRange: (startDate: Date, endDate: Date) => Promise<boolean>;
   uploadLocalBackupToSupabase: (clearExisting?: boolean) => Promise<boolean>;
   getPendingProductSyncPreview: () => Promise<PendingProductSyncPreview>;
   listStoreUsers: () => Promise<StoreManagedUser[]>;
@@ -920,6 +953,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const [offlinePinHash, setOfflinePinHash] = useState<string | null>(null);
   const [offlineDefaultRole, setOfflineDefaultRoleState] = useState<'admin' | 'cashier'>('cashier');
   const [hasPendingSync, setHasPendingSync] = useState<boolean>(false);
+  const [syncDiagnostics, setSyncDiagnostics] = useState<SyncDiagnostics>(() =>
+    safeParse<SyncDiagnostics>(safeStorageGet(SYNC_DIAGNOSTICS_KEY), { status: 'idle' }));
   const [isBrowserOnline, setIsBrowserOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
@@ -949,16 +984,22 @@ export function POSProvider({ children }: { children: ReactNode }) {
     userRole: 'admin',
   });
 
-  const activeDraft = saleDrafts.find((draft) => draft.id === activeDraftId) ?? null;
+  const activeDraft = useMemo(
+    () => saleDrafts.find((draft) => draft.id === activeDraftId) ?? null,
+    [saleDrafts, activeDraftId],
+  );
   const cart = activeDraft?.items ?? [];
   const draftSyncTimers = useRef<Record<string, number>>({});
   const isHydratingRef = useRef(true);
+  const localPersistenceEnabledRef = useRef(true);
   const isSyncingFromSupabaseRef = useRef(false);
   const offlineSnapshotRef = useRef<string | null>(null);
+  const currentBackupRef = useRef<LocalBackupPayload | null>(null);
   const localStorageCacheRef = useRef<Record<string, string | null>>({});
   const isAutoSyncingRef = useRef(false);
   const autoSyncTimerRef = useRef<number | null>(null);
   const pendingSyncNoticeRef = useRef(false);
+  const loadedHistoryRangesRef = useRef(new Set<string>());
   const offlinePinConfigured = Boolean(offlinePinHash);
   const canReachSupabase = Boolean(session?.access_token && isBrowserOnline && !isOfflineMode);
   const isConnectedToSupabase = Boolean(canReachSupabase && currentStoreId);
@@ -1045,17 +1086,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     ));
   }, [currentUser?.role]);
 
-  const buildLocalBackupPayload = (): LocalBackupPayload => ({
-    products: safeStorageGet('pos_products'),
-    sales: safeStorageGet('pos_sales'),
-    customers: safeStorageGet('pos_customers'),
-    suppliers: safeStorageGet('pos_suppliers'),
-    kardex: safeStorageGet('pos_kardex'),
-    recharges: safeStorageGet('pos_recharges'),
-    cash_sessions: safeStorageGet('pos_cash_sessions'),
-    cash_movements: safeStorageGet('pos_cash_movements'),
-    config: safeStorageGet('pos_config'),
-  });
+  const buildLocalBackupPayload = (): LocalBackupPayload => buildStateBackupPayload();
 
   const buildStateBackupPayload = (): LocalBackupPayload => ({
     products: JSON.stringify(products),
@@ -1068,6 +1099,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     cash_movements: JSON.stringify(cashMovements),
     config: JSON.stringify(storeConfig),
   });
+  currentBackupRef.current = buildStateBackupPayload();
 
   const persistLocalStorageValue = (key: string, value: string | null) => {
     if (localStorageCacheRef.current[key] === value) return;
@@ -1086,6 +1118,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
     persistLocalStorageValue(key, JSON.stringify(value));
   };
 
+  const persistIndexedDbValue = (key: Parameters<typeof writeLocalState>[0], value: unknown) => {
+    if (isHydratingRef.current || !localPersistenceEnabledRef.current) return;
+    void writeLocalState(key, value).catch((error) => {
+      console.warn(`No se pudo guardar ${key} en IndexedDB; se conserva el respaldo anterior.`, error);
+    });
+  };
+
   const markPendingSync = () => {
     setHasPendingSync(true);
     safeStorageSet(OFFLINE_DIRTY_KEY, 'true');
@@ -1102,11 +1141,26 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const syncFromSupabase = async (
     nextSession: SupabaseSession,
     storeId: string,
-    options?: { preservePendingSync?: boolean },
+    options?: { preservePendingSync?: boolean; historyRange?: DataDateRange; fullHistory?: boolean },
   ): Promise<boolean> => {
     isSyncingFromSupabaseRef.current = true;
+    const startedAt = performance.now();
+    const attemptAt = new Date().toISOString();
+    const failedSections: string[] = [];
+    let finalStatus: SyncDiagnostics['status'] = 'error';
+    let finalMessage = 'La sincronización no pudo completarse.';
+    setSyncDiagnostics((previous) => ({
+      ...previous,
+      status: 'syncing',
+      lastAttemptAt: attemptAt,
+      message: 'Sincronización en curso.',
+    }));
     try {
-      const failedSections: string[] = [];
+      const defaultHistoryFrom = new Date();
+      defaultHistoryFrom.setDate(defaultHistoryFrom.getDate() - INITIAL_HISTORY_DAYS);
+      const historyRange = options?.fullHistory
+        ? undefined
+        : options?.historyRange ?? { from: defaultHistoryFrom, to: new Date() };
       const withFallback = async <T,>(
         section: string,
         loader: Promise<T>,
@@ -1123,6 +1177,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
       const draftRowsPromise = loadSaleDraftsWithItems(nextSession.access_token, storeId, nextSession.user.id)
         .catch((error) => {
+          failedSections.push('borradores');
           console.error('No se pudieron cargar borradores en Supabase', error);
           if (isMissingTableError(error, 'sale_drafts') || isMissingTableError(error, 'sale_draft_items')) {
             toast.error('Faltan tablas de borradores en Supabase. Aplica la migración de ventas múltiples.');
@@ -1161,18 +1216,18 @@ export function POSProvider({ children }: { children: ReactNode }) {
         ),
         withFallback(
           'ventas',
-          loadSalesWithItems(nextSession.access_token, storeId),
+          loadSalesWithItems(nextSession.access_token, storeId, historyRange),
           [],
         ),
         draftRowsPromise,
         withFallback(
           'kardex',
-          loadKardexMovements(nextSession.access_token, storeId),
+          loadKardexMovements(nextSession.access_token, storeId, historyRange),
           [],
         ),
         withFallback(
           'recargas',
-          loadRecharges(nextSession.access_token, storeId),
+          loadRecharges(nextSession.access_token, storeId, historyRange),
           [],
         ),
         withFallback(
@@ -1227,7 +1282,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         saleSessionByMovement.set(saleId, row.cash_session_id);
       });
 
-      const sales = salesRows.map((sale) => {
+      const loadedSales = salesRows.map((sale) => {
         const items: CartItem[] = (sale.sale_items ?? []).map((item) => {
           const productId = item.product_id ?? '';
           const existingProduct = productById.get(productId);
@@ -1278,7 +1333,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
       });
 
       if (!failedSet.has('ventas')) {
-        setSales(sales);
+        setSales((previous) => mergeById(previous, loadedSales)
+          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
       }
 
       const drafts: SaleDraft[] = draftRows.map((draft) => {
@@ -1332,7 +1388,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       });
 
       const salesByCustomerId = new Map<string, Sale[]>();
-      sales.forEach((sale) => {
+      loadedSales.forEach((sale) => {
         if (sale.returnedAt) return;
         if (!sale.customerId) return;
         const current = salesByCustomerId.get(sale.customerId) ?? [];
@@ -1361,7 +1417,16 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }));
 
       if (!failedSet.has('clientes') && !failedSet.has('ventas')) {
-        setCustomers(customers);
+        setCustomers((previous) => customers.map((customer) => {
+          const previousCustomer = previous.find((item) => item.id === customer.id);
+          return previousCustomer
+            ? {
+              ...customer,
+              purchases: mergeById(previousCustomer.purchases, customer.purchases)
+                .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
+            }
+            : customer;
+        }));
       }
 
       const suppliers: Supplier[] = supplierRows.map((row) => {
@@ -1397,7 +1462,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
 
       if (!failedSet.has('kardex')) {
-        setKardexMovements(kardexRows.map((row) => ({
+        const loadedKardex = kardexRows.map((row) => ({
           id: row.id,
           date: row.created_at,
           productId: row.product_id ?? '',
@@ -1410,11 +1475,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
           unitCost: toNumber(row.unit_cost),
           unitSalePrice: row.unit_sale_price == null ? undefined : toNumber(row.unit_sale_price),
           totalCost: toNumber(row.total_cost),
-        })));
+        }));
+        setKardexMovements((previous) => mergeById(previous, loadedKardex)
+          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
       }
 
       if (!failedSet.has('recargas')) {
-        setRecharges(rechargeRows.map((row) => ({
+        const loadedRecharges = rechargeRows.map((row) => ({
           id: row.id,
           date: row.created_at,
           type: row.type,
@@ -1423,7 +1490,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
           amount: toNumber(row.amount),
           commission: toNumber(row.commission),
           total: toNumber(row.total),
-        })));
+        }));
+        setRecharges((previous) => mergeById(previous, loadedRecharges)
+          .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
       }
 
       if (!failedSet.has('sesiones de caja')) {
@@ -1493,12 +1562,26 @@ export function POSProvider({ children }: { children: ReactNode }) {
         clearPendingSync();
       }
 
+      finalStatus = failedSet.size === 0 ? 'success' : 'partial';
+      finalMessage = failedSet.size === 0
+        ? 'Todas las secciones solicitadas se sincronizaron correctamente.'
+        : `No se actualizaron: ${Array.from(failedSet).join(', ')}.`;
       return failedSet.size === 0;
     } catch (error) {
       console.error('No se pudieron cargar datos desde Supabase', error);
+      finalMessage = error instanceof Error ? error.message : 'Error desconocido de sincronización.';
       return false;
     } finally {
       isSyncingFromSupabaseRef.current = false;
+      const completedAt = new Date().toISOString();
+      setSyncDiagnostics((previous) => ({
+        ...previous,
+        status: finalStatus,
+        lastAttemptAt: attemptAt,
+        lastSuccessAt: finalStatus === 'success' ? completedAt : previous.lastSuccessAt,
+        durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        message: finalMessage,
+      }));
     }
   };
 
@@ -1514,8 +1597,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   }, [saleDrafts.length, activeDraftId, isAuthenticated]);
 
-  // Cargar datos del localStorage
+  // Carga IndexedDB; en la primera ejecución copia localStorage sin borrarlo.
   useEffect(() => {
+    let active = true;
+    const hydrateLocalState = async () => {
+    const localState = await loadLocalState(safeStorageGet);
+    if (!active) return;
     const storedPin = safeStorageGet(OFFLINE_PIN_KEY);
     if (storedPin) {
       setOfflinePinHash(storedPin);
@@ -1531,20 +1618,20 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const offlineAuthRaw = safeStorageGet(OFFLINE_AUTH_KEY);
     const offlineAuth = safeParse<{ username?: string; role: 'admin' | 'cashier' } | null>(offlineAuthRaw, null);
 
-    const loadedProducts = safeStorageGet('pos_products');
-    const loadedCategories = safeStorageGet('pos_categories');
-    const loadedSales = safeStorageGet('pos_sales');
-    const loadedKardex = safeStorageGet('pos_kardex');
-    const loadedCustomers = safeStorageGet('pos_customers');
-    const loadedSuppliers = safeStorageGet('pos_suppliers');
-    const loadedRecharges = safeStorageGet('pos_recharges');
-    const loadedCashSessions = safeStorageGet('pos_cash_sessions');
-    const loadedCashMovements = safeStorageGet('pos_cash_movements');
-    const loadedConfig = safeStorageGet('pos_config');
-    const loadedDrafts = safeStorageGet(OFFLINE_DRAFTS_KEY);
+    const loadedProducts = localState.pos_products;
+    const loadedCategories = localState.pos_categories;
+    const loadedSales = localState.pos_sales;
+    const loadedKardex = localState.pos_kardex;
+    const loadedCustomers = localState.pos_customers;
+    const loadedSuppliers = localState.pos_suppliers;
+    const loadedRecharges = localState.pos_recharges;
+    const loadedCashSessions = localState.pos_cash_sessions;
+    const loadedCashMovements = localState.pos_cash_movements;
+    const loadedConfig = localState.pos_config;
+    const loadedDrafts = localState[OFFLINE_DRAFTS_KEY];
     const loadedActiveDraftId = safeStorageGet(OFFLINE_ACTIVE_DRAFT_KEY);
 
-    const productData: Product[] = safeParse<Product[] | null>(loadedProducts, null) ?? initialProducts;
+    const productData: Product[] = readCachedValue<Product[] | null>(loadedProducts, null) ?? initialProducts;
     const distribunzelKeySet = new Set(
       distribunzelSeedProducts.map(
         product => `${product.name.trim().toLowerCase()}|${product.category.trim().toLowerCase()}`
@@ -1577,17 +1664,17 @@ export function POSProvider({ children }: { children: ReactNode }) {
     setProducts(mergedProducts);
 
     if (loadedCategories) {
-      const parsedCats = safeParse<string[]>(loadedCategories, []);
+      const parsedCats = readCachedValue<string[]>(loadedCategories, []);
       setCategories(parsedCats.length > 0 ? parsedCats : Array.from(new Set(mergedProducts.map(product => product.category))));
     } else {
       setCategories(Array.from(new Set(mergedProducts.map(product => product.category))));
     }
     
-    if (loadedSales) setSales(safeParse<Sale[]>(loadedSales, []));
-    if (loadedKardex) setKardexMovements(safeParse<KardexMovement[]>(loadedKardex, []));
-    if (loadedCustomers) setCustomers(safeParse<Customer[]>(loadedCustomers, []));
+    if (loadedSales) setSales(readCachedValue<Sale[]>(loadedSales, []));
+    if (loadedKardex) setKardexMovements(readCachedValue<KardexMovement[]>(loadedKardex, []));
+    if (loadedCustomers) setCustomers(readCachedValue<Customer[]>(loadedCustomers, []));
     if (loadedSuppliers) {
-      const parsedSuppliers: Supplier[] = safeParse<Supplier[]>(loadedSuppliers, []);
+      const parsedSuppliers: Supplier[] = readCachedValue<Supplier[]>(loadedSuppliers, []);
       const normalizedSuppliers = parsedSuppliers.map((supplier) => {
         const normalizedAccounts = (
           supplier.bankAccounts && supplier.bankAccounts.length > 0
@@ -1620,17 +1707,17 @@ export function POSProvider({ children }: { children: ReactNode }) {
     } else {
       setSuppliers(initialSuppliers);
     }
-    if (loadedRecharges) setRecharges(safeParse<RechargeTransaction[]>(loadedRecharges, []));
+    if (loadedRecharges) setRecharges(readCachedValue<RechargeTransaction[]>(loadedRecharges, []));
     if (loadedCashSessions) {
-      const parsedCashSessions = safeParse<CashSession[]>(loadedCashSessions, []);
+      const parsedCashSessions = readCachedValue<CashSession[]>(loadedCashSessions, []);
       setCashSessions(parsedCashSessions.map((sessionItem) => ({
         ...sessionItem,
         countedCashBreakdown: sanitizeCashCountBreakdown(sessionItem.countedCashBreakdown),
       })));
     }
-    if (loadedCashMovements) setCashMovements(safeParse<CashMovement[]>(loadedCashMovements, []));
+    if (loadedCashMovements) setCashMovements(readCachedValue<CashMovement[]>(loadedCashMovements, []));
     if (loadedConfig) {
-      const parsedConfig = safeParse<Partial<StoreConfig>>(loadedConfig, {});
+      const parsedConfig = readCachedValue<Partial<StoreConfig>>(loadedConfig, {});
       setStoreConfig(prev => ({
         ...prev,
         ...parsedConfig,
@@ -1639,7 +1726,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
     if (loadedDrafts) {
       try {
-        const parsedDrafts = safeParse<SaleDraft[]>(loadedDrafts, []);
+        const parsedDrafts = readCachedValue<SaleDraft[]>(loadedDrafts, []);
         setSaleDrafts(parsedDrafts);
         if (loadedActiveDraftId) {
           setActiveDraftId(loadedActiveDraftId);
@@ -1700,61 +1787,65 @@ export function POSProvider({ children }: { children: ReactNode }) {
         toast.error('No se pudo restaurar la sesión con Supabase');
       })
       .finally(() => {
+        if (!active) return;
         setIsAuthReady(true);
         isHydratingRef.current = false;
       });
+    };
+    void hydrateLocalState();
+    return () => { active = false; };
   }, []);
 
   // Guardar productos
   useEffect(() => {
     if (products.length > 0) {
-      persistLocalStorageJson('pos_products', products);
+      persistIndexedDbValue('pos_products', products);
     }
   }, [products]);
 
   // Guardar categorías
   useEffect(() => {
-    persistLocalStorageJson('pos_categories', categories);
+    persistIndexedDbValue('pos_categories', categories);
   }, [categories]);
 
   // Guardar ventas
   useEffect(() => {
-    persistLocalStorageJson('pos_sales', sales);
+    persistIndexedDbValue('pos_sales', sales);
   }, [sales]);
 
   // Guardar kardex
   useEffect(() => {
-    persistLocalStorageJson('pos_kardex', kardexMovements);
+    persistIndexedDbValue('pos_kardex', kardexMovements);
   }, [kardexMovements]);
 
   // Guardar clientes
   useEffect(() => {
-    persistLocalStorageJson('pos_customers', customers);
+    persistIndexedDbValue('pos_customers', customers);
   }, [customers]);
 
   // Guardar proveedores
   useEffect(() => {
-    persistLocalStorageJson('pos_suppliers', suppliers);
+    persistIndexedDbValue('pos_suppliers', suppliers);
   }, [suppliers]);
 
   // Guardar recargas
   useEffect(() => {
-    persistLocalStorageJson('pos_recharges', recharges);
+    persistIndexedDbValue('pos_recharges', recharges);
   }, [recharges]);
 
   // Guardar sesiones de caja
   useEffect(() => {
-    persistLocalStorageJson('pos_cash_sessions', cashSessions);
+    persistIndexedDbValue('pos_cash_sessions', cashSessions);
   }, [cashSessions]);
 
   // Guardar movimientos de caja
   useEffect(() => {
-    persistLocalStorageJson('pos_cash_movements', cashMovements);
+    persistIndexedDbValue('pos_cash_movements', cashMovements);
   }, [cashMovements]);
 
   // Guardar configuración
   useEffect(() => {
-    persistLocalStorageJson('pos_config', storeConfig);
+    persistIndexedDbValue('pos_config', storeConfig);
   }, [storeConfig]);
 
   // Guardar autenticación
@@ -1763,9 +1854,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
     persistLocalStorageJson('pos_auth', { isAuthenticated, currentUser });
   }, [isAuthenticated, currentUser, isAuthReady]);
 
+  useEffect(() => {
+    persistLocalStorageJson(SYNC_DIAGNOSTICS_KEY, syncDiagnostics);
+  }, [syncDiagnostics]);
+
   // Guardar borradores locales para modo offline.
   useEffect(() => {
-    persistLocalStorageJson(OFFLINE_DRAFTS_KEY, saleDrafts);
+    persistIndexedDbValue(OFFLINE_DRAFTS_KEY, saleDrafts);
     if (activeDraftId) {
       persistLocalStorageValue(OFFLINE_ACTIVE_DRAFT_KEY, activeDraftId);
     } else {
@@ -1822,6 +1917,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   // Funciones de autenticación
   const login = async (username: string, password: string): Promise<boolean> => {
     try {
+      localPersistenceEnabledRef.current = true;
       const nextSession = await signInWithPassword(username, password);
       storeSession(nextSession);
       setSession(nextSession);
@@ -1866,6 +1962,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     role: 'admin' | 'cashier',
     username?: string,
   ): Promise<boolean> => {
+    localPersistenceEnabledRef.current = true;
     const trimmed = pin.trim();
     if (!/^\d{4}$/.test(trimmed)) {
       toast.error('El PIN debe tener 4 dígitos.');
@@ -1914,6 +2011,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    localPersistenceEnabledRef.current = false;
     if (session?.access_token) {
       void signOut(session.access_token).catch(() => undefined);
     }
@@ -1929,6 +2027,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
     clearPendingSync();
     offlineSnapshotRef.current = null;
     localStorageCacheRef.current = {};
+    void clearLocalState().catch((error) => {
+      console.warn('No se pudo limpiar la caché IndexedDB al cerrar sesión.', error);
+    });
     // Limpia claves locales que pueden quedar corruptas y provocar fallos al recargar.
     [
       'pos_products', 'pos_categories', 'pos_sales', 'pos_kardex', 'pos_customers',
@@ -1996,8 +2097,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
       toast.info('No hay conexión o tienda conectada para sincronizar.');
       return false;
     }
+    if (hasPendingSync) {
+      toast.error('Sincronización de descarga bloqueada: existen cambios offline pendientes.');
+      return false;
+    }
 
-    const ok = await syncFromSupabase(session, currentStoreId);
+    const ok = await syncFromSupabase(session, currentStoreId, { fullHistory: true });
     if (!ok) {
       toast.error('No se pudo sincronizar con Supabase.');
       return false;
@@ -2007,7 +2112,109 @@ export function POSProvider({ children }: { children: ReactNode }) {
     return true;
   };
 
+  const createCompleteBackup = async (): Promise<CompleteBackupPayload | null> => {
+    if (!canReachSupabase || !session || !currentStoreId) {
+      toast.error('Se necesita conexión con Supabase para crear una copia completa.');
+      return null;
+    }
+    if (hasPendingSync) {
+      toast.error('Primero resuelve los cambios offline pendientes antes de generar una copia completa de nube.');
+      return null;
+    }
+
+    const ok = await syncFromSupabase(session, currentStoreId, {
+      fullHistory: true,
+      preservePendingSync: hasPendingSync,
+    });
+    if (!ok) {
+      toast.error('La copia fue cancelada porque no se pudo descargar una o más secciones.');
+      return null;
+    }
+
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => resolve());
+    }));
+    const payload = currentBackupRef.current;
+    if (!payload || !isLocalBackupPayload(payload)) {
+      toast.error('La copia fue cancelada porque la validación local no fue satisfactoria.');
+      return null;
+    }
+    const validation = validateBackupPayload(payload);
+    if (!validation.valid) {
+      toast.error(`La copia fue cancelada: ${validation.errors[0]}`);
+      return null;
+    }
+    const completedAt = new Date().toISOString();
+    setSyncDiagnostics((previous) => ({
+      ...previous,
+      lastBackupAt: completedAt,
+      lastBackupCounts: validation.counts,
+    }));
+    return {
+      ...payload,
+      backup_meta: {
+        formatVersion: 2,
+        source: 'supabase-full-plus-local-merge',
+        createdAt: completedAt,
+        storeId: currentStoreId,
+        counts: validation.counts,
+      },
+    };
+  };
+
+  const rebuildLocalCache = async (): Promise<boolean> => {
+    const payload = await createCompleteBackup();
+    if (!payload) return false;
+    const validation = validateBackupPayload(payload);
+    if (!validation.valid) return false;
+
+    try {
+      await Promise.all([
+        writeLocalState('pos_products', safeParse<unknown[]>(payload.products, [])),
+        writeLocalState('pos_categories', categories),
+        writeLocalState('pos_sales', safeParse<unknown[]>(payload.sales, [])),
+        writeLocalState('pos_kardex', safeParse<unknown[]>(payload.kardex, [])),
+        writeLocalState('pos_customers', safeParse<unknown[]>(payload.customers, [])),
+        writeLocalState('pos_suppliers', safeParse<unknown[]>(payload.suppliers, [])),
+        writeLocalState('pos_recharges', safeParse<unknown[]>(payload.recharges, [])),
+        writeLocalState('pos_cash_sessions', safeParse<unknown[]>(payload.cash_sessions, [])),
+        writeLocalState('pos_cash_movements', safeParse<unknown[]>(payload.cash_movements, [])),
+        writeLocalState('pos_config', safeParse<Record<string, unknown>>(payload.config, {})),
+      ]);
+      setSyncDiagnostics((previous) => ({
+        ...previous,
+        message: 'Caché local reconstruida por fusión desde una descarga completa validada.',
+      }));
+      toast.success('Caché local reconstruida sin eliminar datos de Supabase.');
+      return true;
+    } catch (error) {
+      console.error('No se pudo reconstruir la caché local', error);
+      toast.error('No se pudo reconstruir la caché. La copia anterior se conservó.');
+      return false;
+    }
+  };
+
+  const loadHistoryRange = async (startDate: Date, endDate: Date): Promise<boolean> => {
+    if (!canReachSupabase || !session || !currentStoreId) return false;
+    const fromTime = startDate.getTime();
+    const toTime = endDate.getTime();
+    if (!Number.isFinite(fromTime) || !Number.isFinite(toTime)) return false;
+
+    const from = new Date(Math.min(fromTime, toTime));
+    const to = new Date(Math.max(fromTime, toTime));
+    const rangeKey = `${currentStoreId}:${from.toISOString()}:${to.toISOString()}`;
+    if (loadedHistoryRangesRef.current.has(rangeKey)) return true;
+
+    const ok = await syncFromSupabase(session, currentStoreId, { historyRange: { from, to } });
+    if (ok) loadedHistoryRangesRef.current.add(rangeKey);
+    return ok;
+  };
+
   const uploadLocalBackupToSupabase = async (clearExisting = false): Promise<boolean> => {
+    if (clearExisting) {
+      toast.error('Reemplazo destructivo bloqueado para proteger la información de Supabase.');
+      return false;
+    }
     if (!requirePermission('sync:destructive', 'Solo un administrador puede enviar datos locales a la nube.')) {
       return false;
     }
@@ -2080,7 +2287,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     };
 
     const offlineBackupRaw = safeStorageGet(OFFLINE_BACKUP_KEY);
-    let localProductsRaw = safeStorageGet('pos_products');
+    let localProductsRaw: string | null = JSON.stringify(products);
 
     if (offlineBackupRaw) {
       try {
@@ -2933,11 +3140,15 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const currentCashSession = [...cashSessions]
-    .filter((session) => session.status === 'open' || session.status === 'counting')
-    .sort((a, b) => new Date(b.openedAt).getTime() - new Date(a.openedAt).getTime())[0] ?? null;
+  const currentCashSession = useMemo(() => cashSessions.reduce<CashSession | null>((latest, sessionItem) => {
+    if (sessionItem.status !== 'open' && sessionItem.status !== 'counting') return latest;
+    if (!latest) return sessionItem;
+    return new Date(sessionItem.openedAt).getTime() > new Date(latest.openedAt).getTime()
+      ? sessionItem
+      : latest;
+  }, null), [cashSessions]);
 
-  const cartTotal = cart.reduce((total, item) => {
+  const cartTotal = useMemo(() => cart.reduce((total, item) => {
     const { lineTotal } = computeLineMoney(
       item.product.salePrice,
       item.quantity,
@@ -2945,10 +3156,47 @@ export function POSProvider({ children }: { children: ReactNode }) {
       item.product.iva,
     );
     return roundMoney(total + lineTotal);
-  }, 0);
+  }, 0), [cart]);
 
-  const getCashSessionReport = (sessionId: string): CashSessionReport => {
-    const session = cashSessions.find(s => s.id === sessionId);
+  const cashReportIndex = useMemo(() => {
+    const sessionsById = new Map(cashSessions.map((sessionItem) => [sessionItem.id, sessionItem]));
+    const movementsBySession = new Map<string, CashMovement[]>();
+    const saleSessionByMovement = new Map<string, string>();
+
+    cashMovements.forEach((movement) => {
+      const sessionMovements = movementsBySession.get(movement.cashSessionId) ?? [];
+      sessionMovements.push(movement);
+      movementsBySession.set(movement.cashSessionId, sessionMovements);
+
+      if (movement.referenceType !== 'sale' || !movement.cashSessionId) return;
+      const byReference = movement.referenceId?.trim();
+      const byMetadata = movement.metadata && typeof movement.metadata.saleId === 'string'
+        ? movement.metadata.saleId.trim()
+        : '';
+      const saleId = byReference || byMetadata;
+      if (saleId && !saleSessionByMovement.has(saleId)) {
+        saleSessionByMovement.set(saleId, movement.cashSessionId);
+      }
+    });
+
+    const salesBySession = new Map<string, Sale[]>();
+    sales.forEach((sale) => {
+      const sessionId = sale.cashSessionId ?? saleSessionByMovement.get(sale.id);
+      if (!sessionId) return;
+      const sessionSales = salesBySession.get(sessionId) ?? [];
+      sessionSales.push(sale);
+      salesBySession.set(sessionId, sessionSales);
+    });
+
+    return { sessionsById, movementsBySession, salesBySession };
+  }, [cashSessions, cashMovements, sales]);
+
+  const cashReportCache = useMemo(() => new Map<string, CashSessionReport>(), [cashReportIndex]);
+
+  const getCashSessionReport = useCallback((sessionId: string): CashSessionReport => {
+    const cached = cashReportCache.get(sessionId);
+    if (cached) return cached;
+    const session = cashReportIndex.sessionsById.get(sessionId);
     if (!session) {
       return {
         salesTotal: 0,
@@ -2962,26 +3210,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       };
     }
 
-    const saleSessionByMovement = new Map<string, string>();
-    cashMovements.forEach((movement) => {
-      if (movement.referenceType !== 'sale') return;
-      if (!movement.cashSessionId) return;
-
-      const byReference = movement.referenceId?.trim();
-      const byMetadata = movement.metadata
-        && typeof movement.metadata.saleId === 'string'
-        ? movement.metadata.saleId.trim()
-        : '';
-      const saleId = byReference || byMetadata;
-
-      if (!saleId || saleSessionByMovement.has(saleId)) return;
-      saleSessionByMovement.set(saleId, movement.cashSessionId);
-    });
-
-    const sessionSales = sales.filter((sale) => {
-      const linkedSessionId = sale.cashSessionId ?? saleSessionByMovement.get(sale.id);
-      return linkedSessionId === sessionId;
-    });
+    const sessionSales = cashReportIndex.salesBySession.get(sessionId) ?? [];
     const returnedSales = sessionSales.filter((sale) => Boolean(sale.returnedAt));
     const netSales = sessionSales.filter((sale) => !sale.returnedAt);
     const salesByMethod: Record<string, number> = {};
@@ -3012,7 +3241,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       cashSalesTotal = roundMoney(cashSalesTotal + toNumber(breakdown.efectivo));
     });
 
-    const sessionMovements = cashMovements.filter(movement => movement.cashSessionId === sessionId);
+    const sessionMovements = cashReportIndex.movementsBySession.get(sessionId) ?? [];
     const isLegacyReturnMovement = (movement: CashMovement) =>
       movement.type === 'cash_out' && movement.reason?.startsWith('Devolución venta ');
     const resolveCategory = (movement: CashMovement): CashMovementCategory => {
@@ -3051,7 +3280,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
     const expectedCash = roundMoney(session.openingCash + cashSalesTotal + cashInTotal - cashOutTotal - cashReturnTotal);
 
-    return {
+    const report: CashSessionReport = {
       salesTotal: roundMoney(salesTotal),
       salesReturnedTotal: roundMoney(salesReturnedTotal),
       salesByMethod: roundedSalesByMethod,
@@ -3061,7 +3290,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
       cashReturnTotal: roundMoney(cashReturnTotal),
       expectedCash,
     };
-  };
+    cashReportCache.set(sessionId, report);
+    return report;
+  }, [cashReportCache, cashReportIndex]);
 
   // Funciones de caja
   const openCashSession = async (openingCash: number, openingNote?: string): Promise<boolean> => {
@@ -4119,23 +4350,23 @@ export function POSProvider({ children }: { children: ReactNode }) {
     return true;
   };
 
-  const getSalesToday = (): Sale[] => {
+  const getSalesToday = useCallback((): Sale[] => {
     const today = new Date().toDateString();
     return sales.filter(sale => new Date(sale.date).toDateString() === today);
-  };
+  }, [sales]);
 
-  const getSalesInRange = (startDate: Date, endDate: Date): Sale[] => {
+  const getSalesInRange = useCallback((startDate: Date, endDate: Date): Sale[] => {
     return sales.filter(sale => {
       const saleDate = new Date(sale.date);
       return saleDate >= startDate && saleDate <= endDate;
     });
-  };
+  }, [sales]);
 
-  const getKardexByProduct = (productId: string): KardexMovement[] => {
+  const getKardexByProduct = useCallback((productId: string): KardexMovement[] => {
     return kardexMovements
       .filter(movement => movement.productId === productId)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  };
+  }, [kardexMovements]);
 
   // Funciones de clientes
   const addCustomer = async (customer: Omit<Customer, 'id' | 'points' | 'debt' | 'purchases' | 'debtHistory'>): Promise<ProductWriteStatus> => {
@@ -4843,6 +5074,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       offlinePinConfigured,
       offlineDefaultRole,
       hasPendingSync,
+      syncDiagnostics,
       currentUser,
       hasPermission: hasRolePermission,
       login,
@@ -4853,6 +5085,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
       setOfflineDefaultRole,
       createStore,
       syncWithSupabase,
+      createCompleteBackup,
+      rebuildLocalCache,
+      loadHistoryRange,
       uploadLocalBackupToSupabase,
       getPendingProductSyncPreview,
       listStoreUsers,

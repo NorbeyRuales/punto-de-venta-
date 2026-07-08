@@ -249,6 +249,17 @@ type StoreRow = {
   currency: string | null;
 };
 
+export type DataDateRange = {
+  from: Date;
+  to: Date;
+};
+
+const dateRangeFilter = (column: string, range?: DataDateRange): string => {
+  if (!range) return '';
+  return `&${column}=gte.${encodeURIComponent(range.from.toISOString())}`
+    + `&${column}=lte.${encodeURIComponent(range.to.toISOString())}`;
+};
+
 // Valida UUIDs antes de hacer operaciones sensibles.
 const uuidLike = (value?: string | null): boolean =>
   !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -1308,11 +1319,11 @@ export async function loadSuppliersWithPurchases(token: string, storeId: string)
   );
 }
 
-export async function loadSalesWithItems(token: string, storeId: string): Promise<SaleRow[]> {
+export async function loadSalesWithItems(token: string, storeId: string, range?: DataDateRange): Promise<SaleRow[]> {
   const salesBaseQuery =
     'select=id,created_at,returned_at,subtotal,discount,iva,total,payment_method,cash_received,change_value,payment_breakdown,credited_amount,customer_id,invoice_number,cash_session_id';
   const salesWithItemsQuery = `${salesBaseQuery},sale_items(id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at)`
-    + `&store_id=eq.${storeId}&order=created_at.asc`;
+    + `&store_id=eq.${storeId}${dateRangeFilter('created_at', range)}&order=created_at.asc`;
 
   try {
     return await selectAllRows<SaleRow>(
@@ -1326,13 +1337,13 @@ export async function loadSalesWithItems(token: string, storeId: string): Promis
     const [salesRows, saleItemRows] = await Promise.all([
       selectAllRows<SaleSummaryRow>(
         'sales',
-        `${salesBaseQuery}&store_id=eq.${storeId}&order=created_at.asc`,
+        `${salesBaseQuery}&store_id=eq.${storeId}${dateRangeFilter('created_at', range)}&order=created_at.asc`,
         token,
       ),
       selectAllRows<SaleItemWithSaleIdRow>(
         'sale_items',
         'select=id,sale_id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at'
-          + `&store_id=eq.${storeId}&order=created_at.asc`,
+          + `&store_id=eq.${storeId}${dateRangeFilter('created_at', range)}&order=created_at.asc`,
         token,
       ),
     ]);
@@ -1354,20 +1365,20 @@ export async function loadSalesWithItems(token: string, storeId: string): Promis
   }
 }
 
-export async function loadKardexMovements(token: string, storeId: string): Promise<KardexRow[]> {
+export async function loadKardexMovements(token: string, storeId: string, range?: DataDateRange): Promise<KardexRow[]> {
   return selectAllRows<KardexRow>(
     'kardex_movements',
     'select=id,product_id,product_name,type,reference,quantity,stock_before,stock_after,unit_cost,unit_sale_price,total_cost,created_at'
-      + `&store_id=eq.${storeId}&order=created_at.asc`,
+      + `&store_id=eq.${storeId}${dateRangeFilter('created_at', range)}&order=created_at.asc`,
     token,
   );
 }
 
-export async function loadRecharges(token: string, storeId: string): Promise<RechargeRow[]> {
+export async function loadRecharges(token: string, storeId: string, range?: DataDateRange): Promise<RechargeRow[]> {
   return selectAllRows<RechargeRow>(
     'recharges',
     'select=id,type,provider,phone_number,amount,commission,total,created_at'
-      + `&store_id=eq.${storeId}&order=created_at.asc`,
+      + `&store_id=eq.${storeId}${dateRangeFilter('created_at', range)}&order=created_at.asc`,
     token,
   );
 }

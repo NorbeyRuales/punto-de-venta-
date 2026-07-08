@@ -24,6 +24,9 @@ import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 
+const normalizeText = (value: string) =>
+  value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
 export function POS() {
   const navigate = useNavigate();
   const {
@@ -55,6 +58,7 @@ export function POS() {
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [supplierFilter, setSupplierFilter] = useState('all');
+  const [visibleProductCount, setVisibleProductCount] = useState(50);
   const [showPaymentDialog, setShowPaymentDialog] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethodOption>('efectivo');
   const [cashReceived, setCashReceived] = useState('');
@@ -160,13 +164,6 @@ export function POS() {
       .join(' | ');
   };
 
-  const normalizeText = (value: string) =>
-    value
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .toLowerCase()
-      .trim();
-
   // Mantiene filtros válidos cuando cambia catálogo.
   useEffect(() => {
     if (categoryFilter !== 'all' && !categories.includes(categoryFilter)) {
@@ -211,20 +208,60 @@ export function POS() {
   };
 
   // Resultados de búsqueda por nombre/SKU/código de barras.
-  const normalizedQuery = normalizeText(searchQuery);
-  const filteredProducts = products.filter(p => {
-    const matchesSearch = normalizedQuery === ''
-      || normalizeText(p.name).includes(normalizedQuery)
-      || normalizeText(p.sku || '').includes(normalizedQuery)
-      || normalizeText(p.category || '').includes(normalizedQuery)
-      || normalizeText(p.supplierName || '').includes(normalizedQuery)
-      || (p.barcode || '').includes(searchQuery.trim());
-    const matchesCategory = categoryFilter === 'all' || p.category === categoryFilter;
-    const matchesSupplier = supplierFilter === 'all' || (p.supplierName || '') === supplierFilter;
-    return matchesSearch && matchesCategory && matchesSupplier;
-  });
+  const productIndexes = useMemo(() => {
+    const byId = new Map(products.map((product) => [product.id, product]));
+    const exactBarcode = new Map<string, typeof products>();
+    const exactSku = new Map<string, typeof products>();
+    const exactName = new Map<string, typeof products>();
+    const addExact = (index: Map<string, typeof products>, key: string, product: typeof products[number]) => {
+      if (!key) return;
+      index.set(key, [...(index.get(key) ?? []), product]);
+    };
+    const search = products.map((product) => {
+      const barcode = (product.barcode || '').trim();
+      const sku = normalizeText(product.sku || '');
+      const name = normalizeText(product.name);
+      addExact(exactBarcode, barcode, product);
+      addExact(exactSku, sku, product);
+      addExact(exactName, name, product);
+      return {
+        product,
+        searchableText: normalizeText([
+          product.name,
+          product.sku || '',
+          product.category || '',
+          product.supplierName || '',
+        ].join(' ')),
+        barcode,
+      };
+    });
+    return { search, byId, exactBarcode, exactSku, exactName };
+  }, [products]);
+
+  const filteredProducts = useMemo(() => {
+    const normalizedQuery = normalizeText(searchQuery);
+    const barcodeQuery = searchQuery.trim();
+    return productIndexes.search
+      .filter(({ product, searchableText, barcode }) => {
+        const matchesSearch = normalizedQuery === ''
+          || searchableText.includes(normalizedQuery)
+          || barcode.includes(barcodeQuery);
+        const matchesCategory = categoryFilter === 'all' || product.category === categoryFilter;
+        const matchesSupplier = supplierFilter === 'all' || (product.supplierName || '') === supplierFilter;
+        return matchesSearch && matchesCategory && matchesSupplier;
+      })
+      .map(({ product }) => product);
+  }, [productIndexes, searchQuery, categoryFilter, supplierFilter]);
+  const visibleFilteredProducts = useMemo(
+    () => filteredProducts.slice(0, visibleProductCount),
+    [filteredProducts, visibleProductCount],
+  );
   const hasActiveSearchOrFilters =
     searchQuery.trim() !== '' || categoryFilter !== 'all' || supplierFilter !== 'all';
+
+  useEffect(() => {
+    setVisibleProductCount(50);
+  }, [searchQuery, categoryFilter, supplierFilter]);
 
   const quickCategories = useMemo(() => {
     const fallbackCategories = categories.length > 0
@@ -271,7 +308,7 @@ export function POS() {
 
   // Agrega un producto al carrito validando stock.
   const handleAddToCart = (productId: string, preserveSearch = false) => {
-    const product = products.find(p => p.id === productId);
+    const product = productIndexes.byId.get(productId);
     if (product) {
       if (product.stock <= 0) {
         toast.error('Producto sin stock');
@@ -296,7 +333,7 @@ export function POS() {
 
     const queryNormalized = normalizeText(query);
 
-    const barcodeMatches = products.filter((product) => (product.barcode || '').trim() === query);
+    const barcodeMatches = productIndexes.exactBarcode.get(query) ?? [];
     if (barcodeMatches.length === 1) {
       const added = handleAddToCart(barcodeMatches[0].id);
       if (!added) {
@@ -310,7 +347,7 @@ export function POS() {
       return;
     }
 
-    const skuMatches = products.filter((product) => normalizeText(product.sku || '') === queryNormalized);
+    const skuMatches = productIndexes.exactSku.get(queryNormalized) ?? [];
     if (skuMatches.length === 1) {
       const added = handleAddToCart(skuMatches[0].id);
       if (!added) {
@@ -324,7 +361,7 @@ export function POS() {
       return;
     }
 
-    const nameMatches = products.filter((product) => normalizeText(product.name) === queryNormalized);
+    const nameMatches = productIndexes.exactName.get(queryNormalized) ?? [];
     if (nameMatches.length === 1) {
       const added = handleAddToCart(nameMatches[0].id);
       if (!added) {
@@ -433,14 +470,14 @@ export function POS() {
   };
 
   // Totales de la venta.
-  const roundedSubtotal = cart.reduce((sum, item) => {
-    const { lineSubtotal } = computeLineMoney(item.product.salePrice, item.quantity, item.discount);
-    return roundToHundred(sum + lineSubtotal);
-  }, 0);
-  const roundedDiscount = cart.reduce((sum, item) => {
-    const { lineDiscount } = computeLineMoney(item.product.salePrice, item.quantity, item.discount);
-    return roundToHundred(sum + lineDiscount);
-  }, 0);
+  const cartMoney = useMemo(() => cart.reduce((totals, item) => {
+    const { lineSubtotal, lineDiscount } = computeLineMoney(item.product.salePrice, item.quantity, item.discount);
+    totals.subtotal = roundToHundred(totals.subtotal + lineSubtotal);
+    totals.discount = roundToHundred(totals.discount + lineDiscount);
+    return totals;
+  }, { subtotal: 0, discount: 0 }), [cart]);
+  const roundedSubtotal = cartMoney.subtotal;
+  const roundedDiscount = cartMoney.discount;
   const payableTotal = roundToHundred(cartTotal);
   const primaryAmount = roundToHundred(Number(cashReceived) || 0);
   const hasSecondaryPayment = paymentMethod !== 'credito' && secondaryPaymentMethod !== 'none';
@@ -618,7 +655,7 @@ export function POS() {
           {hasActiveSearchOrFilters && (
             <div className="mt-4 max-h-64 overflow-y-auto space-y-2">
               {filteredProducts.length > 0 ? (
-                filteredProducts.map(product => (
+                visibleFilteredProducts.map(product => (
                   <button
                     key={product.id}
                     onClick={() => handleAddToCart(product.id, true)}
@@ -643,6 +680,16 @@ export function POS() {
                 ))
               ) : (
                 <p className="text-center text-gray-500 py-8">No se encontraron productos</p>
+              )}
+              {visibleFilteredProducts.length < filteredProducts.length && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setVisibleProductCount((current) => current + 50)}
+                >
+                  Mostrar 50 productos más ({filteredProducts.length - visibleFilteredProducts.length} pendientes)
+                </Button>
               )}
             </div>
           )}

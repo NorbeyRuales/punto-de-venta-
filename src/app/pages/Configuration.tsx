@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/
 import { toast } from 'sonner';
 import { Printer, Shield, Database, Tag, Edit, Trash2, Check, X, ClipboardList, Download, CloudDownload, CloudUpload, RotateCcw } from 'lucide-react';
 import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
+import { validateBackupPayload, type BackupValidationResult } from '../services/backupValidation';
 
 type PendingSyncSummary = {
   products: number;
@@ -51,7 +52,7 @@ const parseConfigExists = (raw: string | null): boolean => {
   }
 };
 
-const readPendingSyncSummary = (): PendingSyncSummary => {
+const readPendingSyncSummary = (live?: Omit<PendingSyncSummary, 'source'>): PendingSyncSummary => {
   const backupRaw = localStorage.getItem(OFFLINE_BACKUP_STORAGE_KEY);
   if (backupRaw) {
     try {
@@ -73,7 +74,7 @@ const readPendingSyncSummary = (): PendingSyncSummary => {
     }
   }
 
-  return {
+  return live ? { ...live, source: 'live-local' } : {
     products: parseJsonArrayLength(localStorage.getItem('pos_products')),
     sales: parseJsonArrayLength(localStorage.getItem('pos_sales')),
     customers: parseJsonArrayLength(localStorage.getItem('pos_customers')),
@@ -96,17 +97,26 @@ export function Configuration() {
     offlinePinConfigured,
     offlineDefaultRole,
     hasPendingSync,
+    syncDiagnostics,
     setOfflinePin,
     setOfflineDefaultRole,
     products,
+    sales,
+    customers,
+    suppliers,
+    kardexMovements,
+    recharges,
+    cashSessions,
+    cashMovements,
     categories,
     addCategory,
     updateCategory,
     deleteCategory,
     syncWithSupabase,
+    createCompleteBackup,
+    rebuildLocalCache,
     createStore,
     hasConnectedStore,
-    uploadLocalBackupToSupabase,
     getPendingProductSyncPreview,
     listStoreUsers,
     createStoreUser,
@@ -122,11 +132,24 @@ export function Configuration() {
   const [editingValue, setEditingValue] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
+  const [isRebuildingCache, setIsRebuildingCache] = useState(false);
+  const [backupValidation, setBackupValidation] = useState<BackupValidationResult | null>(null);
   const [isRegisteringStore, setIsRegisteringStore] = useState(false);
   const [showPendingModal, setShowPendingModal] = useState(false);
-  const [pendingSummary, setPendingSummary] = useState<PendingSyncSummary>(() => readPendingSyncSummary());
+  const getLiveSyncSummary = (): Omit<PendingSyncSummary, 'source'> => ({
+    products: products.length,
+    sales: sales.length,
+    customers: customers.length,
+    suppliers: suppliers.length,
+    kardex: kardexMovements.length,
+    recharges: recharges.length,
+    cashSessions: cashSessions.length,
+    cashMovements: cashMovements.length,
+    hasConfig: Boolean(storeConfig),
+  });
+  const [pendingSummary, setPendingSummary] = useState<PendingSyncSummary>(() =>
+    readPendingSyncSummary(getLiveSyncSummary()));
   const [isLoadingProductDiff, setIsLoadingProductDiff] = useState(false);
   const [productDiff, setProductDiff] = useState<PendingProductSyncPreview | null>(null);
   const [offlinePin, setOfflinePinInput] = useState('');
@@ -288,20 +311,12 @@ export function Configuration() {
   };
 
   // Descarga un backup JSON con datos locales.
-  const handleBackup = () => {
+  const handleBackup = async () => {
     if (isBackingUp) return;
     setIsBackingUp(true);
-    const data = {
-      products: localStorage.getItem('pos_products'),
-      sales: localStorage.getItem('pos_sales'),
-      customers: localStorage.getItem('pos_customers'),
-      suppliers: localStorage.getItem('pos_suppliers'),
-      kardex: localStorage.getItem('pos_kardex'), // Added kardex
-      recharges: localStorage.getItem('pos_recharges'), // Added recharges
-      config: localStorage.getItem('pos_config')
-    };
-    
     try {
+      const data = await createCompleteBackup();
+      if (!data) return;
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -311,6 +326,34 @@ export function Configuration() {
       toast.success('Backup descargado');
     } finally {
       setIsBackingUp(false);
+    }
+  };
+
+  const handleBackupFileValidation = async (file?: File) => {
+    if (!file) return;
+    try {
+      const parsed: unknown = JSON.parse(await file.text());
+      setBackupValidation(validateBackupPayload(parsed));
+    } catch {
+      setBackupValidation({
+        valid: false,
+        counts: {
+          products: 0, sales: 0, customers: 0, suppliers: 0, kardex: 0,
+          recharges: 0, cash_sessions: 0, cash_movements: 0,
+        },
+        errors: ['El archivo no contiene JSON válido.'],
+        warnings: [],
+      });
+    }
+  };
+
+  const handleRebuildCache = async () => {
+    if (isRebuildingCache) return;
+    setIsRebuildingCache(true);
+    try {
+      await rebuildLocalCache();
+    } finally {
+      setIsRebuildingCache(false);
     }
   };
 
@@ -397,8 +440,8 @@ export function Configuration() {
   const handleManualSync = async () => {
     if (isSyncing) return;
     if (hasPendingSync) {
-      const confirmed = confirm('Hay cambios offline pendientes. Descargar desde la base de datos reemplazará lo local. ¿Continuar?');
-      if (!confirmed) return;
+      toast.error('No se descargará la nube mientras existan cambios offline pendientes.');
+      return;
     }
     setIsSyncing(true);
     try {
@@ -429,26 +472,8 @@ export function Configuration() {
     }
   };
 
-  // Sube datos actuales desde localStorage a base de datos.
-  const handleUploadLocalData = async () => {
-    if (isUploading) return;
-    const confirmed = confirm('Esto reemplazará los datos remotos por los locales. ¿Deseas continuar?');
-    if (!confirmed) return;
-    const phrase = prompt('Escribe REEMPLAZAR para confirmar que deseas sobrescribir los datos remotos.');
-    if (phrase !== 'REEMPLAZAR') {
-      toast.info('Restauración cancelada. No se modificaron datos remotos.');
-      return;
-    }
-    setIsUploading(true);
-    try {
-      await uploadLocalBackupToSupabase(true);
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
   const handleOpenPendingModal = () => {
-    setPendingSummary(readPendingSyncSummary());
+    setPendingSummary(readPendingSyncSummary(getLiveSyncSummary()));
     setProductDiff(null);
     setShowPendingModal(true);
   };
@@ -1212,6 +1237,40 @@ export function Configuration() {
               </p>
             </div>
 
+            <div className="rounded-xl border bg-white p-4 space-y-2" aria-live="polite">
+              <div className="flex items-center justify-between gap-3">
+                <p className="font-semibold">Estado de sincronización</p>
+                <span className={`text-xs font-semibold rounded-full px-2 py-1 ${
+                  syncDiagnostics.status === 'success' ? 'bg-green-100 text-green-800'
+                    : syncDiagnostics.status === 'partial' ? 'bg-amber-100 text-amber-800'
+                      : syncDiagnostics.status === 'error' ? 'bg-red-100 text-red-800'
+                        : syncDiagnostics.status === 'syncing' ? 'bg-blue-100 text-blue-800'
+                          : 'bg-gray-100 text-gray-700'
+                }`}>
+                  {syncDiagnostics.status === 'success' ? 'Correcta'
+                    : syncDiagnostics.status === 'partial' ? 'Parcial'
+                      : syncDiagnostics.status === 'error' ? 'Error'
+                        : syncDiagnostics.status === 'syncing' ? 'En curso' : 'Sin actividad'}
+                </span>
+              </div>
+              <p className="text-sm text-gray-600">{syncDiagnostics.message || 'Todavía no hay un diagnóstico registrado.'}</p>
+              <div className="grid sm:grid-cols-3 gap-2 text-xs text-gray-600">
+                <p>Último intento: {syncDiagnostics.lastAttemptAt ? new Date(syncDiagnostics.lastAttemptAt).toLocaleString('es-CO') : 'No registrado'}</p>
+                <p>Último éxito: {syncDiagnostics.lastSuccessAt ? new Date(syncDiagnostics.lastSuccessAt).toLocaleString('es-CO') : 'No registrado'}</p>
+                <p>Duración: {syncDiagnostics.durationMs == null ? 'No registrada' : `${syncDiagnostics.durationMs} ms`}</p>
+              </div>
+              <p className="text-xs text-gray-600">
+                Último backup validado: {syncDiagnostics.lastBackupAt ? new Date(syncDiagnostics.lastBackupAt).toLocaleString('es-CO') : 'No registrado'}
+              </p>
+              {syncDiagnostics.lastBackupCounts && (
+                <p className="text-xs text-gray-600">
+                  Contenido: {Object.entries(syncDiagnostics.lastBackupCounts)
+                    .map(([section, count]) => `${section}: ${count}`)
+                    .join(' · ')}
+                </p>
+              )}
+            </div>
+
             <div className="space-y-4">
               {!hasConnectedStore && (
                 <Button
@@ -1231,15 +1290,15 @@ export function Configuration() {
                   <div>
                     <p className="font-semibold">Guardar copia en este equipo</p>
                     <p className="text-sm text-gray-600">
-                      Crea un archivo de respaldo con tus datos actuales. Usalo antes de cambios importantes.
+                      Descarga y valida todo el historial disponible en Supabase antes de crear el archivo.
                     </p>
                   </div>
                 </div>
                 <Button
                   onClick={handleBackup}
                   className="w-full h-12 bg-[var(--primary)] hover:bg-[var(--primary-hover)]"
-                  disabled={isBackingUp}
-                  title="Descarga un archivo con todos tus datos locales para guardarlo como respaldo."
+                  disabled={isBackingUp || !hasConnectedStore || hasPendingSync}
+                  title="Descarga un respaldo completo desde Supabase sin modificar la base de datos."
                 >
                   {isBackingUp ? 'Generando copia...' : 'Descargar copia de seguridad'}
                 </Button>
@@ -1253,21 +1312,30 @@ export function Configuration() {
                   <div>
                     <p className="font-semibold">Traer datos de la nube a este equipo</p>
                     <p className="text-sm text-gray-600">
-                      Reemplaza lo que tienes guardado aqui por lo que existe en la base de datos.
+                      Descarga el historial completo y lo combina por identificador con este equipo.
                     </p>
                   </div>
                 </div>
                 <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
-                  Atencion: esta accion sobrescribe datos locales.
+                  Esta acción no elimina registros locales ni modifica Supabase.
                 </div>
                 <Button
                   variant="outline"
                   className="w-full h-12"
                   onClick={handleManualSync}
-                  disabled={isSyncing}
-                  title="Trae la información de la base de datos y reemplaza los datos guardados en este dispositivo."
+                  disabled={isSyncing || hasPendingSync}
+                  title="Trae el historial completo y lo combina con la información de este dispositivo."
                 >
                   {isSyncing ? 'Trayendo datos...' : 'Traer datos de la base de datos a este equipo'}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full h-12"
+                  onClick={handleRebuildCache}
+                  disabled={isRebuildingCache || hasPendingSync || !hasConnectedStore}
+                  title="Vuelve a guardar localmente una descarga completa validada, sin borrar Supabase."
+                >
+                  {isRebuildingCache ? 'Reconstruyendo caché...' : 'Reconstruir caché local de forma segura'}
                 </Button>
               </div>
 
@@ -1279,27 +1347,21 @@ export function Configuration() {
                   <div>
                     <p className="font-semibold">Enviar datos de este equipo a la nube</p>
                     <p className="text-sm text-gray-600">
-                      Sube tu informacion local y reemplaza lo que esta actualmente en la base de datos.
+                      Esta operación está bloqueada para impedir que una copia local parcial reemplace la nube.
                     </p>
                   </div>
                 </div>
                 <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-800">
-                  Atencion: esta accion sobrescribe datos en la nube.
+                  Protección activa: no se permiten reemplazos destructivos de Supabase.
                 </div>
                 <Button
                   variant="outline"
                   className="w-full h-12"
-                  onClick={handleUploadLocalData}
-                  disabled={isUploading || !isAdmin}
-                  title="Sube tus datos locales a la base de datos y sustituye la información remota actual."
+                  disabled
+                  title="Bloqueado para proteger los datos remotos."
                 >
-                  {isUploading ? 'Enviando datos...' : 'Enviar datos locales a la base de datos'}
+                  Envío destructivo bloqueado
                 </Button>
-                {!isAdmin && (
-                  <p className="text-xs text-gray-500 text-center">
-                    Solo un administrador puede usar esta accion.
-                  </p>
-                )}
               </div>
 
               <div className="rounded-xl border p-4 bg-white space-y-3">
@@ -1308,20 +1370,40 @@ export function Configuration() {
                     <RotateCcw className="w-4 h-4" />
                   </div>
                   <div>
-                    <p className="font-semibold">Recuperar datos desde un archivo de backup</p>
+                    <p className="font-semibold">Validar un archivo de backup</p>
                     <p className="text-sm text-gray-600">
-                      Te permite cargar una copia guardada para restaurar informacion anterior.
+                      Revisa estructura y cantidades sin importar ni modificar ningún dato.
                     </p>
                   </div>
                 </div>
-                <Button
-                  variant="outline"
-                  className="w-full h-12"
-                  onClick={() => toast.info('Funcionalidad de restauración en preparación')}
-                  title="Permitirá cargar un backup guardado para recuperar la información del sistema."
-                >
-                  Restaurar desde backup (proximamente)
-                </Button>
+                <Input
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={(event) => {
+                    void handleBackupFileValidation(event.target.files?.[0]);
+                    event.target.value = '';
+                  }}
+                  aria-label="Seleccionar archivo JSON para validar"
+                />
+                {backupValidation && (
+                  <div className={`rounded-lg border p-3 text-sm ${
+                    backupValidation.valid
+                      ? 'border-green-200 bg-green-50 text-green-800'
+                      : 'border-red-200 bg-red-50 text-red-800'
+                  }`}>
+                    <p className="font-semibold">
+                      {backupValidation.valid ? 'Backup válido para revisión' : 'Backup inválido'}
+                    </p>
+                    {backupValidation.errors.map((error) => <p key={error}>{error}</p>)}
+                    {backupValidation.warnings.map((warning) => <p key={warning}>Advertencia: {warning}</p>)}
+                    {backupValidation.valid && (
+                      <p className="mt-1">
+                        Productos: {backupValidation.counts.products}; ventas: {backupValidation.counts.sales}; clientes: {backupValidation.counts.customers}; kardex: {backupValidation.counts.kardex}.
+                      </p>
+                    )}
+                    <p className="mt-1 text-xs">La validación no restaura ni escribe información.</p>
+                  </div>
+                )}
               </div>
             </div>
 

@@ -16,6 +16,7 @@ import { useNavigate } from 'react-router';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { format, subDays, startOfDay } from 'date-fns';
 import { es } from 'date-fns/locale';
+import { useMemo } from 'react';
 
 const roundToHundred = (value: number) => {
   if (!Number.isFinite(value)) return 0;
@@ -25,88 +26,73 @@ const roundToHundred = (value: number) => {
 const formatCurrency = (value: number) => `$${roundToHundred(value).toLocaleString('es-CO')}`;
 
 export function Dashboard() {
-  const { getSalesToday, products, sales, customers, kardexMovements } = usePOS();
+  const { products, sales, customers, kardexMovements } = usePOS();
   const navigate = useNavigate();
 
-  // KPIs principales del día.
-  const returnedQuantitiesBySale = new Map<string, Map<string, number>>();
-  kardexMovements.forEach((movement) => {
-    if (!movement.reference?.startsWith('DEV-')) return;
-
-    const saleId = movement.reference.slice(4);
-    if (!saleId) return;
-
-    const quantity = Number(movement.quantity) || 0;
-    if (quantity <= 0) return;
-
-    const byProduct = returnedQuantitiesBySale.get(saleId);
-    if (byProduct) {
+  const dashboardData = useMemo(() => {
+    const returnedQuantitiesBySale = new Map<string, Map<string, number>>();
+    kardexMovements.forEach((movement) => {
+      if (!movement.reference?.startsWith('DEV-')) return;
+      const saleId = movement.reference.slice(4);
+      const quantity = Number(movement.quantity) || 0;
+      if (!saleId || quantity <= 0) return;
+      const byProduct = returnedQuantitiesBySale.get(saleId) ?? new Map<string, number>();
       byProduct.set(movement.productId, (byProduct.get(movement.productId) || 0) + quantity);
-      return;
-    }
-
-    returnedQuantitiesBySale.set(saleId, new Map([[movement.productId, quantity]]));
-  });
-
-  const isReturned = (sale: { id: string; returnedAt?: string | null; items?: Array<{ product: { id: string }; quantity: number }> }) => {
-    if (sale.returnedAt) return true;
-
-    const returnedByProduct = returnedQuantitiesBySale.get(sale.id);
-    if (!returnedByProduct || !sale.items || sale.items.length === 0) return false;
-
-    const soldByProduct = new Map<string, number>();
-    sale.items.forEach((item) => {
-      soldByProduct.set(item.product.id, (soldByProduct.get(item.product.id) || 0) + item.quantity);
+      returnedQuantitiesBySale.set(saleId, byProduct);
     });
 
-    return Array.from(soldByProduct.entries()).every(([productId, soldQty]) => {
-      const returnedQty = returnedByProduct.get(productId) || 0;
-      return returnedQty + 0.000001 >= soldQty;
-    });
-  };
-  const todaySales = getSalesToday();
-  const netTodaySales = todaySales.filter((sale) => !isReturned(sale));
-  const totalToday = roundToHundred(netTodaySales.reduce((sum, sale) => sum + sale.total, 0));
-  const transactionsToday = netTodaySales.length;
-
-  // Productos más vendidos hoy
-  const productSales = new Map<string, { name: string; quantity: number }>();
-  netTodaySales.forEach(sale => {
-    sale.items.forEach(item => {
-      const current = productSales.get(item.product.id);
-      if (current) {
-        current.quantity += item.quantity;
-      } else {
-        productSales.set(item.product.id, {
-          name: item.product.name,
-          quantity: item.quantity
-        });
-      }
-    });
-  });
-
-  const topProducts = Array.from(productSales.values())
-    .sort((a, b) => b.quantity - a.quantity)
-    .slice(0, 5);
-
-  // Productos con bajo stock
-  const lowStockProducts = products.filter(p => p.stock <= p.minStock).slice(0, 5);
-
-  // Datos para gráfica semanal
-  const last7Days = Array.from({ length: 7 }, (_, i) => {
-    const date = subDays(new Date(), 6 - i);
-    const dateStr = format(startOfDay(date), 'yyyy-MM-dd');
-    const daySales = sales.filter(sale => {
-      const saleDate = format(startOfDay(new Date(sale.date)), 'yyyy-MM-dd');
-      return saleDate === dateStr && !isReturned(sale);
-    });
-    const total = daySales.reduce((sum, sale) => sum + sale.total, 0);
-    
-    return {
-      date: format(date, 'EEE', { locale: es }),
-      ventas: roundToHundred(total)
+    const isReturned = (sale: typeof sales[number]) => {
+      if (sale.returnedAt) return true;
+      const returnedByProduct = returnedQuantitiesBySale.get(sale.id);
+      if (!returnedByProduct || sale.items.length === 0) return false;
+      const soldByProduct = new Map<string, number>();
+      sale.items.forEach((item) => {
+        soldByProduct.set(item.product.id, (soldByProduct.get(item.product.id) || 0) + item.quantity);
+      });
+      return Array.from(soldByProduct.entries()).every(([productId, soldQty]) =>
+        (returnedByProduct.get(productId) || 0) + 0.000001 >= soldQty
+      );
     };
-  });
+
+    const now = new Date();
+    const todayKey = format(now, 'yyyy-MM-dd');
+    const sevenDays = Array.from({ length: 7 }, (_, index) => {
+      const date = subDays(now, 6 - index);
+      return { key: format(date, 'yyyy-MM-dd'), date: format(date, 'EEE', { locale: es }), ventas: 0 };
+    });
+    const dayIndex = new Map(sevenDays.map((day, index) => [day.key, index]));
+    const productSales = new Map<string, { name: string; quantity: number }>();
+    let totalToday = 0;
+    let transactionsToday = 0;
+
+    sales.forEach((sale) => {
+      if (isReturned(sale)) return;
+      const saleKey = format(new Date(sale.date), 'yyyy-MM-dd');
+      const index = dayIndex.get(saleKey);
+      if (index !== undefined) sevenDays[index].ventas += sale.total;
+      if (saleKey !== todayKey) return;
+      totalToday += sale.total;
+      transactionsToday += 1;
+      sale.items.forEach((item) => {
+        const current = productSales.get(item.product.id);
+        if (current) current.quantity += item.quantity;
+        else productSales.set(item.product.id, { name: item.product.name, quantity: item.quantity });
+      });
+    });
+
+    return {
+      totalToday: roundToHundred(totalToday),
+      transactionsToday,
+      topProducts: Array.from(productSales.values()).sort((a, b) => b.quantity - a.quantity).slice(0, 5),
+      last7Days: sevenDays.map(({ date, ventas }) => ({ date, ventas: roundToHundred(ventas) })),
+    };
+  }, [sales, kardexMovements]);
+
+  const { totalToday, transactionsToday, topProducts, last7Days } = dashboardData;
+  const lowStockProducts = useMemo(
+    () => products.filter((product) => product.stock <= product.minStock).slice(0, 5),
+    [products],
+  );
 
   const quickActions = [
     { icon: ShoppingCart, label: 'Nueva Venta', path: '/pos', color: 'bg-[linear-gradient(135deg,#80a8ff,#6a8dff)] text-white' },

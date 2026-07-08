@@ -1,5 +1,5 @@
 // Reportes de ventas con gráficos y ranking.
-import { useDeferredValue, useMemo, useState, useTransition } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { usePOS } from '../context/POSContext';
 import type { Purchase, Sale } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -26,7 +26,7 @@ import { toast } from 'sonner';
 import type { DateRange } from 'react-day-picker';
 
 export function Reports() {
-  const { getSalesInRange, sales, kardexMovements, registerReturn, customers, storeConfig, products, suppliers } = usePOS();
+  const { getSalesInRange, loadHistoryRange, sales, kardexMovements, registerReturn, customers, storeConfig, products, suppliers } = usePOS();
   const [calendarMode, setCalendarMode] = useState<'single' | 'range'>('single');
   const [selectedDate, setSelectedDate] = useState<Date>(() => startOfDay(new Date()));
   const [dateRange, setDateRange] = useState<DateRange>(() => {
@@ -44,6 +44,7 @@ export function Reports() {
   const [showAllInventoryRows, setShowAllInventoryRows] = useState(false);
   const [pendingReturnSale, setPendingReturnSale] = useState<Sale | null>(null);
   const [returnQuantities, setReturnQuantities] = useState<Record<string, number>>({});
+  const loadHistoryRangeRef = useRef(loadHistoryRange);
   const latestSalesCollapsedLimit = 3;
   const returnReportsCollapsedLimit = 5;
   const latestPurchasesCollapsedLimit = 5;
@@ -81,6 +82,14 @@ export function Reports() {
     const toLabel = format(dateRange.to, 'd MMM yyyy', { locale: es });
     return fromLabel === toLabel ? fromLabel : `${fromLabel} - ${toLabel}`;
   }, [calendarMode, dateRange, selectedDate]);
+
+  useEffect(() => {
+    loadHistoryRangeRef.current = loadHistoryRange;
+  }, [loadHistoryRange]);
+
+  useEffect(() => {
+    void loadHistoryRangeRef.current(start, end);
+  }, [start, end]);
   const isRangeSelectionComplete = calendarMode === 'single' || Boolean(dateRange?.from && dateRange?.to);
   const isTodayActive = calendarMode === 'single'
     ? isSameDay(selectedDate, today)
@@ -248,18 +257,25 @@ export function Reports() {
   }, [filteredPeriodPurchases]);
   
   // Métricas agregadas del periodo.
-  const totalSales = netSales.reduce((sum, s) => sum + s.total, 0);
-  const totalCost = netSales.reduce((sum, sale) => {
-    return sum + sale.items.reduce((itemSum, item) => itemSum + (item.product.costPrice * item.quantity), 0);
-  }, 0);
+  const salesTotals = useMemo(() => netSales.reduce((totals, sale) => {
+    totals.sales += sale.total;
+    sale.items.forEach((item) => {
+      totals.cost += item.product.costPrice * item.quantity;
+    });
+    return totals;
+  }, { sales: 0, cost: 0 }), [netSales]);
+  const totalSales = salesTotals.sales;
+  const totalCost = salesTotals.cost;
   const profit = totalSales - totalCost;
   const transactions = netSales.length;
-  const totalPurchases = periodPurchases.reduce((sum, purchase) => sum + purchase.total, 0);
+  const purchaseTotals = useMemo(() => periodPurchases.reduce((totals, purchase) => {
+    totals.total += purchase.total;
+    if (!purchase.paid) totals.pending += purchase.total;
+    return totals;
+  }, { total: 0, pending: 0 }), [periodPurchases]);
+  const totalPurchases = purchaseTotals.total;
   const purchaseTransactions = periodPurchases.length;
-  const pendingPurchasesTotal = periodPurchases.reduce(
-    (sum, purchase) => sum + (purchase.paid ? 0 : purchase.total),
-    0,
-  );
+  const pendingPurchasesTotal = purchaseTotals.pending;
 
   // Productos más vendidos
   const topProducts = useMemo(() => {
@@ -295,7 +311,7 @@ export function Reports() {
     return Array.from(categorySales.entries()).map(([name, value]) => ({ name, value }));
   }, [netSales]);
   const COLORS = ['#15D9E6', '#E6C915', '#E61595', '#8BE9FD', '#FFD27F', '#2ECC71'];
-  const latestSales = periodSales.slice().reverse();
+  const latestSales = useMemo(() => periodSales.slice().reverse(), [periodSales]);
   const visibleLatestSales = showAllLatestSales
     ? latestSales
     : latestSales.slice(0, latestSalesCollapsedLimit);
@@ -461,7 +477,10 @@ export function Reports() {
     ? returnReportRows
     : returnReportRows.slice(0, returnReportsCollapsedLimit);
   const hiddenReturnReportsCount = Math.max(0, returnReportRows.length - visibleReturnReports.length);
-  const latestPurchases = filteredPeriodPurchases.slice(-20).reverse();
+  const latestPurchases = useMemo(
+    () => filteredPeriodPurchases.slice(-20).reverse(),
+    [filteredPeriodPurchases],
+  );
   const visibleLatestPurchases = showAllLatestPurchases
     ? latestPurchases
     : latestPurchases.slice(0, latestPurchasesCollapsedLimit);
