@@ -351,11 +351,6 @@ export function Login() {
           </div>
         </form>
 
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          El acceso sin internet está deshabilitado. Para operar ventas, compras o inventario debes iniciar sesión con conexión a Supabase.
-        </div>
-
-
       </div>
     </div>
   );

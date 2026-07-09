@@ -3301,7 +3301,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const safeOpeningCash = roundMoney(Number.isFinite(openingCash) ? Math.max(0, openingCash) : 0);
     const normalizedOpeningNote = openingNote?.trim() || undefined;
     const openedAt = new Date().toISOString();
-    const openedByName = currentUser?.fullName?.trim() || currentUser?.username?.trim() || undefined;
+    const openedByName = normalizedOpeningNote || currentUser?.fullName?.trim() || currentUser?.username?.trim() || undefined;
     let sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let remoteSessionCreated = false;
 
@@ -3593,7 +3593,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const difference = roundMoney(safeCounted - expectedCash);
     const closedAt = new Date().toISOString();
     const normalizedClosingNote = closingNote?.trim() || undefined;
-    const closedByName = currentUser?.fullName?.trim() || currentUser?.username?.trim() || undefined;
+    const closedByName = normalizedClosingNote || currentUser?.fullName?.trim() || currentUser?.username?.trim() || undefined;
     const nextStatus: CashSession['status'] = difference === 0 ? 'closed' : 'closed_with_difference';
 
     const closedSession: CashSession = {

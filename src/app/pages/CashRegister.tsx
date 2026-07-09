@@ -385,11 +385,11 @@ export function CashRegister() {
               <p className="text-xs text-gray-500 mt-1">Dinero disponible para dar cambio al iniciar turno.</p>
             </div>
             <div>
-              <Label>Observación (opcional)</Label>
+              <Label>Responsable del turno</Label>
               <Input
                 value={openingNote}
                 onChange={(e) => setOpeningNote(e.target.value)}
-                placeholder="Ej: turno mañana"
+                placeholder="Ej: Ana - turno mañana"
                 className="h-12"
               />
             </div>
@@ -444,6 +444,9 @@ export function CashRegister() {
                   {format(new Date(currentCashSession.openedAt), "d MMM yyyy, HH:mm", { locale: es })}
                 </p>
                 <p className="text-sm text-gray-600">Base: {formatCurrency(currentCashSession.openingCash)}</p>
+                <p className="text-sm text-gray-600">
+                  Responsable: {currentCashSession.openedByName || currentCashSession.openingNote || 'Usuario no identificado'}
+                </p>
               </div>
               <div className="p-4 rounded-lg bg-secondary">
                 <p className="text-xs text-gray-600">Ventas totales de la sesión</p>
@@ -656,12 +659,12 @@ export function CashRegister() {
                 </div>
               )}
               <div>
-                <Label>Observación de cierre (opcional)</Label>
+                <Label>Responsable del cierre</Label>
                 <Input
                   ref={closingNoteRef}
                   value={closingNote}
                   onChange={(e) => setClosingNote(e.target.value)}
-                  placeholder="Ej: faltante por cambio no registrado"
+                  placeholder="Ej: Ana entrega turno"
                   className="h-12"
                 />
               </div>
@@ -899,6 +902,7 @@ export function CashRegister() {
                     </th>
                   )}
                   <th className="text-left p-3">Fecha cierre</th>
+                  <th className="text-left p-3">Responsable</th>
                   <th className="text-right p-3">Esperado</th>
                   <th className="text-right p-3">Contado</th>
                   <th className="text-right p-3">Diferencia</th>
@@ -928,6 +932,10 @@ export function CashRegister() {
                         {session.closedAt
                           ? format(new Date(session.closedAt), "d MMM yyyy, HH:mm", { locale: es })
                           : format(new Date(session.openedAt), "d MMM yyyy, HH:mm", { locale: es })}
+                      </td>
+                      <td className="p-3">
+                        <p className="font-medium text-slate-800">{session.openedByName || session.openingNote || 'No registrado'}</p>
+                        <p className="text-xs text-slate-500">Cierra: {session.closedByName || session.closingNote || 'No registrado'}</p>
                       </td>
                       <td className="p-3 text-right font-medium">{formatCurrency(expected)}</td>
                       <td className="p-3 text-right font-medium">{formatCurrency(counted)}</td>
@@ -995,11 +1003,15 @@ export function CashRegister() {
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">Caja abierta por</p>
-                  <p className="text-sm font-semibold text-slate-800">{selectedClosedSession.openedByName || 'Usuario no identificado'}</p>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {selectedClosedSession.openedByName || selectedClosedSession.openingNote || 'Usuario no identificado'}
+                  </p>
                 </div>
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <p className="text-xs text-slate-500">Caja cerrada por</p>
-                  <p className="text-sm font-semibold text-slate-800">{selectedClosedSession.closedByName || 'Usuario no identificado'}</p>
+                  <p className="text-sm font-semibold text-slate-800">
+                    {selectedClosedSession.closedByName || selectedClosedSession.closingNote || 'Usuario no identificado'}
+                  </p>
                 </div>
               </div>
 
@@ -1093,12 +1105,12 @@ export function CashRegister() {
 
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="rounded-lg border border-slate-200 p-3">
-                  <p className="text-xs text-slate-500">Nota de apertura</p>
-                  <p className="text-sm text-slate-700">{selectedClosedSession.openingNote || 'Sin observación'}</p>
+                  <p className="text-xs text-slate-500">Responsable de apertura / turno</p>
+                  <p className="text-sm text-slate-700">{selectedClosedSession.openingNote || selectedClosedSession.openedByName || 'Sin responsable registrado'}</p>
                 </div>
                 <div className="rounded-lg border border-slate-200 p-3">
-                  <p className="text-xs text-slate-500">Nota de cierre</p>
-                  <p className="text-sm text-slate-700">{selectedClosedSession.closingNote || 'Sin observación'}</p>
+                  <p className="text-xs text-slate-500">Responsable de cierre</p>
+                  <p className="text-sm text-slate-700">{selectedClosedSession.closingNote || selectedClosedSession.closedByName || 'Sin responsable registrado'}</p>
                 </div>
               </div>
 
