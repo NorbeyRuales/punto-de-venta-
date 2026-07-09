@@ -73,6 +73,7 @@ const OFFLINE_INVOICE_KEY = 'pos_offline_invoice_seq';
 const OFFLINE_DRAFTS_KEY = 'pos_sale_drafts';
 const OFFLINE_ACTIVE_DRAFT_KEY = 'pos_active_draft_id';
 const OFFLINE_BACKUP_KEY = 'pos_offline_backup';
+const OFFLINE_FEATURES_ENABLED = false;
 const ALLOW_AUTOMATIC_BACKUP_UPLOAD = false;
 const INITIAL_HISTORY_DAYS = 90;
 const SYNC_DIAGNOSTICS_KEY = 'pos_sync_diagnostics';
@@ -1003,13 +1004,18 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const autoSyncTimerRef = useRef<number | null>(null);
   const pendingSyncNoticeRef = useRef(false);
   const loadedHistoryRangesRef = useRef(new Set<string>());
-  const offlinePinConfigured = Boolean(offlinePinHash);
+  const offlinePinConfigured = OFFLINE_FEATURES_ENABLED && Boolean(offlinePinHash);
   const canReachSupabase = Boolean(session?.access_token && isBrowserOnline && !isOfflineMode);
   const isConnectedToSupabase = Boolean(canReachSupabase && currentStoreId);
   const currentRole: UserRole = currentUser?.role ?? 'cashier';
   const hasRolePermission = (permission: AppPermission): boolean => hasPermission(currentRole, permission);
   const requirePermission = (permission: AppPermission, message: string): boolean => {
     if (hasRolePermission(permission)) return true;
+    toast.error(message);
+    return false;
+  };
+  const requireCloudWrite = (message = 'Necesitas conexión con Supabase para guardar cambios.'): boolean => {
+    if (isConnectedToSupabase && session && currentStoreId) return true;
     toast.error(message);
     return false;
   };
@@ -1129,6 +1135,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const markPendingSync = () => {
+    if (!OFFLINE_FEATURES_ENABLED) return;
     setHasPendingSync(true);
     safeStorageSet(OFFLINE_DIRTY_KEY, 'true');
     safeStorageSet(OFFLINE_BACKUP_KEY, JSON.stringify(buildStateBackupPayload()));
@@ -1593,6 +1600,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   // Asegura que exista al menos un borrador activo.
   useEffect(() => {
     if (!isAuthenticated) return;
+    if (!isConnectedToSupabase) return;
     if (saleDrafts.length === 0) {
       void createSaleDraft();
       return;
@@ -1600,7 +1608,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     if (!activeDraftId) {
       setActiveDraftId(saleDrafts[0].id);
     }
-  }, [saleDrafts.length, activeDraftId, isAuthenticated]);
+  }, [saleDrafts.length, activeDraftId, isAuthenticated, isConnectedToSupabase]);
 
   // Carga IndexedDB; en la primera ejecución copia localStorage sin borrarlo.
   useEffect(() => {
@@ -1616,11 +1624,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
     if (storedRole === 'admin' || storedRole === 'cashier') {
       setOfflineDefaultRoleState(storedRole);
     }
-    const pendingSync = safeStorageGet(OFFLINE_DIRTY_KEY);
+    const pendingSync = OFFLINE_FEATURES_ENABLED ? safeStorageGet(OFFLINE_DIRTY_KEY) : null;
     if (pendingSync === 'true') {
       setHasPendingSync(true);
     }
-    const offlineAuthRaw = safeStorageGet(OFFLINE_AUTH_KEY);
+    const offlineAuthRaw = OFFLINE_FEATURES_ENABLED ? safeStorageGet(OFFLINE_AUTH_KEY) : null;
     const offlineAuth = safeParse<{ username?: string; role: 'admin' | 'cashier' } | null>(offlineAuthRaw, null);
 
     const loadedProducts = localState.pos_products;
@@ -1746,7 +1754,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       setCurrentStoreId(null);
       safeStorageRemove('pos_auth');
 
-      if (offlineAuth?.role) {
+      if (OFFLINE_FEATURES_ENABLED && offlineAuth?.role) {
         setIsOfflineMode(true);
         setIsAuthenticated(true);
         setCurrentUser({
@@ -1779,7 +1787,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         const preservePendingSync = pendingSync === 'true';
         if (preservePendingSync) {
           setHasPendingSync(true);
-          toast.info('Hay cambios offline pendientes. Se muestran datos de nube y se conserva el estado pendiente.');
+          toast.info('Hay cambios locales pendientes de una versión anterior. Revisa backup/restauración antes de continuar.');
         }
         return syncFromSupabase(storedSession, membership.store_id, { preservePendingSync });
       })
@@ -1945,7 +1953,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         const preservePendingSync = pendingSync;
         if (pendingSync) {
           setHasPendingSync(true);
-          toast.info('Hay cambios offline pendientes. Se muestran datos de nube y se conserva el estado pendiente.');
+          toast.info('Hay cambios locales pendientes de una versión anterior. Revisa backup/restauración antes de continuar.');
         }
         const synced = await syncFromSupabase(nextSession, membership.store_id, { preservePendingSync });
         if (!synced) {
@@ -1969,6 +1977,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
     role: 'admin' | 'cashier',
     username?: string,
   ): Promise<boolean> => {
+    if (!OFFLINE_FEATURES_ENABLED) {
+      toast.error('El modo offline está deshabilitado. Inicia sesión con conexión a Supabase.');
+      return false;
+    }
+
     localPersistenceEnabledRef.current = true;
     const trimmed = pin.trim();
     if (!/^\d{4}$/.test(trimmed)) {
@@ -1999,6 +2012,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const setOfflinePin = async (pin: string): Promise<boolean> => {
+    if (!OFFLINE_FEATURES_ENABLED) {
+      toast.error('El modo offline está deshabilitado.');
+      return false;
+    }
+
     const trimmed = pin.trim();
     if (!/^\d{4}$/.test(trimmed)) {
       toast.error('El PIN debe tener 4 dígitos.');
@@ -2013,6 +2031,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const setOfflineDefaultRole = (role: 'admin' | 'cashier') => {
+    if (!OFFLINE_FEATURES_ENABLED) return;
     setOfflineDefaultRoleState(role);
     safeStorageSet(OFFLINE_ROLE_KEY, role);
   };
@@ -2105,7 +2124,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return false;
     }
     if (hasPendingSync) {
-      toast.error('Sincronización de descarga bloqueada: existen cambios offline pendientes.');
+      toast.error('Sincronización de descarga bloqueada: existen cambios locales pendientes de una versión anterior.');
       return false;
     }
 
@@ -2125,7 +2144,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return null;
     }
     if (hasPendingSync) {
-      toast.error('Primero resuelve los cambios offline pendientes antes de generar una copia completa de nube.');
+      toast.error('Primero resuelve los cambios locales pendientes antes de generar una copia completa de nube.');
       return null;
     }
 
@@ -2218,10 +2237,6 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const uploadLocalBackupToSupabase = async (clearExisting = false): Promise<boolean> => {
-    if (clearExisting) {
-      toast.error('Reemplazo destructivo bloqueado para proteger la información de Supabase.');
-      return false;
-    }
     if (!requirePermission('sync:destructive', 'Solo un administrador puede enviar datos locales a la nube.')) {
       return false;
     }
@@ -2251,6 +2266,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    const validation = validateBackupPayload(backupPayload);
+    if (!validation.valid) {
+      toast.error(`Restauración cancelada: ${validation.errors[0]}`);
+      return false;
+    }
+
     try {
       if (clearExisting) {
         await replaceLocalBackup(session.access_token, currentStoreId, backupPayload);
@@ -2268,7 +2289,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           toast.success('Datos locales importados a Supabase correctamente.');
         }
       }
-      return true;
+      return synced;
     } catch (error) {
       console.error('No se pudo importar el backup local en Supabase', error);
       markPendingSync();
@@ -2579,6 +2600,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
     if (!requirePermission('inventory:manage', 'Solo un administrador puede crear productos.')) {
       return 'failed';
     }
+    if (!requireCloudWrite('Necesitas conexión con Supabase para crear productos.')) {
+      return 'failed';
+    }
 
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
@@ -2614,30 +2638,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    const newProduct = { ...product, id: Date.now().toString() };
-    setProducts(prev => [...prev, newProduct]);
-    markPendingSync();
-
-    if (newProduct.stock > 0) {
-      const unitCost = buildUnitCostWithIva(newProduct);
-      appendKardexMovement({
-        productId: newProduct.id,
-        productName: newProduct.name,
-        type: 'entry',
-        reference: `INI-${newProduct.id}`,
-        quantity: newProduct.stock,
-        stockBefore: 0,
-        stockAfter: newProduct.stock,
-        unitCost,
-        unitSalePrice: newProduct.salePrice,
-        totalCost: unitCost * newProduct.stock,
-      });
-    }
-
-    return 'local-pending';
+    return 'failed';
   };
 
   const applyProductPatch = async (id: string, updatedProduct: Partial<Product>): Promise<ProductWriteStatus> => {
+    if (!requireCloudWrite('Necesitas conexión con Supabase para editar productos.')) {
+      return 'failed';
+    }
+
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
         await patchProduct(session.access_token, currentStoreId, id, updatedProduct);
@@ -2650,9 +2658,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedProduct } : p));
-    markPendingSync();
-    return 'local-pending';
+    return 'failed';
   };
 
   const updateProduct = async (id: string, updatedProduct: Partial<Product>): Promise<ProductWriteStatus> => {
@@ -2726,6 +2732,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
     if (!requirePermission('inventory:manage', 'Solo un administrador puede eliminar productos.')) {
       return 'failed';
     }
+    if (!requireCloudWrite('Necesitas conexión con Supabase para eliminar productos.')) {
+      return 'failed';
+    }
 
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
@@ -2740,9 +2749,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    setProducts(prev => prev.filter(p => p.id !== id));
-    markPendingSync();
-    return 'local-pending';
+    return 'failed';
   };
 
   const searchProducts = (query: string): Product[] => {
@@ -2757,6 +2764,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
   // Funciones de categorías
   const addCategory = async (name: string): Promise<CategoryWriteStatus> => {
     if (!requirePermission('inventory:manage', 'Solo un administrador puede crear categorías.')) {
+      return 'failed';
+    }
+    if (!requireCloudWrite('Necesitas conexión con Supabase para crear categorías.')) {
       return 'failed';
     }
 
@@ -2780,13 +2790,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    setCategories(prev => [...prev, normalizedName]);
-    markPendingSync();
-    return 'local-pending';
+    return 'failed';
   };
 
   const updateCategory = async (oldName: string, newName: string): Promise<CategoryWriteStatus> => {
     if (!requirePermission('inventory:manage', 'Solo un administrador puede editar categorías.')) {
+      return 'failed';
+    }
+    if (!requireCloudWrite('Necesitas conexión con Supabase para editar categorías.')) {
       return 'failed';
     }
 
@@ -2827,18 +2838,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    setCategories(prev => prev.map(category => category === oldName ? normalizedNewName : category));
-    setProducts(prev => prev.map(product =>
-      product.category === oldName
-        ? { ...product, category: normalizedNewName }
-        : product
-    ));
-    markPendingSync();
-    return 'local-pending';
+    return 'failed';
   };
 
   const deleteCategory = async (name: string, replacementCategory?: string): Promise<CategoryWriteStatus> => {
     if (!requirePermission('inventory:manage', 'Solo un administrador puede eliminar categorías.')) {
+      return 'failed';
+    }
+    if (!requireCloudWrite('Necesitas conexión con Supabase para eliminar categorías.')) {
       return 'failed';
     }
 
@@ -2881,16 +2888,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    if (productsToMove.length > 0 && replacement) {
-      setProducts(prev => prev.map(product =>
-        product.category === name
-          ? { ...product, category: replacement }
-          : product
-      ));
-    }
-    setCategories(prev => prev.filter(category => category !== name));
-    markPendingSync();
-    return 'local-pending';
+    return 'failed';
   };
 
   // Borradores de venta (multi-ventas).
@@ -2947,20 +2945,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
     try {
       const createdAt = new Date().toISOString();
       if (!isConnectedToSupabase) {
-        const draftId = `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const draft: SaleDraft = {
-          id: draftId,
-          storeId: currentStoreId ?? undefined,
-          userId: session?.user.id,
-          cashSessionId: currentCashSession?.id,
-          status: 'open',
-          createdAt,
-          updatedAt: createdAt,
-          items: [],
-        };
-        setSaleDrafts(prev => [draft, ...prev]);
-        setActiveDraftId(draftId);
-        return draft;
+        toast.error('Necesitas conexión con Supabase para crear ventas.');
+        return null;
       }
 
       if (!session || !currentStoreId) {
@@ -2989,7 +2975,6 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return draft;
     } catch (error) {
       console.error('No se pudo crear borrador en Supabase', error);
-      markPendingSync();
       if (isMissingTableError(error, 'sale_drafts')) {
         toast.error('Faltan tablas de borradores en Supabase. Aplica la migración de ventas múltiples.');
       } else {
@@ -3303,6 +3288,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Funciones de caja
   const openCashSession = async (openingCash: number, openingNote?: string): Promise<boolean> => {
+    if (!requireCloudWrite('Necesitas conexión con Supabase para abrir caja.')) {
+      return false;
+    }
+
     if (currentCashSession) {
       const statusLabel = currentCashSession.status === 'counting' ? 'en arqueo' : 'abierta';
       toast.info(`Ya existe una caja ${statusLabel} en esta tienda.`);
@@ -3406,6 +3395,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
       date?: string;
     },
   ): Promise<CashMovement | null> => {
+    if (!requireCloudWrite('Necesitas conexión con Supabase para registrar movimientos de caja.')) {
+      return null;
+    }
+
     const targetSessionId = options?.sessionId ?? currentCashSession?.id;
     if (!targetSessionId) {
       if (!options?.silent) {
@@ -3456,10 +3449,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
         }
       } catch (error) {
         console.error('No se pudo guardar movimiento de caja en Supabase', error);
-        markPendingSync();
         if (!options?.silent) {
-          toast.error('Movimiento guardado localmente, pero falló en Supabase.');
+          toast.error('No se pudo guardar el movimiento de caja en Supabase.');
         }
+        return null;
       }
     }
 
@@ -3487,6 +3480,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const startCashCounting = async (): Promise<boolean> => {
+    if (!requireCloudWrite('Necesitas conexión con Supabase para iniciar arqueo.')) {
+      return false;
+    }
+
     if (!currentCashSession) {
       toast.error('No hay una caja activa para iniciar arqueo.');
       return false;
@@ -3518,8 +3515,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
         });
       } catch (error) {
         console.error('No se pudo iniciar arqueo en Supabase', error);
-        markPendingSync();
-        toast.error('Arqueo iniciado localmente, pero falló en Supabase.');
+        setCashSessions((prev) => prev.map((sessionItem) => (
+          sessionItem.id === currentCashSession.id ? currentCashSession : sessionItem
+        )));
+        toast.error('No se pudo iniciar arqueo en Supabase.');
+        return false;
       }
     }
 
@@ -3528,6 +3528,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const cancelCashCounting = async (): Promise<boolean> => {
+    if (!requireCloudWrite('Necesitas conexión con Supabase para cancelar arqueo.')) {
+      return false;
+    }
+
     if (!currentCashSession) {
       toast.error('No hay una caja activa.');
       return false;
@@ -3554,8 +3558,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
         });
       } catch (error) {
         console.error('No se pudo cancelar arqueo en Supabase', error);
-        markPendingSync();
-        toast.error('Se salió del arqueo localmente, pero falló en Supabase.');
+        setCashSessions((prev) => prev.map((sessionItem) => (
+          sessionItem.id === currentCashSession.id ? currentCashSession : sessionItem
+        )));
+        toast.error('No se pudo cancelar arqueo en Supabase.');
+        return false;
       }
     }
 
@@ -3568,6 +3575,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
     closingNote?: string,
     countedCashBreakdown?: CashCountBreakdown,
   ): Promise<CashSession | null> => {
+    if (!requireCloudWrite('Necesitas conexión con Supabase para cerrar caja.')) {
+      return null;
+    }
+
     if (!currentCashSession) {
       toast.error('No hay una caja activa para cerrar.');
       return null;
@@ -3617,8 +3628,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
         });
       } catch (error) {
         console.error('No se pudo cerrar caja en Supabase', error);
-        markPendingSync();
-        toast.error('Caja cerrada localmente, pero falló en Supabase.');
+        setCashSessions(prev => prev.map(sessionItem => sessionItem.id === currentCashSession.id ? currentCashSession : sessionItem));
+        toast.error('No se pudo cerrar caja en Supabase.');
+        return null;
       }
     }
 
@@ -3902,85 +3914,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
           : 'otro';
 
     if (!isConnectedToSupabase) {
-      const saleDate = new Date().toISOString();
-      const invoiceNumber = getNextOfflineInvoiceNumber();
-
-      const newSale: Sale = {
-        id: `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        date: saleDate,
-        items: [...cart],
-        subtotal: roundedSubtotal,
-        discount: roundedDiscount,
-        iva: roundedIva,
-        total: roundedTotal,
-        paymentMethod: paymentMethodValue,
-        cashReceived: cashTendered,
-        change,
-        paymentBreakdown,
-        creditedAmount,
-        customerId: activeDraft.customerId,
-        invoiceNumber,
-        cashSessionId: currentCashSession.id,
-        returnedAt: null,
-      };
-
-      setSales(prev => [...prev, newSale]);
-
-      await registerSaleMovements(newSale, currentCashSession.id, saleDate);
-
-      setProducts(prev => prev.map((product) => {
-        const item = cart.find(cartItem => cartItem.product.id === product.id);
-        if (!item) return product;
-        return { ...product, stock: product.stock - item.quantity };
-      }));
-
-      cart.forEach((item) => {
-        const product = products.find(p => p.id === item.product.id) ?? item.product;
-        const stockBefore = product.stock;
-        const stockAfter = stockBefore - item.quantity;
-        appendKardexMovement({
-          productId: product.id,
-          productName: product.name,
-          type: 'sale',
-          reference: invoiceNumber,
-          quantity: -item.quantity,
-          stockBefore,
-          stockAfter,
-          unitCost: buildUnitCostWithIva(product),
-          unitSalePrice: product.salePrice,
-          totalCost: buildUnitCostWithIva(product) * item.quantity,
-        });
-      });
-
-      if (newSale.customerId) {
-        const points = Math.floor(newSale.total / 1000);
-        setCustomers(prev => prev.map((customer) => {
-          if (customer.id !== newSale.customerId) return customer;
-          return {
-            ...customer,
-            points: customer.points + points,
-            purchases: [...customer.purchases, newSale],
-          };
-        }));
-
-        if (creditedAmount > 0) {
-          const reference = newSale.invoiceNumber || newSale.id;
-          addDebtToCustomer(newSale.customerId, creditedAmount, buildCreditSaleDescription(reference, cart));
-        }
-      }
-
-      const remainingDrafts = saleDrafts.filter(draft => draft.id !== activeDraft.id);
-      setSaleDrafts(remainingDrafts);
-      if (remainingDrafts.length === 0) {
-        await createSaleDraft();
-      } else {
-        setActiveDraftId(remainingDrafts[0].id);
-      }
-
-      toast.success(creditedAmount > 0
-        ? 'Venta registrada con abono y saldo a fiado.'
-        : 'Venta registrada correctamente.');
-      return newSale;
+      toast.error('No se puede registrar la venta sin conexión a Supabase.');
+      return null;
     }
 
     if (!session || !currentStoreId) {
@@ -4402,6 +4337,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Funciones de clientes
   const addCustomer = async (customer: Omit<Customer, 'id' | 'points' | 'debt' | 'purchases' | 'debtHistory'>): Promise<ProductWriteStatus> => {
+    if (!requireCloudWrite('Necesitas conexión con Supabase para crear clientes.')) {
+      return 'failed';
+    }
+
     const newCustomer: Customer = {
       ...customer,
       id: Date.now().toString(),
@@ -4437,12 +4376,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    setCustomers(prev => [...prev, newCustomer]);
-    markPendingSync();
-    return 'local-pending';
+    return 'failed';
   };
 
   const updateCustomer = async (id: string, updatedCustomer: Partial<Customer>): Promise<ProductWriteStatus> => {
+    if (!requireCloudWrite('Necesitas conexión con Supabase para editar clientes.')) {
+      return 'failed';
+    }
+
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
         await updateCustomerRow(session.access_token, currentStoreId, id, {
@@ -4463,12 +4404,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    setCustomers(prev => prev.map(c => c.id === id ? { ...c, ...updatedCustomer } : c));
-    markPendingSync();
-    return 'local-pending';
+    return 'failed';
   };
 
   const deleteCustomer = async (id: string): Promise<ProductWriteStatus> => {
+    if (!requireCloudWrite('Necesitas conexión con Supabase para eliminar clientes.')) {
+      return 'failed';
+    }
+
     const customer = customers.find((item) => item.id === id);
     if (!customer) {
       return 'failed';
@@ -4505,10 +4448,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    setCustomers((prev) => prev.filter((item) => item.id !== id));
-    clearCustomerReferences();
-    markPendingSync();
-    return 'local-pending';
+    return 'failed';
   };
 
   const addDebtToCustomer = (customerId: string, amount: number, description: string) => {
@@ -4541,7 +4481,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         }).catch((error) => {
           console.error('No se pudo guardar movimiento de deuda en Supabase', error);
           markPendingSync();
-          toast.error('Movimiento de deuda guardado localmente, pero falló en Supabase.');
+          toast.error('No se pudo guardar el movimiento de deuda en Supabase.');
         });
       }
     }
@@ -4618,7 +4558,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         }).catch((error) => {
           console.error('No se pudo guardar pago de deuda en Supabase', error);
           markPendingSync();
-          toast.error('Pago guardado localmente, pero falló en Supabase.');
+          toast.error('No se pudo guardar el pago de deuda en Supabase.');
         });
       }
     }
@@ -4627,6 +4567,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
   // Funciones de proveedores
   const addSupplier = async (supplier: Omit<Supplier, 'id' | 'debt' | 'purchases'>): Promise<ProductWriteStatus> => {
     if (!requirePermission('suppliers:manage', 'Solo un administrador puede crear proveedores.')) {
+      return 'failed';
+    }
+    if (!requireCloudWrite('Necesitas conexión con Supabase para crear proveedores.')) {
       return 'failed';
     }
 
@@ -4668,12 +4611,14 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    setSuppliers(prev => [...prev, newSupplier]);
-    markPendingSync();
-    return 'local-pending';
+    return 'failed';
   };
 
   const applySupplierPatch = async (id: string, updatedSupplier: Partial<Supplier>): Promise<ProductWriteStatus> => {
+    if (!requireCloudWrite('Necesitas conexión con Supabase para editar proveedores.')) {
+      return 'failed';
+    }
+
     if (isConnectedToSupabase && session && currentStoreId) {
       try {
         await updateSupplierRow(session.access_token, currentStoreId, id, {
@@ -4694,9 +4639,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    setSuppliers(prev => prev.map(s => s.id === id ? { ...s, ...updatedSupplier } : s));
-    markPendingSync();
-    return 'local-pending';
+    return 'failed';
   };
 
   const updateSupplier = async (id: string, updatedSupplier: Partial<Supplier>): Promise<ProductWriteStatus> => {
@@ -4709,6 +4652,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   const deleteSupplier = async (id: string): Promise<ProductWriteStatus> => {
     if (!requirePermission('suppliers:manage', 'Solo un administrador puede eliminar proveedores.')) {
+      return 'failed';
+    }
+    if (!requireCloudWrite('Necesitas conexión con Supabase para eliminar proveedores.')) {
       return 'failed';
     }
 
@@ -4724,9 +4670,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    setSuppliers(prev => prev.filter(s => s.id !== id));
-    markPendingSync();
-    return 'local-pending';
+    return 'failed';
   };
 
   const registerPurchase = (
@@ -4735,6 +4679,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
     options?: { pricePolicy?: PurchasePricePolicy }
   ) => {
     if (!requirePermission('purchases:register', 'No tienes permisos para registrar compras.')) {
+      return;
+    }
+    if (!requireCloudWrite('Necesitas conexión con Supabase para registrar compras.')) {
       return;
     }
 
@@ -4860,7 +4807,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       }).catch((error) => {
         console.error('No se pudo guardar compra en Supabase', error);
         markPendingSync();
-        toast.error('Compra guardada localmente, pero falló en Supabase.');
+        toast.error('No se pudo guardar la compra en Supabase.');
       });
     }
   };
@@ -4907,9 +4854,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
         await updatePurchasePaid(session.access_token, currentStoreId, purchaseId, paid);
       } catch (error) {
         console.error('No se pudo actualizar compra en Supabase', error);
-        markPendingSync();
-        toast.error('Compra actualizada localmente, pero falló en Supabase.');
-        return 'local-pending';
+        toast.error('No se pudo actualizar la compra en Supabase.');
+        return 'failed';
       }
     }
 
@@ -5005,9 +4951,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
         await deletePurchaseWithItems(session.access_token, currentStoreId, purchaseId);
       } catch (error) {
         console.error('No se pudo eliminar compra en Supabase', error);
-        markPendingSync();
-        toast.error('Compra eliminada localmente, pero falló en Supabase.');
-        return 'local-pending';
+        toast.error('No se pudo eliminar la compra en Supabase.');
+        return 'failed';
       }
     }
 
@@ -5016,6 +4961,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   // Funciones de recargas
   const addRecharge = (recharge: Omit<RechargeTransaction, 'id' | 'date'>) => {
+    if (!requireCloudWrite('Necesitas conexión con Supabase para registrar recargas.')) {
+      return;
+    }
+
     const newRecharge: RechargeTransaction = {
       ...recharge,
       id: Date.now().toString(),
@@ -5034,8 +4983,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         createdAt: newRecharge.date,
       }).catch((error) => {
         console.error('No se pudo guardar recarga en Supabase', error);
-        markPendingSync();
-        toast.error('Recarga guardada localmente, pero falló en Supabase.');
+        toast.error('No se pudo guardar la recarga en Supabase.');
       });
     }
   };
@@ -5046,16 +4994,12 @@ export function POSProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
+    if (!canReachSupabase || !session) {
+      toast.error('Necesitas conexión con Supabase para guardar la configuración.');
+      return false;
+    }
+
     const merged = { ...storeConfig, ...config };
-    setStoreConfig(merged);
-
-    if (!canReachSupabase) {
-      return true;
-    }
-
-    if (!session) {
-      return true;
-    }
 
     let targetStoreId = currentStoreId;
 
@@ -5089,11 +5033,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
         purchasePricePolicy: merged.purchasePricePolicy,
         currency: merged.currency,
       });
+      setStoreConfig(merged);
       return true;
     } catch (error) {
       console.error('No se pudo guardar configuración de tienda en Supabase', error);
-      markPendingSync();
-      toast.error('Guardado local OK, pero falló guardar configuración en Supabase.');
+      toast.error('No se pudo guardar la configuración en Supabase.');
       return false;
     }
   };

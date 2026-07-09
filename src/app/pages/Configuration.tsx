@@ -115,6 +115,8 @@ export function Configuration() {
     syncWithSupabase,
     createCompleteBackup,
     rebuildLocalCache,
+    uploadLocalBackupToSupabase,
+    verifyAdminPasswordForCriticalAction,
     createStore,
     hasConnectedStore,
     getPendingProductSyncPreview,
@@ -134,9 +136,11 @@ export function Configuration() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRebuildingCache, setIsRebuildingCache] = useState(false);
+  const [isRestoringToCloud, setIsRestoringToCloud] = useState(false);
   const [backupValidation, setBackupValidation] = useState<BackupValidationResult | null>(null);
   const [isRegisteringStore, setIsRegisteringStore] = useState(false);
   const [showPendingModal, setShowPendingModal] = useState(false);
+  const [showCloudRestoreDialog, setShowCloudRestoreDialog] = useState(false);
   const getLiveSyncSummary = (): Omit<PendingSyncSummary, 'source'> => ({
     products: products.length,
     sales: sales.length,
@@ -164,6 +168,8 @@ export function Configuration() {
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserFullName, setNewUserFullName] = useState('');
   const [newUserRole, setNewUserRole] = useState<'admin' | 'cashier'>('cashier');
+  const [cloudRestorePassword, setCloudRestorePassword] = useState('');
+  const [cloudRestoreConfirmation, setCloudRestoreConfirmation] = useState('');
 
   // Lee el tab desde querystring (?tab=categories, etc).
   useEffect(() => {
@@ -357,6 +363,30 @@ export function Configuration() {
     }
   };
 
+  const handleRestoreLocalToCloud = async () => {
+    if (isRestoringToCloud) return;
+    if (cloudRestoreConfirmation.trim() !== 'RESTAURAR') {
+      toast.error('Escribe RESTAURAR para confirmar.');
+      return;
+    }
+
+    setIsRestoringToCloud(true);
+    try {
+      const passwordOk = await verifyAdminPasswordForCriticalAction(cloudRestorePassword);
+      if (!passwordOk) return;
+
+      const restored = await uploadLocalBackupToSupabase(true);
+      if (!restored) return;
+
+      toast.success('Backup local restaurado en Supabase.');
+      setShowCloudRestoreDialog(false);
+      setCloudRestorePassword('');
+      setCloudRestoreConfirmation('');
+    } finally {
+      setIsRestoringToCloud(false);
+    }
+  };
+
   // Alta de categorías.
   const handleAddCategory = async () => {
     const created = await addCategory(newCategory);
@@ -440,7 +470,7 @@ export function Configuration() {
   const handleManualSync = async () => {
     if (isSyncing) return;
     if (hasPendingSync) {
-      toast.error('No se descargará la nube mientras existan cambios offline pendientes.');
+      toast.error('No se descargará la nube mientras existan cambios locales pendientes.');
       return;
     }
     setIsSyncing(true);
@@ -1136,59 +1166,13 @@ export function Configuration() {
               </div>
             )}
 
-            <div className="p-4 border rounded-lg space-y-4">
+            <div className="p-4 border rounded-lg bg-gray-50">
               <div>
-                <h3 className="font-semibold">Modo Offline</h3>
+                <h3 className="font-semibold">Modo Offline deshabilitado</h3>
                 <p className="text-sm text-gray-600">
-                  PIN configurado: {offlinePinConfigured ? 'Sí' : 'No'}
+                  El acceso y la operación sin internet quedan pausados. Las ventas, compras y modificaciones deben guardarse directamente en Supabase.
                 </p>
               </div>
-
-              <div>
-                <Label>Rol que opera en offline</Label>
-                <Select value={offlineRoleSelection} onValueChange={(value: 'admin' | 'cashier') => handleOfflineRoleChange(value)}>
-                  <SelectTrigger className="h-12">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="admin">Administrador</SelectItem>
-                    <SelectItem value="cashier">Cajero</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>Nuevo PIN (4 dígitos)</Label>
-                  <Input
-                    value={offlinePin}
-                    onChange={(e) => setOfflinePinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    inputMode="numeric"
-                    maxLength={4}
-                    type="password"
-                    className={inputClass}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Confirmar PIN</Label>
-                  <Input
-                    value={offlinePinConfirm}
-                    onChange={(e) => setOfflinePinConfirm(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                    inputMode="numeric"
-                    maxLength={4}
-                    type="password"
-                    className={inputClass}
-                  />
-                </div>
-              </div>
-
-              <Button
-                onClick={handleOfflinePinSave}
-                className="h-12 bg-[#2ECC71] hover:bg-[#27AE60]"
-                disabled={isSavingOfflinePin}
-              >
-                {isSavingOfflinePin ? 'Guardando PIN...' : 'Guardar PIN Offline'}
-              </Button>
             </div>
 
             <div className="p-4 bg-blue-50 rounded-lg">
@@ -1207,17 +1191,17 @@ export function Configuration() {
             </div>
 
             <div className="p-4 bg-secondary rounded-lg">
-              <p className="font-semibold mb-2">Almacenamiento Local</p>
+              <p className="font-semibold mb-2">Base de datos</p>
               <p className="text-sm text-gray-600">
-                Los datos se guardan automáticamente en el navegador y se sincronizan con la base de datos cuando hay conexión.
+                Las ventas, compras y modificaciones se guardan directamente en Supabase. El navegador solo conserva caché para lectura y respaldo operativo.
               </p>
             </div>
 
             {hasPendingSync && (
               <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                <p className="font-semibold mb-2 text-yellow-800">Cambios offline pendientes</p>
+                <p className="font-semibold mb-2 text-yellow-800">Cambios locales pendientes</p>
                 <p className="text-sm text-yellow-700">
-                  El sistema intentará sincronizar automáticamente al recuperar conexión. También puedes forzar la sincronización manualmente.
+                  Existen datos locales de una versión anterior con modo offline. Revisa el detalle antes de hacer una restauración manual.
                 </p>
                 <Button
                   variant="outline"
@@ -1347,20 +1331,21 @@ export function Configuration() {
                   <div>
                     <p className="font-semibold">Enviar datos de este equipo a la nube</p>
                     <p className="text-sm text-gray-600">
-                      Esta operación está bloqueada para impedir que una copia local parcial reemplace la nube.
+                      Restaura el backup local en Supabase reemplazando la información remota de esta tienda.
                     </p>
                   </div>
                 </div>
                 <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-800">
-                  Protección activa: no se permiten reemplazos destructivos de Supabase.
+                  Acción crítica: úsala solo cuando este equipo tenga la copia correcta. Requiere contraseña de administrador.
                 </div>
                 <Button
                   variant="outline"
                   className="w-full h-12"
-                  disabled
-                  title="Bloqueado para proteger los datos remotos."
+                  onClick={() => setShowCloudRestoreDialog(true)}
+                  disabled={isRestoringToCloud || !hasConnectedStore}
+                  title="Reemplaza Supabase con el backup local validado de este equipo."
                 >
-                  Envío destructivo bloqueado
+                  {isRestoringToCloud ? 'Restaurando en Supabase...' : 'Restaurar backup local en Supabase'}
                 </Button>
               </div>
 
@@ -1408,9 +1393,9 @@ export function Configuration() {
             </div>
 
             <div className="p-4 bg-blue-50 rounded-lg">
-              <p className="font-semibold mb-2">Modo Offline</p>
+              <p className="font-semibold mb-2">Operación en línea</p>
               <p className="text-sm text-gray-600">
-                El sistema funciona sin conexión a internet y sincroniza automáticamente al volver la conexión.
+                El sistema requiere conexión con Supabase para registrar ventas, compras, caja, inventario, clientes, proveedores y recargas.
               </p>
             </div>
 
@@ -1421,6 +1406,69 @@ export function Configuration() {
               </p>
             </div>
           </Card>
+
+          <Dialog open={showCloudRestoreDialog} onOpenChange={(open) => {
+            if (isRestoringToCloud) return;
+            setShowCloudRestoreDialog(open);
+            if (!open) {
+              setCloudRestorePassword('');
+              setCloudRestoreConfirmation('');
+            }
+          }}>
+            <DialogContent className="w-[95vw] max-w-md">
+              <DialogHeader>
+                <DialogTitle>Restaurar backup local en Supabase</DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-4">
+                <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                  Esta acción reemplaza los datos remotos de la tienda por la copia guardada en este equipo. Antes de ejecutar se valida la estructura del backup.
+                </div>
+
+                <div>
+                  <Label>Contraseña de administrador</Label>
+                  <Input
+                    type="password"
+                    className={inputClass}
+                    value={cloudRestorePassword}
+                    onChange={(event) => setCloudRestorePassword(event.target.value)}
+                    disabled={isRestoringToCloud}
+                    autoComplete="current-password"
+                  />
+                </div>
+
+                <div>
+                  <Label>Confirmación</Label>
+                  <Input
+                    className={inputClass}
+                    value={cloudRestoreConfirmation}
+                    onChange={(event) => setCloudRestoreConfirmation(event.target.value)}
+                    placeholder="Escribe RESTAURAR"
+                    disabled={isRestoringToCloud}
+                  />
+                </div>
+
+                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowCloudRestoreDialog(false)}
+                    disabled={isRestoringToCloud}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                    onClick={handleRestoreLocalToCloud}
+                    disabled={isRestoringToCloud || !cloudRestorePassword || cloudRestoreConfirmation.trim() !== 'RESTAURAR'}
+                  >
+                    {isRestoringToCloud ? 'Restaurando...' : 'Restaurar en Supabase'}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
 
           <Dialog open={showPendingModal} onOpenChange={setShowPendingModal}>
             <DialogContent className="w-[95vw] max-w-lg max-h-[90vh] overflow-y-auto">

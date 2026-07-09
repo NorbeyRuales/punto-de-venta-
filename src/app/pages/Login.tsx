@@ -97,13 +97,9 @@ export function Login() {
         navigate('/dashboard');
       } else {
         const reachable = await checkSupabaseReachable();
-        if (!reachable) {
-          setShowOfflinePanel(true);
-          setError('');
-          toast.info('Sin internet. Usa el PIN para ingresar en modo offline.');
-        } else {
-          setError('Email o contraseña incorrectos');
-        }
+        setError(reachable
+          ? 'Email o contraseña incorrectos'
+          : 'No hay conexión con Supabase. El acceso offline está deshabilitado.');
       }
     } finally {
       setIsSubmitting(false);
@@ -355,115 +351,9 @@ export function Login() {
           </div>
         </form>
 
-        {!showOfflinePanel && (
-          <div className="mt-4 text-center">
-            <Button
-              type="button"
-              variant="ghost"
-              className="text-sm text-[var(--muted-foreground)] hover:text-foreground"
-              onClick={handleShowOfflinePanel}
-            >
-              Acceder offline
-            </Button>
-          </div>
-        )}
-
-        {showOfflinePanel && (
-          <div className="mt-8 border-t border-[var(--border)] pt-6 space-y-4">
-            <h2 className="text-lg font-semibold">Ingreso Offline (PIN)</h2>
-
-            {!offlinePinConfigured && (
-              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg space-y-3">
-                <p className="text-sm text-yellow-800 font-semibold">Configura un PIN de 4 dígitos</p>
-                <div className="grid gap-3">
-                  <div>
-                    <Label htmlFor="offlinePinSetup">Nuevo PIN</Label>
-                    <Input
-                      id="offlinePinSetup"
-                      type="password"
-                      inputMode="numeric"
-                      maxLength={4}
-                      placeholder="0000"
-                      value={offlinePinSetup}
-                      onChange={(e) => setOfflinePinSetup(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                      className="h-12 bg-[var(--input-background)] border border-[var(--border)]"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="offlinePinConfirm">Confirmar PIN</Label>
-                    <Input
-                      id="offlinePinConfirm"
-                      type="password"
-                      inputMode="numeric"
-                      maxLength={4}
-                      placeholder="0000"
-                      value={offlinePinConfirm}
-                      onChange={(e) => setOfflinePinConfirm(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                      className="h-12 bg-[var(--input-background)] border border-[var(--border)]"
-                    />
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  className="w-full h-12 bg-[#2ECC71] hover:bg-[#27AE60]"
-                  onClick={handleSetOfflinePin}
-                  disabled={isSettingPin}
-                >
-                  {isSettingPin ? 'Guardando PIN...' : 'Guardar PIN Offline'}
-                </Button>
-              </div>
-            )}
-
-            <form onSubmit={handleOfflineLogin} className="space-y-4">
-              <div>
-                <Label htmlFor="offlinePin">PIN de 4 dígitos</Label>
-                <Input
-                  id="offlinePin"
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={4}
-                  placeholder="0000"
-                  value={offlinePin}
-                  onChange={(e) => setOfflinePinInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                  className="h-12 bg-[var(--input-background)] border border-[var(--border)]"
-                  disabled={!offlinePinConfigured}
-                />
-              </div>
-
-              <div>
-                <Label>Rol offline</Label>
-                <Select value={offlineRole} onValueChange={(value: 'admin' | 'cashier') => setOfflineRole(value)}>
-                  <SelectTrigger className="h-12">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="admin">Administrador</SelectItem>
-                    <SelectItem value="cashier">Cajero</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label htmlFor="offlineUsername">Usuario (opcional)</Label>
-                <Input
-                  id="offlineUsername"
-                  placeholder="Caja 1"
-                  value={offlineUsername}
-                  onChange={(e) => setOfflineUsername(e.target.value)}
-                  className="h-12 bg-[var(--input-background)] border border-[var(--border)]"
-                />
-              </div>
-
-              <Button
-                type="submit"
-                className="w-full h-12 bg-[var(--primary)] hover:bg-[var(--primary-hover)] text-[var(--primary-foreground)] font-semibold"
-                disabled={!offlinePinConfigured || isOfflineSubmitting}
-              >
-                {isOfflineSubmitting ? 'Ingresando...' : 'Entrar sin Internet'}
-              </Button>
-            </form>
-          </div>
-        )}
+        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          El acceso sin internet está deshabilitado. Para operar ventas, compras o inventario debes iniciar sesión con conexión a Supabase.
+        </div>
 
 
       </div>
