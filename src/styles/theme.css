@@ -156,6 +156,17 @@
     @apply border-border outline-ring/50;
   }
 
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  #root {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
   body {
     @apply bg-background text-foreground;
     background-image:
@@ -163,6 +174,10 @@
       radial-gradient(900px 620px at 110% 110%, rgba(142, 193, 222, 0.32), transparent 58%),
       linear-gradient(160deg, #f2f6ff 0%, #eaf0ff 45%, #f8fbff 100%);
     background-attachment: fixed;
+    background-repeat: no-repeat;
+    background-size: cover;
+    min-height: 100vh;
+    min-height: 100dvh;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     line-height: 1.6;
@@ -173,6 +188,12 @@
       radial-gradient(1200px 760px at -15% -30%, rgba(59, 130, 246, 0.22), transparent 62%),
       radial-gradient(880px 600px at 120% 120%, rgba(168, 85, 247, 0.14), transparent 60%),
       linear-gradient(165deg, #0b1120 0%, #101a33 45%, #0b1428 100%);
+  }
+
+  @media (max-width: 767px) {
+    body {
+      background-attachment: scroll;
+    }
   }
 
   /**

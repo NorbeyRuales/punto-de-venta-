@@ -113,7 +113,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isConnected = isAuthenticated && hasConnectedStore && isOnline;
 
   return (
-    <div className="min-h-screen bg-secondary flex">
+    <div className="min-h-dvh bg-transparent flex">
       {showRouteLoading && (
         <div className="top-loading-bar" role="status" aria-live="polite">
           <div className="top-loading-bar__indicator" />
@@ -258,7 +258,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-h-screen">
+      <div className="flex-1 flex flex-col min-h-dvh min-w-0">
         {/* Header Mobile */}
         <header className="glass-surface lg:hidden bg-white border-b border-border p-4 flex items-center justify-between">
           <button onClick={() => setIsSidebarOpen(true)}>
@@ -292,7 +292,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </header>
 
         {/* Page Content */}
-        <main className="flex-1 p-4 lg:p-8 overflow-y-auto">
+        <main className="flex-1 min-w-0 p-4 lg:p-8">
           {children}
         </main>
       </div>

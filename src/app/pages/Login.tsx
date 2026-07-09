@@ -157,7 +157,7 @@ export function Login() {
   // Vista: creación de tienda (primer uso).
   if (showCreateStore) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-[#d3d3ff] via-[#ceb5ff] to-[#80a8ff] flex items-center justify-center p-4">
+      <div className="min-h-dvh bg-gradient-to-br from-[#d3d3ff] via-[#ceb5ff] to-[#80a8ff] flex items-center justify-center p-4">
         <div className="w-full max-w-md bg-[var(--card)] border border-[var(--border)] shadow-[var(--shadow-card)] rounded-2xl p-8 text-foreground">
           <div className="text-center mb-8">
             <div className="w-16 h-16 rounded-2xl border border-[var(--primary)] bg-[var(--primary-soft)] overflow-hidden flex items-center justify-center mx-auto mb-4">
@@ -267,7 +267,7 @@ export function Login() {
 
   // Vista: login normal.
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#d3d3ff] via-[#ceb5ff] to-[#80a8ff] flex items-center justify-center p-4">
+    <div className="min-h-dvh bg-gradient-to-br from-[#d3d3ff] via-[#ceb5ff] to-[#80a8ff] flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-[var(--card)] border border-[var(--border)] shadow-[var(--shadow-card)] rounded-2xl p-8 text-foreground">
         <div className="text-center mb-8 space-y-2">
           <div className="w-20 h-20 rounded-2xl border border-[var(--primary)] bg-[var(--primary-soft)] overflow-hidden flex items-center justify-center mx-auto mb-4">
