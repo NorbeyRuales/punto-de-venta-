@@ -4,6 +4,7 @@ import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
+import { Textarea } from '../components/ui/textarea';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Checkbox } from '../components/ui/checkbox';
@@ -112,6 +113,7 @@ export function CashRegister() {
   const [billCounts, setBillCounts] = useState<Record<string, string>>(() => buildCountInputState(CASH_BILL_DENOMINATIONS));
   const [coinCounts, setCoinCounts] = useState<Record<string, string>>(() => buildCountInputState(CASH_COIN_DENOMINATIONS));
   const [closingNote, setClosingNote] = useState('');
+  const [differenceNote, setDifferenceNote] = useState('');
   const [lastClosedId, setLastClosedId] = useState<string | null>(null);
   const [showCloseReportDialog, setShowCloseReportDialog] = useState(false);
   const [selectedClosedSessionId, setSelectedClosedSessionId] = useState<string | null>(null);
@@ -336,11 +338,12 @@ export function CashRegister() {
       coinsTotal,
       total: countedPreview,
       currency: 'COP',
-    });
+    }, differenceNote);
     if (closed) {
       setBillCounts(buildCountInputState(CASH_BILL_DENOMINATIONS));
       setCoinCounts(buildCountInputState(CASH_COIN_DENOMINATIONS));
       setClosingNote('');
+      setDifferenceNote('');
       setLastClosedId(closed.id);
     }
   };
@@ -679,7 +682,33 @@ export function CashRegister() {
                   {differencePreview === 0 && 'El conteo coincide con el esperado.'}
                 </p>
               </div>
-              <Button className="h-12 bg-[#0f172a] hover:bg-[#111827] text-white" onClick={handleClose} disabled={!isCounting}>
+              <div>
+                <Label htmlFor="cash-difference-note">
+                  Justificación de la diferencia {differencePreview !== 0 ? '*' : '(Opcional)'}
+                </Label>
+                <Textarea
+                  id="cash-difference-note"
+                  value={differenceNote}
+                  onChange={(event) => setDifferenceNote(event.target.value)}
+                  placeholder={differencePreview < 0
+                    ? 'Explica el motivo del faltante...'
+                    : differencePreview > 0
+                      ? 'Explica el motivo del sobrante...'
+                      : 'No hay diferencia por justificar.'}
+                  rows={3}
+                  maxLength={1000}
+                  aria-required={differencePreview !== 0}
+                  className={differencePreview !== 0 && !differenceNote.trim() ? 'border-amber-400' : ''}
+                />
+                {differencePreview !== 0 && !differenceNote.trim() && (
+                  <p className="mt-1 text-xs text-amber-700">Es obligatorio explicar la diferencia antes de cerrar la caja.</p>
+                )}
+              </div>
+              <Button
+                className="h-12 bg-[#0f172a] hover:bg-[#111827] text-white"
+                onClick={handleClose}
+                disabled={!isCounting || (differencePreview !== 0 && !differenceNote.trim())}
+              >
                 <Lock className="w-4 h-4 mr-2" />
                 Cerrar caja
               </Button>
@@ -828,6 +857,12 @@ export function CashRegister() {
                 {formatCurrency(lastClosedSession.difference || 0)}
               </p>
             </div>
+            {lastClosedSession.differenceNote && (
+              <div className="md:col-span-2">
+                <p className="text-xs text-gray-600">Justificación de la diferencia</p>
+                <p className="text-sm font-semibold">{lastClosedSession.differenceNote}</p>
+              </div>
+            )}
             <div>
               <p className="text-xs text-gray-600">Ventas totales</p>
               <p className="text-sm font-semibold">{formatCurrency(lastClosedReport.salesTotal)}</p>
@@ -1113,6 +1148,15 @@ export function CashRegister() {
                   <p className="text-sm text-slate-700">{selectedClosedSession.closingNote || selectedClosedSession.closedByName || 'Sin responsable registrado'}</p>
                 </div>
               </div>
+
+              {(selectedClosedSession.difference ?? 0) !== 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-xs font-medium text-amber-700">Justificación de la diferencia</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm text-amber-900">
+                    {selectedClosedSession.differenceNote || 'Sin justificación registrada'}
+                  </p>
+                </div>
+              )}
 
               <div className="rounded-lg border border-slate-200 p-3">
                 <p className="mb-2 text-sm font-semibold text-slate-700">Movimientos de caja de la sesión</p>

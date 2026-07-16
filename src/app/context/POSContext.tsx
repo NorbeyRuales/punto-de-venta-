@@ -558,6 +558,7 @@ export interface CashSession {
   countedCashBreakdown?: CashCountBreakdown;
   countedAt?: string;
   closingNote?: string;
+  differenceNote?: string;
   difference?: number;
   status: 'open' | 'closed' | 'counting' | 'closed_with_difference';
 }
@@ -760,6 +761,7 @@ interface POSContextType {
     countedCash: number,
     closingNote?: string,
     countedCashBreakdown?: CashCountBreakdown,
+    differenceNote?: string,
   ) => Promise<CashSession | null>;
   clearSelectedCashReports: (sessionIds: string[]) => Promise<boolean>;
   clearCashReports: () => Promise<boolean>;
@@ -1523,6 +1525,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           countedCashBreakdown: sanitizeCashCountBreakdown(row.counted_cash_breakdown),
           countedAt: row.counted_at ?? undefined,
           closingNote: row.closing_note ?? undefined,
+          differenceNote: row.difference_note ?? undefined,
           difference: row.difference == null ? undefined : toNumber(row.difference),
           status: row.status,
         })));
@@ -3574,6 +3577,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
     countedCash: number,
     closingNote?: string,
     countedCashBreakdown?: CashCountBreakdown,
+    differenceNote?: string,
   ): Promise<CashSession | null> => {
     if (!requireCloudWrite('Necesitas conexión con Supabase para cerrar caja.')) {
       return null;
@@ -3593,6 +3597,11 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const difference = roundMoney(safeCounted - expectedCash);
     const closedAt = new Date().toISOString();
     const normalizedClosingNote = closingNote?.trim() || undefined;
+    const normalizedDifferenceNote = differenceNote?.trim() || undefined;
+    if (difference !== 0 && !normalizedDifferenceNote) {
+      toast.error('Debes justificar el faltante o sobrante antes de cerrar la caja.');
+      return null;
+    }
     const closedByName = normalizedClosingNote || currentUser?.fullName?.trim() || currentUser?.username?.trim() || undefined;
     const nextStatus: CashSession['status'] = difference === 0 ? 'closed' : 'closed_with_difference';
 
@@ -3604,6 +3613,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       countedCashBreakdown: sanitizedBreakdown,
       countedAt: closedAt,
       closingNote: normalizedClosingNote,
+      differenceNote: normalizedDifferenceNote,
       closedBy: session?.user.id,
       closedByName,
       difference,
@@ -3621,6 +3631,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           countedCashBreakdown: sanitizedBreakdown,
           countedAt: closedAt,
           closingNote: normalizedClosingNote,
+          differenceNote: normalizedDifferenceNote,
           closedBy: session.user.id,
           closedByName,
           difference,

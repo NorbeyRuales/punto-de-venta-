@@ -210,6 +210,7 @@ type CashSessionRow = {
   counted_cash_breakdown: Record<string, unknown> | null;
   counted_at: string | null;
   closing_note: string | null;
+  difference_note: string | null;
   difference: number | null;
   status: CashSessionStatus;
   opened_by: string | null;
@@ -1213,6 +1214,7 @@ export async function updateCashSession(
     countedCashBreakdown?: unknown;
     countedAt?: string;
     closingNote?: string;
+    differenceNote?: string;
     closedBy?: string;
     closedByName?: string;
     difference?: number;
@@ -1227,6 +1229,7 @@ export async function updateCashSession(
   if (patch.countedCashBreakdown !== undefined) dbPatch.counted_cash_breakdown = patch.countedCashBreakdown;
   if (patch.countedAt !== undefined) dbPatch.counted_at = patch.countedAt;
   if (patch.closingNote !== undefined) dbPatch.closing_note = patch.closingNote || null;
+  if (patch.differenceNote !== undefined) dbPatch.difference_note = patch.differenceNote || null;
   if (patch.closedBy !== undefined) dbPatch.closed_by = uuidLike(patch.closedBy) ? patch.closedBy : null;
   if (patch.closedByName !== undefined) dbPatch.closed_by_name = patch.closedByName.trim() || null;
   if (patch.difference !== undefined) dbPatch.difference = patch.difference;
@@ -1393,12 +1396,25 @@ export async function loadCashSessions(token: string, storeId: string): Promise<
   try {
     return await selectAllRows<CashSessionRow>(
       'cash_sessions',
-      'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_cash_breakdown,counted_at,closing_note,difference,status,opened_by,closed_by,opened_by_name,closed_by_name,created_at'
+      'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_cash_breakdown,counted_at,closing_note,difference_note,difference,status,opened_by,closed_by,opened_by_name,closed_by_name,created_at'
         + `&store_id=eq.${storeId}&order=opened_at.asc`,
       token,
     );
   } catch (error) {
-    if (isMissingColumnError(error, 'counted_cash_breakdown')) {
+    if (isMissingColumnError(error, 'difference_note')) {
+      try {
+        const rowsWithoutDifferenceNote = await selectAllRows<CashSessionRow>(
+          'cash_sessions',
+          'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_cash_breakdown,counted_at,closing_note,difference,status,opened_by,closed_by,opened_by_name,closed_by_name,created_at'
+            + `&store_id=eq.${storeId}&order=opened_at.asc`,
+          token,
+        );
+        return rowsWithoutDifferenceNote.map((row) => ({ ...row, difference_note: null }));
+      } catch (legacyError) {
+        if (!isMissingColumnError(legacyError, 'counted_cash_breakdown')) throw legacyError;
+      }
+    }
+    if (isMissingColumnError(error, 'counted_cash_breakdown') || isMissingColumnError(error, 'difference_note')) {
       const legacyRows = await selectAllRows<CashSessionRow>(
         'cash_sessions',
         'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_at,closing_note,difference,status,opened_by,closed_by,opened_by_name,closed_by_name,created_at'
@@ -1408,6 +1424,7 @@ export async function loadCashSessions(token: string, storeId: string): Promise<
       return legacyRows.map((row) => ({
         ...row,
         counted_cash_breakdown: null,
+        difference_note: null,
       }));
     }
     throw error;
