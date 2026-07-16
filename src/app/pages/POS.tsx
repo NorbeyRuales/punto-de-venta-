@@ -18,7 +18,9 @@ import {
   Printer,
   Share2,
   Percent,
-  X
+  X,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -66,6 +68,7 @@ export function POS() {
   const [secondaryPaymentAmount, setSecondaryPaymentAmount] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<string | null>(null);
   const [discountAmount, setDiscountAmount] = useState('');
+  const [showAllQuickCategories, setShowAllQuickCategories] = useState(false);
   const [recentlyAddedProductId, setRecentlyAddedProductId] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const keepPaymentDialogOpenRef = useRef(false);
@@ -696,10 +699,11 @@ export function POS() {
         </Card>
 
         {/* Categorías rápidas */}
-        <Card className="p-4 hidden md:block">
+        {/* Se conserva para poder reactivar las categorías rápidas más adelante. */}
+        <Card className="hidden">
           <h3 className="font-bold mb-3">Categorías Rápidas</h3>
           <div className="flex flex-wrap gap-2">
-            {quickCategories.map(category => (
+            {quickCategories.slice(0, showAllQuickCategories ? quickCategories.length : 3).map(category => (
               <Button
                 key={category}
                 variant="outline"
@@ -712,6 +716,28 @@ export function POS() {
                 {category}
               </Button>
             ))}
+            {quickCategories.length > 3 && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAllQuickCategories((current) => !current)}
+                aria-expanded={showAllQuickCategories}
+                className="text-violet-700 hover:text-violet-800 hover:bg-violet-50"
+              >
+                {showAllQuickCategories ? (
+                  <>
+                    Mostrar menos
+                    <ChevronUp className="w-4 h-4 ml-1" />
+                  </>
+                ) : (
+                  <>
+                    Ver todas ({quickCategories.length - 3} más)
+                    <ChevronDown className="w-4 h-4 ml-1" />
+                  </>
+                )}
+              </Button>
+            )}
           </div>
         </Card>
       </div>
