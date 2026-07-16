@@ -215,6 +215,12 @@ export function Inventory() {
     } else if (profitMargin < 0 || profitMargin >= 100) {
       errors.profitMargin = 'Debe estar entre 0 y 99.99';
     }
+    const minStockValue = Number(formData.minStock);
+    if (!formData.minStock.trim()) {
+      errors.minStock = 'Stock mínimo requerido';
+    } else if (!Number.isFinite(minStockValue) || minStockValue < 0) {
+      errors.minStock = 'Debe ser 0 o mayor';
+    }
     return errors;
   };
 
@@ -407,7 +413,7 @@ export function Inventory() {
       costPrice: purchaseCost,
       salePrice: calculatedUnitSalePrice,
       stock: parseFloat(formData.stock) || 0,
-      minStock: parseFloat(formData.minStock) || 5,
+      minStock: Number(formData.minStock),
       unit: formData.unit,
       isBulk: formData.isBulk,
       iva: parseFloat(formData.iva) || 0,
@@ -1452,14 +1458,25 @@ return (
             </div>
 
             <div>
-              <Label>Stock Mínimo</Label>
+              <Label>Stock Mínimo *</Label>
               <Input
                 type="number"
+                min="0"
+                step="any"
+                inputMode="decimal"
                 value={formData.minStock}
-                onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
-                placeholder="5"
+                onChange={(e) => {
+                  setFormData({ ...formData, minStock: e.target.value });
+                  clearFormError('minStock');
+                }}
+                placeholder="Ingresa el stock mínimo"
+                aria-invalid={!!formErrors.minStock}
+                aria-describedby="inventory-min-stock-help"
+                className={errorClass('minStock')}
               />
-              <p className="text-xs text-gray-500 mt-1">Usado para alertas de stock bajo.</p>
+              <p id="inventory-min-stock-help" className={`text-xs mt-1 ${formErrors.minStock ? 'text-red-600' : 'text-gray-500'}`}>
+                {formErrors.minStock || 'Escribe manualmente el nivel que activará la alerta.'}
+              </p>
             </div>
 
             <div>
@@ -1761,13 +1778,24 @@ return (
             </div>
 
             <div>
-              <Label>Stock Mínimo</Label>
+              <Label>Stock Mínimo *</Label>
               <Input
                 type="number"
+                min="0"
+                step="any"
+                inputMode="decimal"
                 value={formData.minStock}
-                onChange={(e) => setFormData({ ...formData, minStock: e.target.value })}
+                onChange={(e) => {
+                  setFormData({ ...formData, minStock: e.target.value });
+                  clearFormError('minStock');
+                }}
+                aria-invalid={!!formErrors.minStock}
+                aria-describedby="inventory-edit-min-stock-help"
+                className={errorClass('minStock')}
               />
-              <p className="text-xs text-gray-500 mt-1">Usado para alertas de stock bajo.</p>
+              <p id="inventory-edit-min-stock-help" className={`text-xs mt-1 ${formErrors.minStock ? 'text-red-600' : 'text-gray-500'}`}>
+                {formErrors.minStock || 'Escribe manualmente el nivel que activará la alerta.'}
+              </p>
             </div>
 
             <div>
