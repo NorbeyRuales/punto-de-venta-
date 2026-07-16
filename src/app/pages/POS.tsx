@@ -609,9 +609,9 @@ export function POS() {
         </div>
       </Card>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:h-[calc(100vh-8rem)]">
+      <div className="flex flex-col gap-4">
       {/* Panel de productos */}
-      <div className="lg:col-span-2 flex flex-col gap-4">
+      <div className="flex flex-col gap-4">
         <Card className="p-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="relative md:col-span-1">
@@ -743,9 +743,9 @@ export function POS() {
       </div>
 
       {/* Panel del carrito */}
-      <div className="flex flex-col gap-4">
-        <Card className="flex-1 flex flex-col">
-          <div className="p-4 border-b border-border">
+      <div className="flex flex-col gap-3">
+        <Card className="flex flex-col">
+          <div className="p-3 border-b border-border">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between mb-2">
               <h2 className="text-xl font-bold">Carrito</h2>
               {cart.length > 0 && (
@@ -764,14 +764,15 @@ export function POS() {
           </div>
 
           {/* Items del carrito */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <div className="p-3">
             {cart.length === 0 ? (
-              <div className="flex items-center justify-center h-full text-gray-500">
+              <div className="flex min-h-32 items-center justify-center text-gray-500">
                 <p>El carrito está vacío</p>
               </div>
             ) : (
-              cart.map(item => (
-                <div key={item.product.id} className="bg-secondary p-3 rounded-lg">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {cart.map(item => (
+                <div key={item.product.id} className="min-w-0 bg-secondary p-3 rounded-lg">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between mb-2">
                     <div className="flex-1">
                       <p className="font-semibold text-sm">{item.product.name}</p>
@@ -836,13 +837,14 @@ export function POS() {
                     {item.discount > 0 ? 'Cambiar descuento' : 'Aplicar descuento'}
                   </Button>
                 </div>
-              ))
+              ))}
+              </div>
             )}
           </div>
 
           {/* Totales */}
           {cart.length > 0 && (
-            <div className="p-4 border-t border-border space-y-2">
+            <div className="p-3 border-t border-border space-y-2">
               <div className="flex justify-between text-sm">
                 <span>Subtotal:</span>
                 <span>{formatRoundedCurrency(roundedSubtotal)}</span>
@@ -862,26 +864,28 @@ export function POS() {
         </Card>
 
         {/* Botón de cobrar */}
-        <Button
-          size="lg"
-          className="h-16 bg-[#2ECC71] hover:bg-[#27AE60] text-white text-xl font-bold"
-          onClick={() => {
-            setCompletedSale(null);
-            setPaymentMethod('efectivo');
-            setCashReceived('');
-            setSecondaryPaymentMethod('none');
-            setSecondaryPaymentAmount('');
-            setShowPaymentDialog(true);
-          }}
-          disabled={Boolean(cannotChargeReason)}
-          title={cannotChargeReason ?? 'Cobrar'}
-        >
-          <DollarSign className="w-6 h-6 mr-2" />
-          Cobrar
-        </Button>
-        {cannotChargeReason && (
-          <p className="text-xs text-amber-700 mt-2">{cannotChargeReason}</p>
-        )}
+        <div className="sticky bottom-3 z-30 rounded-xl border border-emerald-200 bg-white/95 p-2 shadow-xl backdrop-blur">
+          <Button
+            size="lg"
+            className="h-14 w-full bg-[#2ECC71] hover:bg-[#27AE60] text-white text-xl font-bold"
+            onClick={() => {
+              setCompletedSale(null);
+              setPaymentMethod('efectivo');
+              setCashReceived('');
+              setSecondaryPaymentMethod('none');
+              setSecondaryPaymentAmount('');
+              setShowPaymentDialog(true);
+            }}
+            disabled={Boolean(cannotChargeReason)}
+            title={cannotChargeReason ?? 'Cobrar'}
+          >
+            <DollarSign className="w-6 h-6 mr-2" />
+            Cobrar
+          </Button>
+          {cannotChargeReason && (
+            <p className="px-2 pb-1 pt-2 text-center text-xs text-amber-700">{cannotChargeReason}</p>
+          )}
+        </div>
       </div>
 
       {/* Dialog de descuento */}

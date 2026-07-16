@@ -15,7 +15,9 @@ import {
   Settings, 
   LogOut, 
   Menu,
-  X
+  X,
+  PanelLeftClose,
+  PanelLeftOpen
 } from 'lucide-react';
 import { Button } from './ui/button';
 import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
@@ -23,6 +25,10 @@ import type { UserRole } from '../constants/permissions';
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('pos-sidebar-collapsed') === 'true';
+  });
   const [showRouteLoading, setShowRouteLoading] = useState(false);
   const { currentUser, logout, storeConfig, isAuthenticated, hasConnectedStore } = usePOS();
   const navigate = useNavigate();
@@ -108,6 +114,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    window.localStorage.setItem('pos-sidebar-collapsed', String(isSidebarCollapsed));
+  }, [isSidebarCollapsed]);
+
   // Indicadores de estado.
   const showConnectionDot = isAuthenticated;
   const isConnected = isAuthenticated && hasConnectedStore && isOnline;
@@ -120,10 +130,24 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
       )}
       {/* Sidebar Desktop */}
-      <aside className="glass-surface hidden lg:flex lg:flex-col w-64 bg-white border-r border-border lg:sticky lg:top-0 lg:h-screen">
-        <div className="p-6 border-b border-border">
+      <aside
+        className={`glass-surface relative hidden shrink-0 bg-white border-r border-border transition-[width] duration-200 lg:sticky lg:top-0 lg:flex lg:h-screen lg:flex-col ${
+          isSidebarCollapsed ? 'w-20' : 'w-64'
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => setIsSidebarCollapsed((current) => !current)}
+          className="absolute right-2 top-2 z-10 grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+          aria-label={isSidebarCollapsed ? 'Mostrar menú lateral' : 'Contraer menú lateral'}
+          title={isSidebarCollapsed ? 'Mostrar menú' : 'Contraer menú'}
+        >
+          {isSidebarCollapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+        </button>
+
+        <div className={`${isSidebarCollapsed ? 'p-3 pt-12' : 'p-6'} border-b border-border`}>
           <div className="flex flex-col items-center text-center gap-2">
-            <div className="relative w-16 h-16">
+            <div className={`relative transition-all ${isSidebarCollapsed ? 'h-10 w-10' : 'h-16 w-16'}`}>
               <div className="w-full h-full rounded-xl border border-border bg-white overflow-hidden flex items-center justify-center">
                 <img
                   src={logoSrc}
@@ -148,7 +172,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         
-        <nav className="flex-1 p-4 overflow-y-auto">
+        <nav className={`flex-1 overflow-y-auto ${isSidebarCollapsed ? 'p-2' : 'p-4'}`}>
           {visibleMenuItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
@@ -156,27 +180,33 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <button
                 key={item.path}
                 onClick={() => navigate(item.path)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg mb-2 transition-colors ${
+                aria-label={item.label}
+                title={isSidebarCollapsed ? item.label : undefined}
+                className={`w-full flex items-center rounded-lg mb-2 py-3 transition-colors ${
+                  isSidebarCollapsed ? 'justify-center px-2' : 'gap-3 px-4'
+                } ${
                   isActive 
                   ? 'bg-[var(--primary)] text-white' 
                   : 'text-foreground hover:bg-secondary'
                 }`}
               >
-                <Icon className="w-5 h-5" />
-                <span className="font-medium">{item.label}</span>
+                <Icon className="w-5 h-5 shrink-0" />
+                {!isSidebarCollapsed && <span className="font-medium">{item.label}</span>}
               </button>
             );
           })}
         </nav>
 
-        <div className="p-4 border-t border-border">
+        <div className={`${isSidebarCollapsed ? 'p-2' : 'p-4'} border-t border-border`}>
           <Button
             onClick={handleLogout}
             variant="outline"
-            className="w-full"
+            className={isSidebarCollapsed ? 'w-full px-0' : 'w-full'}
+            aria-label="Cerrar sesión"
+            title={isSidebarCollapsed ? 'Cerrar sesión' : undefined}
           >
-            <LogOut className="w-5 h-5 mr-2" />
-            Cerrar Sesión
+            <LogOut className={`w-5 h-5 ${isSidebarCollapsed ? '' : 'mr-2'}`} />
+            {!isSidebarCollapsed && 'Cerrar Sesión'}
           </Button>
         </div>
       </aside>
