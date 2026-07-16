@@ -1,5 +1,6 @@
 // Reportes de ventas con gráficos y ranking.
 import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useLocation } from 'react-router';
 import { usePOS } from '../context/POSContext';
 import type { Purchase, Sale } from '../context/POSContext';
 import { Card } from '../components/ui/card';
@@ -26,6 +27,7 @@ import { toast } from 'sonner';
 import type { DateRange } from 'react-day-picker';
 
 export function Reports() {
+  const location = useLocation();
   const { getSalesInRange, loadHistoryRange, sales, kardexMovements, registerReturn, customers, storeConfig, products, suppliers } = usePOS();
   const [calendarMode, setCalendarMode] = useState<'single' | 'range'>('single');
   const [selectedDate, setSelectedDate] = useState<Date>(() => startOfDay(new Date()));
@@ -33,6 +35,24 @@ export function Reports() {
     const today = startOfDay(new Date());
     return { from: today, to: today };
   });
+
+  useEffect(() => {
+    const sectionId = location.hash === '#ultimas-transacciones'
+      ? 'ultimas-transacciones'
+      : location.hash === '#devoluciones'
+        ? 'reportes-devoluciones'
+        : null;
+    if (!sectionId) return;
+
+    const timeoutId = window.setTimeout(() => {
+      document.getElementById(sectionId)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    }, 100);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [location.hash]);
   const deferredSelectedDate = useDeferredValue(selectedDate);
   const deferredDateRange = useDeferredValue(dateRange);
   const [isPendingTransition, startTransition] = useTransition();
@@ -1003,7 +1023,7 @@ export function Reports() {
       </div>
 
       {/* Listado de ventas */}
-      <Card className="p-6">
+      <Card id="ultimas-transacciones" className="scroll-mt-6 p-6">
         <h3 className="text-lg font-bold mb-4">Últimas Transacciones</h3>
         <p className="mb-3 text-sm text-gray-600">
           Mostrando {visibleLatestSales.length} de {latestSales.length} transacciones.
@@ -1134,7 +1154,7 @@ export function Reports() {
       </Card>
 
       {/* Reporte de devoluciones */}
-      <Card className="p-6 space-y-4">
+      <Card id="reportes-devoluciones" className="scroll-mt-6 p-6 space-y-4">
         <div className="flex flex-col gap-1">
           <h3 className="text-lg font-bold">Reportes de Devoluciones</h3>
           <p className="text-sm text-gray-600">

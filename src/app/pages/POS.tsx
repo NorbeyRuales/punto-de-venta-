@@ -20,7 +20,8 @@ import {
   Percent,
   X,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  RotateCcw
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -597,15 +598,27 @@ export function POS() {
               })}
             </div>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => void createSaleDraft()}
-            className="h-10 w-full sm:w-auto sm:shrink-0 rounded-xl bg-gradient-to-r from-violet-600 via-violet-600 to-fuchsia-600 text-white hover:from-violet-700 hover:via-violet-700 hover:to-fuchsia-700 shadow-md"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Nueva venta
-          </Button>
+          <div className="flex w-full gap-2 sm:w-auto sm:shrink-0">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => navigate('/reports#ultimas-transacciones')}
+              className="h-10 flex-1 rounded-xl border-violet-300 bg-white/80 text-violet-700 hover:bg-violet-50 hover:text-violet-800 sm:flex-none"
+            >
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Devoluciones
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => void createSaleDraft()}
+              className="h-10 flex-1 rounded-xl bg-gradient-to-r from-violet-600 via-violet-600 to-fuchsia-600 text-white hover:from-violet-700 hover:via-violet-700 hover:to-fuchsia-700 shadow-md sm:flex-none"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Nueva venta
+            </Button>
+          </div>
         </div>
       </Card>
 
