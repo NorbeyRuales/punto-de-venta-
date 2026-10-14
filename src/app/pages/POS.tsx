@@ -11,6 +11,7 @@ import {
   Search, 
   Plus, 
   Minus, 
+  Loader2,
   Trash2, 
   CreditCard, 
   DollarSign,
@@ -73,6 +74,8 @@ export function POS() {
   const [recentlyAddedProductId, setRecentlyAddedProductId] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const keepPaymentDialogOpenRef = useRef(false);
+  const paymentSubmissionRef = useRef(false);
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
   const selectedCustomer = activeDraft?.customerId ?? '';
 
@@ -421,6 +424,8 @@ export function POS() {
 
   // Valida y completa una venta.
   const handlePayment = async () => {
+    if (paymentSubmissionRef.current) return;
+
     if (cart.length === 0) {
       toast.error('El carrito está vacío');
       return;
@@ -436,27 +441,37 @@ export function POS() {
       return;
     }
 
+    paymentSubmissionRef.current = true;
+    setIsSubmittingPayment(true);
     keepPaymentDialogOpenRef.current = true;
-    const sale = await completeSale({
-      primaryMethod: paymentMethod,
-      primaryAmount: roundToHundred(parseFloat(cashReceived) || 0),
-      secondaryMethod: hasSecondaryPayment ? secondaryPaymentMethod as PaymentMethodOption : undefined,
-      secondaryAmount: hasSecondaryPayment ? roundToHundred(parseFloat(secondaryPaymentAmount) || 0) : 0,
-    });
+    try {
+      const sale = await completeSale({
+        primaryMethod: paymentMethod,
+        primaryAmount: roundToHundred(parseFloat(cashReceived) || 0),
+        secondaryMethod: hasSecondaryPayment ? secondaryPaymentMethod as PaymentMethodOption : undefined,
+        secondaryAmount: hasSecondaryPayment ? roundToHundred(parseFloat(secondaryPaymentAmount) || 0) : 0,
+      });
 
-    if (!sale) {
+      if (!sale) {
+        keepPaymentDialogOpenRef.current = false;
+        return;
+      }
+
+      setCompletedSale(sale);
+      setCashReceived('');
+      setSecondaryPaymentMethod('none');
+      setSecondaryPaymentAmount('');
+      setPaymentMethod('efectivo');
+
+      // Simular impresión o envío por WhatsApp
+      console.log('Venta:', sale);
+    } catch (error) {
       keepPaymentDialogOpenRef.current = false;
-      return;
+      toast.error(error instanceof Error ? error.message : 'No se pudo completar la venta. Puedes intentarlo de nuevo.');
+    } finally {
+      paymentSubmissionRef.current = false;
+      setIsSubmittingPayment(false);
     }
-
-    setCompletedSale(sale);
-    setCashReceived('');
-    setSecondaryPaymentMethod('none');
-    setSecondaryPaymentAmount('');
-    setPaymentMethod('efectivo');
-
-    // Simular impresión o envío por WhatsApp
-    console.log('Venta:', sale);
   };
 
   const handlePrint = () => {
@@ -1131,15 +1146,24 @@ export function POS() {
                 <div className="flex gap-2 pt-4">
                   <Button
                     onClick={handlePayment}
-                    disabled={(requiresCustomerForDebt && !selectedCustomer) || isMixedOverpay}
+                    disabled={isSubmittingPayment || (requiresCustomerForDebt && !selectedCustomer) || isMixedOverpay}
                     className="flex-1 h-12 bg-[#2ECC71] hover:bg-[#27AE60] text-white"
                   >
-                    <DollarSign className="w-5 h-5 mr-2" />
-                    {paymentMethod === 'credito'
-                      ? 'Registrar Fiado'
-                      : debtPreview > 0
-                        ? 'Registrar Venta + Fiado'
-                        : 'Completar Venta'}
+                    {isSubmittingPayment ? (
+                      <>
+                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                        Registrando venta...
+                      </>
+                    ) : (
+                      <>
+                        <DollarSign className="w-5 h-5 mr-2" />
+                        {paymentMethod === 'credito'
+                          ? 'Registrar Fiado'
+                          : debtPreview > 0
+                            ? 'Registrar Venta + Fiado'
+                            : 'Completar Venta'}
+                      </>
+                    )}
                   </Button>
                 </div>
               </>
