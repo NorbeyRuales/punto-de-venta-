@@ -166,7 +166,7 @@ export const router = createBrowserRouter([
     element: withSuspense((
       <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
-          {withViewData(<CashRegister />, ['cash', 'sales'], true)}
+          {withViewData(<CashRegister />, ['cash', 'sales'])}
         </Layout>
       </ProtectedRoute>
     )),

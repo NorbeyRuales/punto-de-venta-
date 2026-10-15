@@ -101,7 +101,46 @@ export function CashRegister() {
     addCashMovement,
     getCashSessionReport,
     storeConfig,
+    loadViewData,
   } = usePOS();
+
+  const [isLoadingFullHistory, setIsLoadingFullHistory] = useState(true);
+  const [historyLoadFailed, setHistoryLoadFailed] = useState(false);
+  const loadViewDataRef = useRef(loadViewData);
+  loadViewDataRef.current = loadViewData;
+
+  const loadFullHistory = async () => {
+    setHistoryLoadFailed(false);
+    setIsLoadingFullHistory(true);
+    try {
+      const loaded = await loadViewDataRef.current(['sales'], { fullHistory: true });
+      setHistoryLoadFailed(!loaded);
+    } catch {
+      setHistoryLoadFailed(true);
+    } finally {
+      setIsLoadingFullHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void loadViewDataRef.current(['sales'], { fullHistory: true }).then((loaded) => {
+        if (!active) return;
+        setIsLoadingFullHistory(false);
+        setHistoryLoadFailed(!loaded);
+      }).catch(() => {
+        if (!active) return;
+        setIsLoadingFullHistory(false);
+        setHistoryLoadFailed(true);
+      });
+    }, 300);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   const [openingCash, setOpeningCash] = useState('');
   const [openingNote, setOpeningNote] = useState('');
@@ -360,6 +399,15 @@ export function CashRegister() {
         <div>
           <h1 className="text-3xl font-bold">Caja</h1>
           <p className="text-gray-600">Control de apertura, movimientos y cierre</p>
+          {isLoadingFullHistory && (
+            <p className="mt-1 text-xs text-slate-500" role="status">Cargando historial de ventas en segundo plano…</p>
+          )}
+          {historyLoadFailed && (
+            <p className="mt-1 text-xs text-amber-700" role="status">
+              No se pudo completar el historial de ventas.{' '}
+              <button className="font-semibold underline" onClick={() => void loadFullHistory()}>Reintentar</button>
+            </p>
+          )}
         </div>
         <div className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium ${statusMeta.className}`}>
           <Wallet className="w-4 h-4" />
