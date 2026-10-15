@@ -13,7 +13,7 @@ import { Switch } from '../components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { toast } from 'sonner';
-import { Printer, Shield, Database, Tag, Edit, Trash2, Check, X, ClipboardList, Download, CloudDownload, CloudUpload, RotateCcw } from 'lucide-react';
+import { Printer, Shield, Database, Tag, Edit, Trash2, Check, X, ClipboardList, Download, CloudDownload, CloudUpload, RotateCcw, KeyRound } from 'lucide-react';
 import { DEFAULT_LOGO_PATH, FALLBACK_LOGO_DATA_URL } from '../constants/branding';
 import { validateBackupPayload, type BackupValidationResult } from '../services/backupValidation';
 
@@ -168,6 +168,9 @@ export function Configuration() {
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserFullName, setNewUserFullName] = useState('');
   const [newUserRole, setNewUserRole] = useState<'admin' | 'cashier'>('cashier');
+  const [passwordUser, setPasswordUser] = useState<StoreManagedUser | null>(null);
+  const [replacementPassword, setReplacementPassword] = useState('');
+  const [replacementPasswordConfirm, setReplacementPasswordConfirm] = useState('');
   const [cloudRestorePassword, setCloudRestorePassword] = useState('');
   const [cloudRestoreConfirmation, setCloudRestoreConfirmation] = useState('');
 
@@ -272,6 +275,36 @@ export function Configuration() {
     } finally {
       setIsMutatingUserId(null);
     }
+  };
+
+  const handleChangeStoreUserPassword = async () => {
+    if (!passwordUser || isMutatingUserId) return;
+    if (replacementPassword.length < 6) {
+      toast.error('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+    if (replacementPassword !== replacementPasswordConfirm) {
+      toast.error('Las contraseñas no coinciden.');
+      return;
+    }
+
+    setIsMutatingUserId(passwordUser.id);
+    try {
+      const ok = await updateStoreUserAccess(passwordUser.id, { password: replacementPassword });
+      if (!ok) return;
+      toast.success(`Contraseña actualizada para ${passwordUser.email}.`);
+      setPasswordUser(null);
+      setReplacementPassword('');
+      setReplacementPasswordConfirm('');
+    } finally {
+      setIsMutatingUserId(null);
+    }
+  };
+
+  const openStoreUserPasswordDialog = (user: StoreManagedUser) => {
+    setReplacementPassword('');
+    setReplacementPasswordConfirm('');
+    setPasswordUser(user);
   };
 
   const handleRemoveStoreUser = async (membershipId: string) => {
@@ -1077,15 +1110,27 @@ export function Configuration() {
                           />
                         </div>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full text-red-600 hover:text-red-700"
-                          onClick={() => void handleRemoveStoreUser(user.id)}
-                          disabled={isMutatingUserId === user.id}
-                        >
-                          Quitar
-                        </Button>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                            onClick={() => openStoreUserPasswordDialog(user)}
+                            disabled={!!isMutatingUserId}
+                          >
+                            <KeyRound className="w-4 h-4 mr-1" /> Contraseña
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full text-red-600 hover:text-red-700"
+                            onClick={() => void handleRemoveStoreUser(user.id)}
+                            disabled={isMutatingUserId === user.id}
+                          >
+                            Quitar
+                          </Button>
+                        </div>
                       </div>
                     ))
                   )}
@@ -1147,15 +1192,26 @@ export function Configuration() {
                               {new Date(user.createdAt).toLocaleString('es-CO')}
                             </td>
                             <td className="p-3 text-right">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="text-red-600 hover:text-red-700"
-                                onClick={() => void handleRemoveStoreUser(user.id)}
-                                disabled={isMutatingUserId === user.id}
-                              >
-                                Quitar
-                              </Button>
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openStoreUserPasswordDialog(user)}
+                                  disabled={!!isMutatingUserId}
+                                >
+                                  <KeyRound className="w-4 h-4 mr-1" /> Contraseña
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="text-red-600 hover:text-red-700"
+                                  onClick={() => void handleRemoveStoreUser(user.id)}
+                                  disabled={isMutatingUserId === user.id}
+                                >
+                                  Quitar
+                                </Button>
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -1181,6 +1237,70 @@ export function Configuration() {
               </p>
             </div>
           </Card>
+
+          <Dialog open={!!passwordUser} onOpenChange={(open) => {
+            if (isMutatingUserId) return;
+            if (!open) {
+              setPasswordUser(null);
+              setReplacementPassword('');
+              setReplacementPasswordConfirm('');
+            }
+          }}>
+            <DialogContent className="w-[95vw] max-w-md">
+              <DialogHeader>
+                <DialogTitle>Cambiar contraseña</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <p className="text-sm text-gray-600">
+                  Nueva contraseña para <span className="font-medium">{passwordUser?.email}</span>.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="managed-user-new-password">Nueva contraseña</Label>
+                  <Input
+                    id="managed-user-new-password"
+                    type="password"
+                    className={inputClass}
+                    value={replacementPassword}
+                    onChange={(event) => setReplacementPassword(event.target.value)}
+                    autoComplete="new-password"
+                    disabled={!!isMutatingUserId}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="managed-user-confirm-password">Confirmar contraseña</Label>
+                  <Input
+                    id="managed-user-confirm-password"
+                    type="password"
+                    className={inputClass}
+                    value={replacementPasswordConfirm}
+                    onChange={(event) => setReplacementPasswordConfirm(event.target.value)}
+                    autoComplete="new-password"
+                    disabled={!!isMutatingUserId}
+                  />
+                </div>
+                <p className="text-xs text-gray-500">Debe tener al menos 6 caracteres.</p>
+                <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setPasswordUser(null);
+                      setReplacementPassword('');
+                      setReplacementPasswordConfirm('');
+                    }}
+                    disabled={!!isMutatingUserId}
+                  >Cancelar</Button>
+                  <Button
+                    type="button"
+                    onClick={() => void handleChangeStoreUserPassword()}
+                    disabled={!!isMutatingUserId}
+                  >
+                    {isMutatingUserId === passwordUser?.id ? 'Guardando...' : 'Guardar contraseña'}
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         <TabsContent value="backup">

@@ -379,6 +379,7 @@ export async function updateManagedStoreUser(
     storeId: string;
     role?: 'admin' | 'cashier';
     isActive?: boolean;
+    password?: string;
   },
 ): Promise<StoreManagedUser> {
   const result = await manageUsersEdgeRequest<{ user: StoreManagedUser }>(

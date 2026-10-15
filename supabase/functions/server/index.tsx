@@ -500,8 +500,12 @@ const handleStoreUsersPatch = async (c: Parameters<typeof app.patch>[1] extends 
 
     const nextRole = body?.role === undefined ? undefined : parseRole(body.role);
     const nextIsActive = typeof body?.isActive === 'boolean' ? body.isActive : undefined;
+    const nextPassword = typeof body?.password === 'string' ? body.password : undefined;
     if (body?.role !== undefined && !nextRole) {
       return c.json({ error: 'Rol inválido.' }, 400);
+    }
+    if (nextPassword !== undefined && nextPassword.length < 6) {
+      return c.json({ error: 'La contraseña debe tener mínimo 6 caracteres.' }, 400);
     }
 
     await ensureNotLastActiveAdmin(storeId, membershipId, nextRole ?? undefined, nextIsActive);
@@ -511,14 +515,37 @@ const handleStoreUsersPatch = async (c: Parameters<typeof app.patch>[1] extends 
     if (nextRole) patch.role = nextRole;
     if (typeof nextIsActive === 'boolean') patch.is_active = nextIsActive;
 
-    const updated = await client
-      .from('store_users')
-      .update(patch)
-      .eq('id', membershipId)
-      .eq('store_id', storeId);
+    if (nextPassword !== undefined) {
+      const membership = await client
+        .from('store_users')
+        .select('user_id')
+        .eq('id', membershipId)
+        .eq('store_id', storeId)
+        .maybeSingle();
 
-    if (updated.error) {
-      return c.json({ error: updated.error.message }, 400);
+      if (membership.error || !membership.data) {
+        return c.json({ error: 'Usuario de tienda no encontrado.' }, 404);
+      }
+
+      const passwordUpdate = await client.auth.admin.updateUserById(membership.data.user_id, {
+        password: nextPassword,
+      });
+
+      if (passwordUpdate.error) {
+        return c.json({ error: passwordUpdate.error.message }, 400);
+      }
+    }
+
+    if (Object.keys(patch).length > 0) {
+      const updated = await client
+        .from('store_users')
+        .update(patch)
+        .eq('id', membershipId)
+        .eq('store_id', storeId);
+
+      if (updated.error) {
+        return c.json({ error: updated.error.message }, 400);
+      }
     }
 
     const users = await mapStoreUsersResponse(storeId);

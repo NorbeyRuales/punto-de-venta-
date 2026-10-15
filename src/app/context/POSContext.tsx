@@ -688,7 +688,7 @@ interface POSContextType {
     fullName?: string;
     role: UserRole;
   }) => Promise<boolean>;
-  updateStoreUserAccess: (membershipId: string, patch: { role?: UserRole; isActive?: boolean }) => Promise<boolean>;
+  updateStoreUserAccess: (membershipId: string, patch: { role?: UserRole; isActive?: boolean; password?: string }) => Promise<boolean>;
   removeStoreUser: (membershipId: string) => Promise<boolean>;
   hasConnectedStore: boolean;
   
@@ -1935,7 +1935,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string): Promise<boolean> => {
     try {
       localPersistenceEnabledRef.current = true;
-      const nextSession = await signInWithPassword(username, password);
+      const normalizedEmail = username.trim().toLowerCase();
+      const nextSession = await signInWithPassword(normalizedEmail, password);
       storeSession(nextSession);
       setSession(nextSession);
       setIsOfflineMode(false);
@@ -1945,7 +1946,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
       setIsAuthenticated(true);
       setCurrentUser({
-        username: nextSession.user.email || username,
+        username: nextSession.user.email || normalizedEmail,
         fullName: nextSession.user.user_metadata?.full_name,
         role: membership?.role || 'admin'
       });
@@ -2505,7 +2506,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
 
   const updateStoreUserAccess = async (
     membershipId: string,
-    patch: { role?: UserRole; isActive?: boolean },
+    patch: { role?: UserRole; isActive?: boolean; password?: string },
   ): Promise<boolean> => {
     if (!requirePermission('users:manage', 'Solo un administrador puede editar usuarios.')) {
       return false;
@@ -2521,6 +2522,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         storeId: currentStoreId,
         role: patch.role,
         isActive: patch.isActive,
+        password: patch.password,
       });
       return true;
     } catch (error) {
