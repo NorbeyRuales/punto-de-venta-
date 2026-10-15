@@ -1,5 +1,5 @@
 // Registro de compras y actualización de stock.
-import { useDeferredValue, useEffect, useMemo, useState, useTransition } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { usePOS } from '../context/POSContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -33,9 +33,12 @@ const createPurchaseItemId = () => (
 );
 
 export function Purchases() {
-  const { suppliers, products, registerPurchase, setPurchasePaid, deletePurchase, storeConfig } = usePOS();
+  const { suppliers, products, registerPurchase, setPurchasePaid, deletePurchase, storeConfig, loadViewData } = usePOS();
+  const loadViewDataRef = useRef(loadViewData);
+  loadViewDataRef.current = loadViewData;
   // Estado del formulario y de los ítems de compra.
   const [supplierId, setSupplierId] = useState('');
+  const [isLoadingSupplierHistory, setIsLoadingSupplierHistory] = useState(false);
   const [supplierSearch, setSupplierSearch] = useState('');
   const [showSupplierSuggestions, setShowSupplierSuggestions] = useState(false);
   const [pricePolicy, setPricePolicy] = useState<'automatic' | 'manual'>(storeConfig.purchasePricePolicy || 'automatic');
@@ -61,6 +64,23 @@ export function Purchases() {
   const [isPendingTransition, startTransition] = useTransition();
   const [historyPeriod, setHistoryPeriod] = useState<'all' | 'today' | 'week' | 'month'>('all');
   const deferredSupplierSearch = useDeferredValue(supplierSearch);
+
+  useEffect(() => {
+    if (!supplierId) return;
+    let active = true;
+    setIsLoadingSupplierHistory(true);
+    void loadViewDataRef.current(['supplierHistory'], { fullHistory: true, supplierId })
+      .then((ok) => {
+        if (active && !ok) toast.error('No se pudo cargar el historial de compras del proveedor.');
+      })
+      .catch(() => {
+        if (active) toast.error('No se pudo cargar el historial de compras del proveedor.');
+      })
+      .finally(() => {
+        if (active) setIsLoadingSupplierHistory(false);
+      });
+    return () => { active = false; };
+  }, [supplierId]);
 
   const selectedSupplier = suppliers.find(s => s.id === supplierId) || null;
   const visibleSuppliers = useMemo(() => {
@@ -657,7 +677,7 @@ export function Purchases() {
           <Button
             className="w-full md:w-auto h-12 px-6 bg-[#2ECC71] hover:bg-[#27AE60]"
             onClick={handleRegisterPurchase}
-            disabled={!supplierId || items.length === 0}
+            disabled={!supplierId || items.length === 0 || isLoadingSupplierHistory}
           >
             <ShoppingBasket className="w-5 h-5 mr-2" />
             Registrar compra
@@ -670,7 +690,9 @@ export function Purchases() {
           <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h2 className="text-lg font-bold">Compras del proveedor</h2>
-              {isPendingTransition ? <p className="text-xs text-gray-500">Actualizando historial...</p> : null}
+              {isLoadingSupplierHistory
+                ? <p className="text-xs text-gray-500">Cargando historial del proveedor...</p>
+                : isPendingTransition ? <p className="text-xs text-gray-500">Actualizando historial...</p> : null}
             </div>
             <Select
               value={historyPeriod}
@@ -690,7 +712,9 @@ export function Purchases() {
           <p className="mb-3 text-sm text-gray-600">
             Mostrando {filteredSupplierPurchases.length} de {supplierPurchases.length} compras.
           </p>
-          {filteredSupplierPurchases.length === 0 ? (
+          {isLoadingSupplierHistory ? (
+            <p className="text-sm text-gray-500">Cargando compras anteriores…</p>
+          ) : filteredSupplierPurchases.length === 0 ? (
             <p className="text-sm text-gray-500">Aún no hay compras registradas para este proveedor.</p>
           ) : (
             <>
@@ -809,7 +833,7 @@ export function Purchases() {
                                     variant="outline"
                                     className="h-8 border-red-300 text-red-700 hover:bg-red-50"
                                     onClick={() => handleDeleteRegisteredPurchase(purchase.id)}
-                                    disabled={deletingPurchaseId === purchase.id}
+                                    disabled={deletingPurchaseId === purchase.id || isLoadingSupplierHistory}
                                   >
                                     Confirmar
                                   </Button>
@@ -818,7 +842,7 @@ export function Purchases() {
                                     variant="outline"
                                     className="h-8"
                                     onClick={() => setConfirmDeletePurchaseId(null)}
-                                    disabled={deletingPurchaseId === purchase.id}
+                                    disabled={deletingPurchaseId === purchase.id || isLoadingSupplierHistory}
                                   >
                                     Cancelar
                                   </Button>
@@ -830,7 +854,7 @@ export function Purchases() {
                                     variant="outline"
                                     className="h-8"
                                     onClick={() => handleTogglePurchasePaid(purchase.id, !purchase.paid)}
-                                    disabled={updatingPurchaseId === purchase.id || deletingPurchaseId === purchase.id}
+                                    disabled={updatingPurchaseId === purchase.id || deletingPurchaseId === purchase.id || isLoadingSupplierHistory}
                                   >
                                     {purchase.paid ? 'Marcar pendiente' : 'Marcar pagada'}
                                   </Button>
@@ -839,7 +863,7 @@ export function Purchases() {
                                     variant="outline"
                                     className="h-8 border-red-300 text-red-700 hover:bg-red-50"
                                     onClick={() => setConfirmDeletePurchaseId(purchase.id)}
-                                    disabled={updatingPurchaseId === purchase.id || deletingPurchaseId === purchase.id}
+                                    disabled={updatingPurchaseId === purchase.id || deletingPurchaseId === purchase.id || isLoadingSupplierHistory}
                                   >
                                     Eliminar
                                   </Button>

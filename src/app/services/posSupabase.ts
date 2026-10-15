@@ -1309,22 +1309,24 @@ export async function deleteCashReportsByIds(
 }
 
 // Consultas de sincronización remota.
-export async function loadCustomersWithDebt(token: string, storeId: string): Promise<CustomerRow[]> {
+export async function loadCustomersWithDebt(token: string, storeId: string, includeDebtHistory = true): Promise<CustomerRow[]> {
   return selectAllRows<CustomerRow>(
     'customers',
-    'select=id,name,phone,address,email,nit,points,debt,customer_debt_transactions(id,type,amount,description,balance,created_at)'
+    `select=id,name,phone,address,email,nit,points,debt${includeDebtHistory ? ',customer_debt_transactions(id,type,amount,description,balance,created_at)' : ''}`
       + `&store_id=eq.${storeId}&order=created_at.asc`,
     token,
   );
 }
 
-export async function loadSuppliersWithPurchases(token: string, storeId: string): Promise<SupplierRow[]> {
+export async function loadSuppliersWithPurchases(token: string, storeId: string, includePurchases = true, supplierId?: string): Promise<SupplierRow[]> {
+  const purchaseFields = includePurchases
+    ? ',purchases(id,created_at,total,paid,reference,price_policy,purchase_items(product_id,quantity_packages,package_cost,units_per_package))'
+    : '';
+  const supplierFilter = supplierId ? `&id=eq.${encodeURIComponent(supplierId)}` : '';
   return selectAllRows<SupplierRow>(
     'suppliers',
-    'select=id,name,nit,phone,email,address,bank_accounts,debt,'
-      + 'purchases(id,created_at,total,paid,reference,price_policy,'
-      + 'purchase_items(product_id,quantity_packages,package_cost,units_per_package))'
-      + `&store_id=eq.${storeId}&order=name.asc`,
+    `select=id,name,nit,phone,email,address,bank_accounts,debt${purchaseFields}`
+      + `&store_id=eq.${storeId}${supplierFilter}&order=name.asc`,
     token,
   );
 }
@@ -1393,12 +1395,13 @@ export async function loadRecharges(token: string, storeId: string, range?: Data
   );
 }
 
-export async function loadCashSessions(token: string, storeId: string): Promise<CashSessionRow[]> {
+export async function loadCashSessions(token: string, storeId: string, activeOnly = false): Promise<CashSessionRow[]> {
+  const activeFilter = activeOnly ? '&status=in.(open,counting)' : '';
   try {
     return await selectAllRows<CashSessionRow>(
       'cash_sessions',
       'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_cash_breakdown,counted_at,closing_note,difference_note,difference,status,opened_by,closed_by,opened_by_name,closed_by_name,created_at'
-        + `&store_id=eq.${storeId}&order=opened_at.asc`,
+        + `&store_id=eq.${storeId}${activeFilter}&order=opened_at.asc`,
       token,
     );
   } catch (error) {
@@ -1407,7 +1410,7 @@ export async function loadCashSessions(token: string, storeId: string): Promise<
         const rowsWithoutDifferenceNote = await selectAllRows<CashSessionRow>(
           'cash_sessions',
           'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_cash_breakdown,counted_at,closing_note,difference,status,opened_by,closed_by,opened_by_name,closed_by_name,created_at'
-            + `&store_id=eq.${storeId}&order=opened_at.asc`,
+            + `&store_id=eq.${storeId}${activeFilter}&order=opened_at.asc`,
           token,
         );
         return rowsWithoutDifferenceNote.map((row) => ({ ...row, difference_note: null }));
@@ -1419,7 +1422,7 @@ export async function loadCashSessions(token: string, storeId: string): Promise<
       const legacyRows = await selectAllRows<CashSessionRow>(
         'cash_sessions',
         'select=id,store_id,user_id,opened_at,closed_at,opening_cash,opening_note,expected_cash,counted_cash,counted_at,closing_note,difference,status,opened_by,closed_by,opened_by_name,closed_by_name,created_at'
-          + `&store_id=eq.${storeId}&order=opened_at.asc`,
+          + `&store_id=eq.${storeId}${activeFilter}&order=opened_at.asc`,
         token,
       );
       return legacyRows.map((row) => ({

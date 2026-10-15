@@ -160,15 +160,26 @@ export async function selectAllRows<T>(
 
   const rows: T[] = [];
 
-  for (let page = 0; page < maxPages; page += 1) {
+  const loadPage = (page: number) => {
     const separator = query.length > 0 ? '&' : '';
     const pageQuery = `${query}${separator}limit=${pageSize}&offset=${page * pageSize}`;
-    const pageRows = await selectRows<T>(table, pageQuery, token);
+    return selectRows<T>(table, pageQuery, token);
+  };
 
-    rows.push(...pageRows);
+  const firstPage = await loadPage(0);
+  rows.push(...firstPage);
+  if (firstPage.length < pageSize) return rows;
 
-    if (pageRows.length < pageSize) {
-      return rows;
+  // Descarga dos páginas por viaje. La última puede ser una página vacía
+  // adicional, pero evita esperar un RTT secuencial por cada bloque de 1000.
+  for (let page = 1; page < maxPages; page += 2) {
+    const pageIndexes = [page, page + 1].filter((index) => index < maxPages);
+    const results = await Promise.allSettled(pageIndexes.map(loadPage));
+
+    for (const result of results) {
+      if (result.status === 'rejected') throw result.reason;
+      rows.push(...result.value);
+      if (result.value.length < pageSize) return rows;
     }
   }
 

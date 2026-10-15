@@ -36,7 +36,6 @@ export function POS() {
   const {
     products,
     categories,
-    suppliers,
     saleDrafts,
     activeDraftId,
     activeDraft,
@@ -55,8 +54,11 @@ export function POS() {
     clearCart,
     customers,
     currentCashSession,
-    storeConfig
+    storeConfig,
+    loadViewData,
   } = usePOS();
+  const loadViewDataRef = useRef(loadViewData);
+  loadViewDataRef.current = loadViewData;
 
   // Estado de UI y cobro.
   const [searchQuery, setSearchQuery] = useState('');
@@ -78,6 +80,10 @@ export function POS() {
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
   const [completedSale, setCompletedSale] = useState<Sale | null>(null);
   const selectedCustomer = activeDraft?.customerId ?? '';
+
+  useEffect(() => {
+    void loadViewDataRef.current(['customersLite']);
+  }, []);
 
   useEffect(() => {
     setPaymentMethod('efectivo');
@@ -179,11 +185,13 @@ export function POS() {
   }, [categories, categoryFilter]);
 
   useEffect(() => {
-    const availableSuppliers = suppliers.map(supplier => supplier.name);
+    const availableSuppliers = Array.from(new Set(products
+      .map(product => product.supplierName?.trim())
+      .filter((name): name is string => Boolean(name))));
     if (supplierFilter !== 'all' && !availableSuppliers.includes(supplierFilter)) {
       setSupplierFilter('all');
     }
-  }, [suppliers, supplierFilter]);
+  }, [products, supplierFilter]);
 
   const buildWhatsappMessage = (sale: Sale) => {
     const customer = sale.customerId ? customers.find(c => c.id === sale.customerId) : undefined;
@@ -675,8 +683,12 @@ export function POS() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todos los proveedores</SelectItem>
-                {suppliers.map(supplier => (
-                  <SelectItem key={supplier.id} value={supplier.name}>{supplier.name}</SelectItem>
+                {Array.from(new Set(products
+                  .map(product => product.supplierName?.trim())
+                  .filter((name): name is string => Boolean(name))))
+                  .sort((a, b) => a.localeCompare(b))
+                  .map(supplier => (
+                  <SelectItem key={supplier} value={supplier}>{supplier}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

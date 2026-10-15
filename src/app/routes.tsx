@@ -1,8 +1,9 @@
 // Definición centralizada de rutas y layout protegido.
-import { Suspense, lazy, type ReactNode } from "react";
+import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react";
 import { createBrowserRouter } from "react-router";
 import { Layout } from "./components/Layout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
+import { usePOS, type SyncSection } from "./context/POSContext";
 
 const Login = lazy(() => import("./pages/Login").then((module) => ({ default: module.Login })));
 const Dashboard = lazy(() => import("./pages/Dashboard").then((module) => ({ default: module.Dashboard })));
@@ -29,6 +30,49 @@ const withSuspense = (element: ReactNode) => (
   </Suspense>
 );
 
+const ViewDataGate = ({
+  sections,
+  fullHistory = false,
+  children,
+}: {
+  sections: SyncSection[];
+  fullHistory?: boolean;
+  children: ReactNode;
+}) => {
+  const { loadViewData } = usePOS();
+  const loadRef = useRef(loadViewData);
+  const [attempt, setAttempt] = useState(0);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const sectionsKey = sections.join(',');
+  loadRef.current = loadViewData;
+
+  useEffect(() => {
+    let active = true;
+    setStatus('loading');
+    void loadRef.current(sections, { fullHistory }).then((ok) => {
+      if (active) setStatus(ok ? 'ready' : 'error');
+    }).catch(() => {
+      if (active) setStatus('error');
+    });
+    return () => { active = false; };
+  }, [sectionsKey, fullHistory, attempt]);
+
+  if (status === 'loading') {
+    return <div className="flex min-h-[45vh] items-center justify-center text-sm text-slate-500" role="status">Cargando datos de esta vista…</div>;
+  }
+  if (status === 'error') {
+    return <div className="flex min-h-[45vh] flex-col items-center justify-center gap-3 text-sm text-slate-600" role="alert">
+      <p>No se pudieron cargar los datos de esta vista.</p>
+      <button className="rounded-md border px-4 py-2" onClick={() => setAttempt((current) => current + 1)}>Reintentar</button>
+    </div>;
+  }
+  return <>{children}</>;
+};
+
+const withViewData = (element: ReactNode, sections: SyncSection[], fullHistory = false) => (
+  <ViewDataGate sections={sections} fullHistory={fullHistory}>{element}</ViewDataGate>
+);
+
 // Mapa de rutas: login público y módulos internos protegidos.
 export const router = createBrowserRouter([
   {
@@ -42,7 +86,7 @@ export const router = createBrowserRouter([
       // Todas las rutas internas pasan por el Layout y se protegen por sesión.
       <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
-          <Dashboard />
+          {withViewData(<Dashboard />, ['catalog', 'sales', 'kardex'])}
         </Layout>
       </ProtectedRoute>
     )),
@@ -52,7 +96,7 @@ export const router = createBrowserRouter([
     element: withSuspense((
       <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
-          <POS />
+          {withViewData(<POS />, ['drafts', 'currentCash'])}
         </Layout>
       </ProtectedRoute>
     )),
@@ -62,7 +106,7 @@ export const router = createBrowserRouter([
     element: withSuspense((
       <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
-          <Inventory />
+          {withViewData(<Inventory />, ['supplierList'])}
         </Layout>
       </ProtectedRoute>
     )),
@@ -72,7 +116,7 @@ export const router = createBrowserRouter([
     element: withSuspense((
       <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
-          <Customers />
+          {withViewData(<Customers />, ['customers', 'sales'], true)}
         </Layout>
       </ProtectedRoute>
     )),
@@ -82,7 +126,7 @@ export const router = createBrowserRouter([
     element: withSuspense((
       <ProtectedRoute allowedRoles={['admin']}>
         <Layout>
-          <Suppliers />
+          {withViewData(<Suppliers />, ['suppliers'], true)}
         </Layout>
       </ProtectedRoute>
     )),
@@ -92,7 +136,7 @@ export const router = createBrowserRouter([
     element: withSuspense((
       <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
-          <Purchases />
+          {withViewData(<Purchases />, ['supplierList'])}
         </Layout>
       </ProtectedRoute>
     )),
@@ -102,7 +146,7 @@ export const router = createBrowserRouter([
     element: withSuspense((
       <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
-          <Reports />
+          {withViewData(<Reports />, ['suppliers'], true)}
         </Layout>
       </ProtectedRoute>
     )),
@@ -112,7 +156,7 @@ export const router = createBrowserRouter([
     element: withSuspense((
       <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
-          <Recharges />
+          {withViewData(<Recharges />, ['recharges'], true)}
         </Layout>
       </ProtectedRoute>
     )),
@@ -122,7 +166,7 @@ export const router = createBrowserRouter([
     element: withSuspense((
       <ProtectedRoute allowedRoles={['admin', 'cashier']}>
         <Layout>
-          <CashRegister />
+          {withViewData(<CashRegister />, ['cash', 'sales'], true)}
         </Layout>
       </ProtectedRoute>
     )),
@@ -142,7 +186,7 @@ export const router = createBrowserRouter([
     element: withSuspense((
       <ProtectedRoute allowedRoles={['admin']}>
         <Layout>
-          <Configuration />
+          {withViewData(<Configuration />, ['store'])}
         </Layout>
       </ProtectedRoute>
     )),

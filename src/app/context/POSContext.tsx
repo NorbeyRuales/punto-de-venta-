@@ -75,8 +75,10 @@ const OFFLINE_ACTIVE_DRAFT_KEY = 'pos_active_draft_id';
 const OFFLINE_BACKUP_KEY = 'pos_offline_backup';
 const OFFLINE_FEATURES_ENABLED = false;
 const ALLOW_AUTOMATIC_BACKUP_UPLOAD = false;
-const INITIAL_HISTORY_DAYS = 90;
+const INITIAL_HISTORY_DAYS = 7;
 const SYNC_DIAGNOSTICS_KEY = 'pos_sync_diagnostics';
+export type SyncSection = 'catalog' | 'customers' | 'customersLite' | 'suppliers' | 'supplierList' | 'supplierHistory' | 'sales' | 'drafts' | 'kardex' | 'recharges' | 'cash' | 'currentCash' | 'store';
+const ALL_SYNC_SECTIONS: SyncSection[] = ['catalog', 'customers', 'customersLite', 'suppliers', 'supplierList', 'supplierHistory', 'sales', 'drafts', 'kardex', 'recharges', 'cash', 'currentCash', 'store'];
 
 const mergeById = <T extends { id: string }>(existing: T[], incoming: T[]): T[] => {
   const merged = new Map(existing.map((item) => [item.id, item]));
@@ -679,6 +681,7 @@ interface POSContextType {
   createCompleteBackup: () => Promise<CompleteBackupPayload | null>;
   rebuildLocalCache: () => Promise<boolean>;
   loadHistoryRange: (startDate: Date, endDate: Date) => Promise<boolean>;
+  loadViewData: (sections: SyncSection[], options?: { fullHistory?: boolean; supplierId?: string }) => Promise<boolean>;
   uploadLocalBackupToSupabase: (clearExisting?: boolean) => Promise<boolean>;
   getPendingProductSyncPreview: () => Promise<PendingProductSyncPreview>;
   listStoreUsers: () => Promise<StoreManagedUser[]>;
@@ -999,6 +1002,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const isHydratingRef = useRef(true);
   const localPersistenceEnabledRef = useRef(true);
   const isSyncingFromSupabaseRef = useRef(false);
+  const loadedSectionsRef = useRef(new Set<string>());
+  const sectionLoadsRef = useRef(new Map<string, Promise<boolean>>());
   const offlineSnapshotRef = useRef<string | null>(null);
   const currentBackupRef = useRef<LocalBackupPayload | null>(null);
   const localStorageCacheRef = useRef<Record<string, string | null>>({});
@@ -1153,7 +1158,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
   const syncFromSupabase = async (
     nextSession: SupabaseSession,
     storeId: string,
-    options?: { preservePendingSync?: boolean; historyRange?: DataDateRange; fullHistory?: boolean },
+    options?: { preservePendingSync?: boolean; historyRange?: DataDateRange; fullHistory?: boolean; sections?: SyncSection[]; supplierId?: string },
   ): Promise<boolean> => {
     isSyncingFromSupabaseRef.current = true;
     const startedAt = performance.now();
@@ -1169,10 +1174,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
     }));
     try {
       const defaultHistoryFrom = new Date();
-      defaultHistoryFrom.setDate(defaultHistoryFrom.getDate() - INITIAL_HISTORY_DAYS);
+      const defaultHistoryDays = options?.sections ? INITIAL_HISTORY_DAYS : 90;
+      defaultHistoryFrom.setDate(defaultHistoryFrom.getDate() - defaultHistoryDays);
       const historyRange = options?.fullHistory
         ? undefined
         : options?.historyRange ?? { from: defaultHistoryFrom, to: new Date() };
+      const requestedSections = new Set(options?.sections ?? ALL_SYNC_SECTIONS);
+      const shouldLoad = (section: SyncSection) => requestedSections.has(section);
       const withFallback = async <T,>(
         section: string,
         loader: Promise<T>,
@@ -1187,7 +1195,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         }
       };
 
-      const draftRowsPromise = loadSaleDraftsWithItems(nextSession.access_token, storeId, nextSession.user.id)
+      const draftRowsPromise = shouldLoad('drafts') ? loadSaleDraftsWithItems(nextSession.access_token, storeId, nextSession.user.id)
         .catch((error) => {
           failedSections.push('borradores');
           console.error('No se pudieron cargar borradores en Supabase', error);
@@ -1197,7 +1205,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
             toast.error('No se pudieron cargar los borradores de venta desde Supabase.');
           }
           return [];
-        });
+        }) : Promise.resolve([]);
 
       const [
         catalog,
@@ -1211,52 +1219,57 @@ export function POSProvider({ children }: { children: ReactNode }) {
         cashMovementRows,
         storeRow,
       ] = await Promise.all([
-        withFallback(
+        shouldLoad('catalog') ? withFallback(
           'catálogo',
           loadCategoriesAndProducts(nextSession.access_token, storeId),
           { categories: [], products: [] },
-        ),
-        withFallback(
+        ) : Promise.resolve({ categories: [], products: [] }),
+        (shouldLoad('customers') || shouldLoad('customersLite')) ? withFallback(
           'clientes',
-          loadCustomersWithDebt(nextSession.access_token, storeId),
+          loadCustomersWithDebt(nextSession.access_token, storeId, shouldLoad('customers')),
           [],
-        ),
-        withFallback(
+        ) : Promise.resolve([]),
+        (shouldLoad('suppliers') || shouldLoad('supplierList') || shouldLoad('supplierHistory')) ? withFallback(
           'proveedores',
-          loadSuppliersWithPurchases(nextSession.access_token, storeId),
+          loadSuppliersWithPurchases(
+            nextSession.access_token,
+            storeId,
+            shouldLoad('suppliers') || shouldLoad('supplierHistory'),
+            shouldLoad('supplierHistory') ? options?.supplierId : undefined,
+          ),
           [],
-        ),
-        withFallback(
+        ) : Promise.resolve([]),
+        shouldLoad('sales') ? withFallback(
           'ventas',
           loadSalesWithItems(nextSession.access_token, storeId, historyRange),
           [],
-        ),
+        ) : Promise.resolve([]),
         draftRowsPromise,
-        withFallback(
+        shouldLoad('kardex') ? withFallback(
           'kardex',
           loadKardexMovements(nextSession.access_token, storeId, historyRange),
           [],
-        ),
-        withFallback(
+        ) : Promise.resolve([]),
+        shouldLoad('recharges') ? withFallback(
           'recargas',
           loadRecharges(nextSession.access_token, storeId, historyRange),
           [],
-        ),
-        withFallback(
+        ) : Promise.resolve([]),
+        (shouldLoad('cash') || shouldLoad('currentCash')) ? withFallback(
           'sesiones de caja',
-          loadCashSessions(nextSession.access_token, storeId),
+          loadCashSessions(nextSession.access_token, storeId, shouldLoad('currentCash') && !shouldLoad('cash')),
           [],
-        ),
-        withFallback(
+        ) : Promise.resolve([]),
+        shouldLoad('cash') ? withFallback(
           'movimientos de caja',
           loadCashMovements(nextSession.access_token, storeId),
           [],
-        ),
-        withFallback(
+        ) : Promise.resolve([]),
+        shouldLoad('store') ? withFallback(
           'configuración de tienda',
           loadStoreDetails(nextSession.access_token, storeId),
           null,
-        ),
+        ) : Promise.resolve(null),
       ]);
       const failedSet = new Set(failedSections);
 
@@ -1268,12 +1281,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
         );
       }
 
-      if (!failedSet.has('catálogo')) {
+      if (shouldLoad('catalog') && !failedSet.has('catálogo')) {
         setCategories(catalog.categories);
         setProducts(catalog.products);
       }
 
-      const productById = new Map(catalog.products.map(product => [product.id, product]));
+      const activeProducts = shouldLoad('catalog') ? catalog.products : products;
+      const productById = new Map(activeProducts.map(product => [product.id, product]));
       const saleSessionByMovement = new Map<string, string>();
 
       cashMovementRows.forEach((row) => {
@@ -1344,7 +1358,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         };
       });
 
-      if (!failedSet.has('ventas')) {
+      if (shouldLoad('sales') && !failedSet.has('ventas')) {
         setSales((previous) => mergeById(previous, loadedSales)
           .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
       }
@@ -1393,11 +1407,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
         };
       });
 
-      setSaleDrafts(drafts);
-      setActiveDraftId((prev) => {
-        if (prev && drafts.some((draft) => draft.id === prev)) return prev;
-        return drafts[0]?.id ?? null;
-      });
+      if (shouldLoad('drafts')) {
+        setSaleDrafts(drafts);
+        setActiveDraftId((prev) => {
+          if (prev && drafts.some((draft) => draft.id === prev)) return prev;
+          return drafts[0]?.id ?? null;
+        });
+      }
 
       const salesByCustomerId = new Map<string, Sale[]>();
       loadedSales.forEach((sale) => {
@@ -1428,7 +1444,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
         })),
       }));
 
-      if (!failedSet.has('clientes') && !failedSet.has('ventas')) {
+      if ((shouldLoad('customers') || shouldLoad('customersLite')) && !failedSet.has('clientes') && (!shouldLoad('sales') || !failedSet.has('ventas'))) {
+        const customersWithDebtHistory = new Set(customerRows
+          .filter((row) => Array.isArray(row.customer_debt_transactions))
+          .map((row) => row.id));
         setCustomers((previous) => customers.map((customer) => {
           const previousCustomer = previous.find((item) => item.id === customer.id);
           return previousCustomer
@@ -1436,6 +1455,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
               ...customer,
               purchases: mergeById(previousCustomer.purchases, customer.purchases)
                 .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
+              debtHistory: customersWithDebtHistory.has(customer.id)
+                ? customer.debtHistory
+                : previousCustomer.debtHistory,
             }
             : customer;
         }));
@@ -1464,16 +1486,31 @@ export function POSProvider({ children }: { children: ReactNode }) {
           email: row.email ?? undefined,
           address: row.address ?? undefined,
           bankAccounts: row.bank_accounts ?? [],
-          debt: calculatePendingSupplierDebt(purchases),
+          debt: shouldLoad('suppliers') ? calculatePendingSupplierDebt(purchases) : toNumber(row.debt),
           purchases,
         };
       });
 
-      if (!failedSet.has('proveedores')) {
-        setSuppliers(suppliers);
+      if ((shouldLoad('suppliers') || shouldLoad('supplierList') || shouldLoad('supplierHistory')) && !failedSet.has('proveedores')) {
+        setSuppliers((previous) => {
+          const previousById = new Map(previous.map((supplier) => [supplier.id, supplier]));
+          if (shouldLoad('supplierHistory')) {
+            const incomingById = new Map(suppliers.map((supplier) => [supplier.id, supplier]));
+            return [
+              ...previous.map((supplier) => incomingById.get(supplier.id) ?? supplier),
+              ...suppliers.filter((supplier) => !previousById.has(supplier.id)),
+            ];
+          }
+          return suppliers.map((supplier) => {
+          const existing = previousById.get(supplier.id);
+          return existing && !shouldLoad('suppliers')
+            ? { ...supplier, purchases: existing.purchases, debt: existing.debt }
+            : supplier;
+          });
+        });
       }
 
-      if (!failedSet.has('kardex')) {
+      if (shouldLoad('kardex') && !failedSet.has('kardex')) {
         const loadedKardex = kardexRows.map((row) => ({
           id: row.id,
           date: row.created_at,
@@ -1492,7 +1529,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
       }
 
-      if (!failedSet.has('recargas')) {
+      if (shouldLoad('recharges') && !failedSet.has('recargas')) {
         const loadedRecharges = rechargeRows.map((row) => ({
           id: row.id,
           date: row.created_at,
@@ -1507,8 +1544,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
           .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
       }
 
-      if (!failedSet.has('sesiones de caja')) {
-        setCashSessions(cashSessionRows.map((row) => ({
+      if ((shouldLoad('cash') || shouldLoad('currentCash')) && !failedSet.has('sesiones de caja')) {
+        const loadedCashSessions = cashSessionRows.map((row) => ({
           id: row.id,
           storeId: row.store_id,
           userId: row.user_id ?? undefined,
@@ -1528,10 +1565,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
           differenceNote: row.difference_note ?? undefined,
           difference: row.difference == null ? undefined : toNumber(row.difference),
           status: row.status,
-        })));
+        }));
+        setCashSessions((previous) => shouldLoad('cash')
+          ? loadedCashSessions
+          : mergeById(previous, loadedCashSessions));
       }
 
-      if (!failedSet.has('movimientos de caja')) {
+      if (shouldLoad('cash') && !failedSet.has('movimientos de caja')) {
         setCashMovements(cashMovementRows.map((row) => ({
           id: row.id,
           cashSessionId: row.cash_session_id,
@@ -1549,7 +1589,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
         })));
       }
 
-      if (storeRow) {
+      if (shouldLoad('store') && storeRow) {
         setStoreConfig(prev => ({
           ...prev,
           name: storeRow.name || prev.name,
@@ -1581,6 +1621,13 @@ export function POSProvider({ children }: { children: ReactNode }) {
       finalMessage = failedSet.size === 0
         ? 'Todas las secciones solicitadas se sincronizaron correctamente.'
         : `No se actualizaron: ${Array.from(failedSet).join(', ')}.`;
+      if (failedSet.size === 0 && !options?.historyRange) {
+        const historyMode = options?.fullHistory ? 'all' : 'initial';
+        requestedSections.forEach((section) => {
+          const scope = section === 'supplierHistory' ? options?.supplierId ?? 'all' : 'all';
+          loadedSectionsRef.current.add(`${storeId}:${section}:${scope}:${historyMode}`);
+        });
+      }
       return failedSet.size === 0;
     } catch (error) {
       console.error('No se pudieron cargar datos desde Supabase', error);
@@ -1792,7 +1839,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
           setHasPendingSync(true);
           toast.info('Hay cambios locales pendientes de una versión anterior. Revisa backup/restauración antes de continuar.');
         }
-        return syncFromSupabase(storedSession, membership.store_id, { preservePendingSync });
+        return syncFromSupabase(storedSession, membership.store_id, {
+          preservePendingSync,
+          sections: ['catalog', 'sales', 'kardex', 'store'],
+        });
       })
       .catch((error) => {
         console.error('No se pudo restaurar la sesión de Supabase', error);
@@ -1959,7 +2009,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
           setHasPendingSync(true);
           toast.info('Hay cambios locales pendientes de una versión anterior. Revisa backup/restauración antes de continuar.');
         }
-        const synced = await syncFromSupabase(nextSession, membership.store_id, { preservePendingSync });
+        const synced = await syncFromSupabase(nextSession, membership.store_id, {
+          preservePendingSync,
+          sections: ['catalog', 'sales', 'kardex', 'store'],
+        });
         if (!synced) {
           toast.error('Sesión iniciada, pero falló la sincronización de datos');
         }
@@ -2041,6 +2094,9 @@ export function POSProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    loadedSectionsRef.current.clear();
+    loadedHistoryRangesRef.current.clear();
+    sectionLoadsRef.current.clear();
     localPersistenceEnabledRef.current = false;
     if (session?.access_token) {
       void signOut(session.access_token).catch(() => undefined);
@@ -2235,9 +2291,43 @@ export function POSProvider({ children }: { children: ReactNode }) {
     const rangeKey = `${currentStoreId}:${from.toISOString()}:${to.toISOString()}`;
     if (loadedHistoryRangesRef.current.has(rangeKey)) return true;
 
-    const ok = await syncFromSupabase(session, currentStoreId, { historyRange: { from, to } });
+    const ok = await syncFromSupabase(session, currentStoreId, {
+      sections: ['sales', 'kardex'],
+      historyRange: { from, to },
+    });
     if (ok) loadedHistoryRangesRef.current.add(rangeKey);
     return ok;
+  };
+
+  const loadViewData = async (
+    sections: SyncSection[],
+    options?: { fullHistory?: boolean; supplierId?: string },
+  ): Promise<boolean> => {
+    if (!canReachSupabase || !session) return false;
+    if (!currentStoreId) return true;
+    const historyMode = options?.fullHistory ? 'all' : 'initial';
+    const sectionCacheKey = (section: SyncSection) => {
+      const scope = section === 'supplierHistory' ? options?.supplierId ?? 'all' : 'all';
+      return `${currentStoreId}:${section}:${scope}:${historyMode}`;
+    };
+    const missingSections = sections.filter((section) =>
+      !loadedSectionsRef.current.has(sectionCacheKey(section)),
+    );
+    if (missingSections.length === 0) return true;
+
+    const requestKey = `${currentStoreId}:${historyMode}:${options?.supplierId ?? ''}:${missingSections.slice().sort().join(',')}`;
+    const running = sectionLoadsRef.current.get(requestKey);
+    if (running) return running;
+
+    const request = syncFromSupabase(session, currentStoreId, {
+      sections: missingSections,
+      fullHistory: options?.fullHistory,
+      supplierId: options?.supplierId,
+    }).finally(() => {
+      sectionLoadsRef.current.delete(requestKey);
+    });
+    sectionLoadsRef.current.set(requestKey, request);
+    return request;
   };
 
   const uploadLocalBackupToSupabase = async (clearExisting = false): Promise<boolean> => {
@@ -5077,6 +5167,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
       createCompleteBackup,
       rebuildLocalCache,
       loadHistoryRange,
+      loadViewData,
       uploadLocalBackupToSupabase,
       getPendingProductSyncPreview,
       listStoreUsers,

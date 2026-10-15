@@ -86,7 +86,10 @@ export function Inventory() {
     adjustStock,
     currentUser,
     hasPermission,
+    loadViewData,
   } = usePOS();
+  const loadViewDataRef = useRef(loadViewData);
+  loadViewDataRef.current = loadViewData;
   const navigate = useNavigate();
   const canManageInventory = hasPermission('inventory:manage');
   // Filtros y estado de UI.
@@ -100,6 +103,7 @@ export function Inventory() {
   const [barcodeLookupStatus, setBarcodeLookupStatus] = useState<'idle' | 'searching' | 'found' | 'not-found' | 'error'>('idle');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [showKardexDialog, setShowKardexDialog] = useState(false);
+  const [isLoadingKardexHistory, setIsLoadingKardexHistory] = useState(false);
   const [selectedKardexProduct, setSelectedKardexProduct] = useState<Product | null>(null);
   const [isTopAddButtonVisible, setIsTopAddButtonVisible] = useState(true);
   const [pendingConfirmation, setPendingConfirmation] = useState<InventoryConfirmation | null>(null);
@@ -384,6 +388,13 @@ export function Inventory() {
   const openKardexDialog = (product: Product) => {
     setSelectedKardexProduct(product);
     setShowKardexDialog(true);
+    setIsLoadingKardexHistory(true);
+    void loadViewDataRef.current(['kardex'], { fullHistory: true })
+      .then((ok) => {
+        if (!ok) toast.error('No se pudo cargar el historial completo de inventario.');
+      })
+      .catch(() => toast.error('No se pudo cargar el historial completo de inventario.'))
+      .finally(() => setIsLoadingKardexHistory(false));
   };
 
   const selectedKardexMovements = useMemo(() => {
@@ -1910,6 +1921,9 @@ return (
             <div className="text-sm text-gray-600">
               Stock actual: <span className="font-semibold text-gray-900">{selectedKardexProduct.stock} {selectedKardexProduct.unit}</span>
             </div>
+          )}
+          {isLoadingKardexHistory && (
+            <p className="text-sm text-slate-500" role="status">Cargando historial completo…</p>
           )}
 
           {isMobileViewport ? (
