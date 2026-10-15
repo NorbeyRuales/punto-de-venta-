@@ -1331,11 +1331,19 @@ export async function loadSuppliersWithPurchases(token: string, storeId: string,
   );
 }
 
-export async function loadSalesWithItems(token: string, storeId: string, range?: DataDateRange): Promise<SaleRow[]> {
+export async function loadSalesWithItems(
+  token: string,
+  storeId: string,
+  range?: DataDateRange,
+  cashSessionIds?: string[],
+): Promise<SaleRow[]> {
   const salesBaseQuery =
     'select=id,created_at,returned_at,subtotal,discount,iva,total,payment_method,cash_received,change_value,payment_breakdown,credited_amount,customer_id,invoice_number,cash_session_id';
+  const sessionFilter = cashSessionIds?.length
+    ? `&cash_session_id=in.(${cashSessionIds.join(',')})`
+    : '';
   const salesWithItemsQuery = `${salesBaseQuery},sale_items(id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at)`
-    + `&store_id=eq.${storeId}${dateRangeFilter('created_at', range)}&order=created_at.asc`;
+    + `&store_id=eq.${storeId}${dateRangeFilter('created_at', range)}${sessionFilter}&order=created_at.asc`;
 
   try {
     return await selectAllRows<SaleRow>(
@@ -1346,19 +1354,22 @@ export async function loadSalesWithItems(token: string, storeId: string, range?:
   } catch (error) {
     console.warn('La carga anidada de ventas falló. Reintentando ventas e ítems por separado.', error);
 
-    const [salesRows, saleItemRows] = await Promise.all([
-      selectAllRows<SaleSummaryRow>(
+    const salesRows = await selectAllRows<SaleSummaryRow>(
         'sales',
-        `${salesBaseQuery}&store_id=eq.${storeId}${dateRangeFilter('created_at', range)}&order=created_at.asc`,
+        `${salesBaseQuery}&store_id=eq.${storeId}${dateRangeFilter('created_at', range)}${sessionFilter}&order=created_at.asc`,
         token,
-      ),
-      selectAllRows<SaleItemWithSaleIdRow>(
+      );
+
+    const saleItemRows = salesRows.length > 0
+      ? await selectAllRows<SaleItemWithSaleIdRow>(
         'sale_items',
         'select=id,sale_id,product_id,product_name,quantity,unit_cost,unit_sale_price,discount_percent,iva,created_at'
-          + `&store_id=eq.${storeId}${dateRangeFilter('created_at', range)}&order=created_at.asc`,
+          + `&store_id=eq.${storeId}${cashSessionIds?.length
+            ? `&sale_id=in.(${salesRows.map((sale) => sale.id).join(',')})`
+            : `${dateRangeFilter('created_at', range)}`}&order=created_at.asc`,
         token,
-      ),
-    ]);
+      )
+      : [];
 
     const itemsBySaleId = new Map<string, SaleItemRow[]>();
     saleItemRows.forEach(({ sale_id, ...item }) => {
@@ -1435,11 +1446,19 @@ export async function loadCashSessions(token: string, storeId: string, activeOnl
   }
 }
 
-export async function loadCashMovements(token: string, storeId: string): Promise<CashMovementRow[]> {
+export async function loadCashMovements(
+  token: string,
+  storeId: string,
+  cashSessionIds?: string[],
+): Promise<CashMovementRow[]> {
+  if (cashSessionIds && cashSessionIds.length === 0) return [];
+  const sessionFilter = cashSessionIds?.length
+    ? `&cash_session_id=in.(${cashSessionIds.join(',')})`
+    : '';
   return selectAllRows<CashMovementRow>(
     'cash_movements',
     'select=id,store_id,cash_session_id,user_id,type,amount,reason,category,subtype,payment_method,reference_type,reference_id,metadata,created_at'
-      + `&store_id=eq.${storeId}&order=created_at.asc`,
+      + `&store_id=eq.${storeId}${sessionFilter}&order=created_at.asc`,
     token,
   );
 }

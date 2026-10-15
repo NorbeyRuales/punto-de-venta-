@@ -1207,6 +1207,53 @@ export function POSProvider({ children }: { children: ReactNode }) {
           return [];
         }) : Promise.resolve([]);
 
+      const cashSessionRowsPromise = (shouldLoad('cash') || shouldLoad('currentCash'))
+        ? withFallback(
+          'sesiones de caja',
+          loadCashSessions(nextSession.access_token, storeId, shouldLoad('currentCash') && !shouldLoad('cash')),
+          [],
+        )
+        : Promise.resolve([]);
+      const activeCashSessionIdsPromise = cashSessionRowsPromise.then((rows) => rows
+        .filter((row) => row.status === 'open' || row.status === 'counting')
+        .map((row) => row.id));
+      const salesRowsPromise = shouldLoad('sales')
+        ? withFallback(
+          'ventas',
+          (async () => {
+            const recentSales = await loadSalesWithItems(nextSession.access_token, storeId, historyRange);
+            if (!shouldLoad('currentCash')) return recentSales;
+            const activeSessionIds = await activeCashSessionIdsPromise;
+            if (activeSessionIds.length === 0) return recentSales;
+            const activeSessionSales = await loadSalesWithItems(
+              nextSession.access_token,
+              storeId,
+              undefined,
+              activeSessionIds,
+            );
+            return Array.from(new Map(
+              [...recentSales, ...activeSessionSales].map((sale) => [sale.id, sale]),
+            ).values());
+          })(),
+          [],
+        )
+        : Promise.resolve([]);
+      const cashMovementRowsPromise = shouldLoad('cash')
+        ? withFallback(
+          'movimientos de caja',
+          loadCashMovements(nextSession.access_token, storeId),
+          [],
+        )
+        : shouldLoad('currentCash')
+          ? withFallback(
+            'movimientos de caja',
+            activeCashSessionIdsPromise.then((sessionIds) => (
+              loadCashMovements(nextSession.access_token, storeId, sessionIds)
+            )),
+            [],
+          )
+          : Promise.resolve([]);
+
       const [
         catalog,
         customerRows,
@@ -1239,11 +1286,7 @@ export function POSProvider({ children }: { children: ReactNode }) {
           ),
           [],
         ) : Promise.resolve([]),
-        shouldLoad('sales') ? withFallback(
-          'ventas',
-          loadSalesWithItems(nextSession.access_token, storeId, historyRange),
-          [],
-        ) : Promise.resolve([]),
+        salesRowsPromise,
         draftRowsPromise,
         shouldLoad('kardex') ? withFallback(
           'kardex',
@@ -1255,16 +1298,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
           loadRecharges(nextSession.access_token, storeId, historyRange),
           [],
         ) : Promise.resolve([]),
-        (shouldLoad('cash') || shouldLoad('currentCash')) ? withFallback(
-          'sesiones de caja',
-          loadCashSessions(nextSession.access_token, storeId, shouldLoad('currentCash') && !shouldLoad('cash')),
-          [],
-        ) : Promise.resolve([]),
-        shouldLoad('cash') ? withFallback(
-          'movimientos de caja',
-          loadCashMovements(nextSession.access_token, storeId),
-          [],
-        ) : Promise.resolve([]),
+        cashSessionRowsPromise,
+        cashMovementRowsPromise,
         shouldLoad('store') ? withFallback(
           'configuración de tienda',
           loadStoreDetails(nextSession.access_token, storeId),
@@ -1571,8 +1606,8 @@ export function POSProvider({ children }: { children: ReactNode }) {
           : mergeById(previous, loadedCashSessions));
       }
 
-      if (shouldLoad('cash') && !failedSet.has('movimientos de caja')) {
-        setCashMovements(cashMovementRows.map((row) => ({
+      if ((shouldLoad('cash') || shouldLoad('currentCash')) && !failedSet.has('movimientos de caja')) {
+        const loadedCashMovements = cashMovementRows.map((row) => ({
           id: row.id,
           cashSessionId: row.cash_session_id,
           userId: row.user_id ?? undefined,
@@ -1586,7 +1621,10 @@ export function POSProvider({ children }: { children: ReactNode }) {
           referenceId: row.reference_id ?? undefined,
           metadata: row.metadata ?? {},
           date: row.created_at,
-        })));
+        }));
+        setCashMovements((previous) => shouldLoad('cash')
+          ? loadedCashMovements
+          : mergeById(previous, loadedCashMovements));
       }
 
       if (shouldLoad('store') && storeRow) {

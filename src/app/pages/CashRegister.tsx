@@ -113,7 +113,7 @@ export function CashRegister() {
     setHistoryLoadFailed(false);
     setIsLoadingFullHistory(true);
     try {
-      const loaded = await loadViewDataRef.current(['sales'], { fullHistory: true });
+      const loaded = await loadViewDataRef.current(['cash', 'sales'], { fullHistory: true });
       setHistoryLoadFailed(!loaded);
     } catch {
       setHistoryLoadFailed(true);
@@ -125,7 +125,7 @@ export function CashRegister() {
   useEffect(() => {
     let active = true;
     const timer = window.setTimeout(() => {
-      void loadViewDataRef.current(['sales'], { fullHistory: true }).then((loaded) => {
+      void loadViewDataRef.current(['cash', 'sales'], { fullHistory: true }).then((loaded) => {
         if (!active) return;
         setIsLoadingFullHistory(false);
         setHistoryLoadFailed(!loaded);
@@ -400,11 +400,11 @@ export function CashRegister() {
           <h1 className="text-3xl font-bold">Caja</h1>
           <p className="text-gray-600">Control de apertura, movimientos y cierre</p>
           {isLoadingFullHistory && (
-            <p className="mt-1 text-xs text-slate-500" role="status">Cargando historial de ventas en segundo plano…</p>
+            <p className="mt-1 text-xs text-slate-500" role="status">Cargando historial de caja y ventas en segundo plano…</p>
           )}
           {historyLoadFailed && (
             <p className="mt-1 text-xs text-amber-700" role="status">
-              No se pudo completar el historial de ventas.{' '}
+              No se pudo completar el historial de caja y ventas.{' '}
               <button className="font-semibold underline" onClick={() => void loadFullHistory()}>Reintentar</button>
             </p>
           )}
