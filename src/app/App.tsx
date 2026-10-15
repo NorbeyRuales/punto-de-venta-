@@ -13,7 +13,15 @@ export default function App() {
         {/* Ruteo principal de la app */}
         <RouterProvider router={router} />
         {/* Notificaciones tipo toast */}
-        <Toaster position="top-right" />
+        <Toaster
+          position="bottom-right"
+          visibleToasts={2}
+          expand={false}
+          duration={4000}
+          gap={8}
+          offset={16}
+          mobileOffset={12}
+        />
       </POSProvider>
     </ErrorBoundary>
   );
